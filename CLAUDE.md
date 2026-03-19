@@ -3,7 +3,7 @@
 ## 專案簡介
 
 輕量 Discord → Claude CLI bridge。
-不依賴 OpenClaw，使用 discord.js + acpx CLI 直接串接 Claude ACP protocol。
+不依賴 OpenClaw，使用 discord.js + Claude Code CLI（`claude -p --output-format stream-json`）。
 
 ## 知識庫
 
