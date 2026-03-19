@@ -26,6 +26,8 @@
 | `claudeCommand` | `string` | `"claude"` | CLI binary 路徑 |
 | `debounceMs` | `number` | `500` | 訊息合併等待 |
 | `turnTimeoutMs` | `number` | `300000` | 回應超時（5 分鐘） |
+| `fileUploadThreshold` | `number` | `4000` | 回覆超過此字數上傳為 .md |
+| `sessionTtlHours` | `number` | `168` | Session 閒置超時（小時，7 天） |
 | `logLevel` | `LogLevel` | `"info"` | Log 層級 |
 
 ### Per-Channel 結構

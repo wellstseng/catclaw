@@ -66,3 +66,8 @@ Generator 主迴圈 `await new Promise` 等待 → `eventQueue.shift()` → `yie
 1. 沖出 buffer 殘留最後一行
 2. 非正常退出（且非使用者取消）→ 補 `error` event
 3. `push(null)` 結束信號
+
+## Log 控制
+
+stdout chunk 和 stderr 的 debug log 預設靜音，需設環境變數 `ACP_TRACE=1` 才輸出。
+避免 `logLevel: "debug"` 時被 raw data 洗版。

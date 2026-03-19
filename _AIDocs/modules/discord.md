@@ -24,7 +24,7 @@ messageCreate
   │   ├─ allowed = false → 忽略
   │   └─ requireMention = true + 未 mention → 忽略
   ├─ strip mention → 文字為空 → 忽略
-  └─ 通過 → debounce → enqueue
+  └─ 通過 → 下載附件 → debounce → 加 displayName 前綴 → enqueue
 ```
 
 ### Per-Channel 設定
@@ -71,6 +71,14 @@ Mention strip：`content.replace(/<@!?\d+>/g, "").trim()`
 - 路徑：`/tmp/claude-discord-uploads/{messageId}/{fileName}`
 - 下載後路徑嵌入 prompt：`[使用者附件，請用 Read 工具讀取]\n- /path`
 - 讓 Claude CLI 可透過 Read 工具存取使用者上傳的檔案
+
+## 使用者識別
+
+多人頻道中，prompt 前綴 `displayName:`，讓 Claude 分辨發言者：
+
+```text
+Wells: 這個 API 怎麼用？
+```
 
 ## 對外 API
 

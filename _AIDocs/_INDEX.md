@@ -1,10 +1,10 @@
 # claude_discord _AIDocs 知識庫索引
 
-> 建立日期：2026-03-18 | 最近更新：2026-03-19 | 專案：discord-claude-bridge
+> 建立日期：2026-03-18 | 最近更新：2026-03-19 | 專案：catclaw
 
 ## 專案簡介
 
-輕量獨立的 Discord → Claude Code CLI bridge。
+專案知識代理人 — 輕量 Discord bot，透過 Claude Code CLI 提供專案知識問答。
 Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 不依賴 OpenClaw，僅使用 discord.js + claude CLI。
 
@@ -24,7 +24,7 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 |------|-----------|------|
 | [modules/config.md](modules/config.md) | `src/config.ts` | JSON 設定載入、per-channel helper |
 | [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn、串流 diff、AcpEvent 型別 |
-| [modules/session.md](modules/session.md) | `src/session.ts` | Session 快取、per-channel 串行佇列、timeout |
+| [modules/session.md](modules/session.md) | `src/session.ts` | Session 快取、磁碟持久化、TTL、per-channel 串行佇列 |
 | [modules/reply.md](modules/reply.md) | `src/reply.ts` | Discord 回覆分段、code fence 平衡、typing |
 | [modules/discord.md](modules/discord.md) | `src/discord.ts` | Discord Client、訊息過濾、debounce |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log level 控制、setLogLevel |
@@ -32,4 +32,4 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 
 ## 架構一句話摘要
 
-Discord 訊息 → debounce → `claude -p --output-format stream-json --resume` → diff 串流 → 2000 字分段回覆 Discord
+Discord 訊息 → debounce → displayName 前綴 → `claude -p stream-json [--resume]` → diff 串流 → 2000 字分段回覆 Discord

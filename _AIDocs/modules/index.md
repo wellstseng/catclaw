@@ -8,12 +8,13 @@
 
 ## 啟動順序
 
-```
-1. import { config }          ← 載入 config.json、驗證
+```text
+1. import { config }            ← 載入 config.json、驗證
 2. setLogLevel(config.logLevel) ← 設定 log 層級
-3. createDiscordClient(config) ← 建立 Client + 綁定事件
-4. client.once("ready")       ← 印出上線資訊
-5. await client.login()       ← 連線 Discord Gateway
+3. loadSessions()               ← 從磁碟載入 session 快取
+4. createDiscordClient(config)  ← 建立 Client + 綁定事件
+5. client.once("ready")         ← 印出上線資訊
+6. await client.login()         ← 連線 Discord Gateway
 ```
 
 ## Ready 事件輸出

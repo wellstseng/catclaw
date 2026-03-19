@@ -4,6 +4,7 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-19 | feat: acp log 雜訊控制（ACP_TRACE 環境變數）+ prompt 加 displayName 識別多人對話 | acp.ts, discord.ts |
 | 2026-03-19 | feat: session 磁碟持久化 — 重啟後自動 resume、TTL 過期機制（預設 7 天）、resume 失敗自動重試、原子寫入 | session.ts, config.ts, index.ts, discord.ts, config.example.json, .gitignore |
 | 2026-03-19 | fix: fileMode + MEDIA token 並存時 buffer 未重建，導致文字重複或遺漏；新增 /upload skill | reply.ts |
 | 2026-03-19 | 檔案上傳下載：inbound 附件下載至 /tmp、outbound MEDIA token 解析上傳、fileUploadThreshold 長回覆自動轉 .md | discord.ts, reply.ts, config.ts, config.example.json |
