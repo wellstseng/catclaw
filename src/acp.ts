@@ -230,8 +230,10 @@ export async function* runClaudeTurn(
       }
     }
 
-    // 非正常退出（且非使用者取消）→ 補 error event
-    if (code !== 0 && !signal?.aborted) {
+    if (signal?.aborted) {
+      // Abort（timeout）→ 補 error event 讓上層清理 typing indicator
+      push({ type: "error", message: "回應逾時，已取消" });
+    } else if (code !== 0) {
       push({ type: "error", message: `claude 異常退出（exit ${code}）` });
     }
 
