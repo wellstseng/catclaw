@@ -29,11 +29,11 @@ const client = createDiscordClient(config);
 
 client.once("ready", (c) => {
   log.info(`[bridge] Bot 上線：${c.user.tag}`);
-  log.info(`  DM：${config.dm.enabled ? "啟用" : "停用"}`);
-  const guildCount = Object.keys(config.guilds).length;
+  log.info(`  DM：${config.discord.dm.enabled ? "啟用" : "停用"}`);
+  const guildCount = Object.keys(config.discord.guilds).length;
   log.info(`  Guild 設定：${guildCount > 0 ? `${guildCount} 個` : "全部允許"}`);
   log.info(`  工具訊息：${config.showToolCalls ? "顯示" : "隱藏"}`);
-  log.info(`  Claude 工作目錄：${config.claudeCwd}`);
+  log.info(`  Claude 工作目錄：${config.claude.cwd}`);
 });
 
 // 優雅關閉：收到 SIGINT / SIGTERM 時先 destroy client 再退出
@@ -52,4 +52,4 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // 登入 Discord
-await client.login(config.token);
+await client.login(config.discord.token);

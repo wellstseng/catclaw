@@ -1,32 +1,43 @@
 {
-  "token": "your_discord_bot_token_here",
+  "discord": {
+    "token": "your_discord_bot_token_here",
 
-  "showToolCalls": false,
+    "dm": {
+      "enabled": true
+    },
 
-  "dm": {
-    "enabled": true
-  },
+    "guilds": {
+      "123456789012345678": {
+        "allow": true,
+        "requireMention": true,
+        "allowBot": false,
+        "allowFrom": [],
 
-  "guilds": {
-    "123456789012345678": {
-      "channels": {
-        "111111111111111111": {
-          "allow": true,
-          "requireMention": false
-        },
-        "222222222222222222": {
-          "allow": true,
-          "requireMention": true
+        "channels": {
+          "111111111111111111": {
+            "allow": true,
+            "requireMention": false
+          },
+          "222222222222222222": {
+            "allow": true,
+            "requireMention": true,
+            "allowBot": true,
+            "allowFrom": ["333333333333333333"]
+          }
         }
       }
     }
   },
 
-  "claudeCwd": "",
-  "claudeCommand": "claude",
+  "claude": {
+    "cwd": "",
+    "command": "claude",
+    "turnTimeoutMs": 300000,
+    "sessionTtlHours": 168
+  },
+
+  "showToolCalls": false,
   "debounceMs": 500,
-  "turnTimeoutMs": 300000,
   "fileUploadThreshold": 4000,
-  "sessionTtlHours": 168,
   "logLevel": "info"
 }

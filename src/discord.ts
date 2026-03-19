@@ -5,17 +5,20 @@
  * 流程：
  * 1. 建立 discord.js Client（含所有必要 Intents + Partials）
  * 2. messageCreate 事件：
- *    a. 忽略 bot 自身訊息
- *    b. getChannelAccess() 查詢 per-channel 設定（allow / requireMention）
- *    c. strip mention prefix
- *    d. debounce（同一人 500ms 內多則訊息合併）
- *    e. 觸發 session.enqueue → reply.createReplyHandler
+ *    a. 忽略 bot 自身訊息（永遠不回覆自己）
+ *    b. getChannelAccess() 查詢 per-channel 設定（allow / requireMention / allowBot / allowFrom）
+ *       繼承鏈：Thread → Parent Channel → Guild 預設
+ *    c. allowBot / allowFrom 過濾
+ *    d. strip mention prefix
+ *    e. debounce（同一人 500ms 內多則訊息合併）
+ *    f. 觸發 session.enqueue → reply.createReplyHandler
  */
 
 import {
   Client,
   GatewayIntentBits,
   Partials,
+  ChannelType,
   type Message,
 } from "discord.js";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -158,6 +161,21 @@ export function createDiscordClient(config: BridgeConfig): Client {
 // ── 訊息處理 ────────────────────────────────────────────────────────────────
 
 /**
+ * 取得 Thread 的父頻道 ID（非 Thread 回傳 null）
+ */
+function getParentId(message: Message): string | null {
+  const ch = message.channel;
+  if (
+    ch.type === ChannelType.PublicThread ||
+    ch.type === ChannelType.PrivateThread ||
+    ch.type === ChannelType.AnnouncementThread
+  ) {
+    return ch.parentId;
+  }
+  return null;
+}
+
+/**
  * 處理收到的 Discord 訊息
  * @param message Discord 訊息物件
  * @param config 全域設定
@@ -168,9 +186,9 @@ async function handleMessage(
 ): Promise<void> {
   log.debug(`[discord] 收到訊息 from=${message.author.tag} channel=${message.channelId} guild=${message.guild?.id ?? "DM"} content="${message.content.slice(0, 50)}"`);
 
-  // NOTE: bot 自身訊息必須在 debounce 前過濾，避免 bot 回覆佔用 debounce 容量
-  if (message.author.bot) {
-    log.debug("[discord] 忽略：bot 訊息");
+  // NOTE: bot 自身訊息永遠忽略（不論 allowBot 設定），避免自我迴圈
+  if (message.author.id === message.client.user?.id) {
+    log.debug("[discord] 忽略：bot 自身訊息");
     return;
   }
 
@@ -182,12 +200,28 @@ async function handleMessage(
   processedMessages.add(message.id);
   if (processedMessages.size > 1000) processedMessages.clear();
 
-  // 查詢 per-channel 存取設定
+  // 查詢 per-channel 存取設定（含繼承鏈：Thread → Parent → Guild）
   const guildId = message.guild?.id ?? null;
-  const access = getChannelAccess(guildId, message.channelId);
+  const parentId = getParentId(message);
+  const access = getChannelAccess(guildId, message.channelId, parentId);
 
   if (!access.allowed) {
     log.debug(`[discord] 忽略：頻道 ${message.channelId} 不允許`);
+    return;
+  }
+
+  // Bot 訊息過濾（自身已在上面擋掉，這裡處理其他 bot）
+  if (message.author.bot) {
+    if (!access.allowBot) {
+      log.debug(`[discord] 忽略：bot 訊息（allowBot=false）`);
+      return;
+    }
+    // allowBot=true 但有 allowFrom 限制 → 也要通過白名單
+  }
+
+  // allowFrom 白名單過濾：有設定（非空陣列）→ 只處理名單內的 user/bot
+  if (access.allowFrom.length > 0 && !access.allowFrom.includes(message.author.id)) {
+    log.debug(`[discord] 忽略：${message.author.tag} 不在 allowFrom 白名單中`);
     return;
   }
 
@@ -238,10 +272,10 @@ async function handleMessage(
     const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
 
     enqueue(firstMessage.channelId, prompt, onEvent, {
-      cwd: config.claudeCwd,
-      claudeCmd: config.claudeCommand,
-      turnTimeoutMs: config.turnTimeoutMs,
-      sessionTtlMs: config.sessionTtlHours * 3600_000,
+      cwd: config.claude.cwd,
+      claudeCmd: config.claude.command,
+      turnTimeoutMs: config.claude.turnTimeoutMs,
+      sessionTtlMs: config.claude.sessionTtlHours * 3600_000,
     });
   });
 }
