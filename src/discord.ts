@@ -234,7 +234,10 @@ async function handleMessage(
   debounce(message, text, config, (combinedText, firstMessage) => {
     const onEvent = createReplyHandler(firstMessage, config);
 
-    enqueue(firstMessage.channelId, combinedText, onEvent, {
+    // 多人頻道中讓 Claude 知道發言者身份
+    const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
+
+    enqueue(firstMessage.channelId, prompt, onEvent, {
       cwd: config.claudeCwd,
       claudeCmd: config.claudeCommand,
       turnTimeoutMs: config.turnTimeoutMs,

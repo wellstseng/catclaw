@@ -117,7 +117,7 @@ export async function* runClaudeTurn(
 
   proc.stdout.on("data", (chunk: Buffer) => {
     const raw = chunk.toString();
-    log.debug(`[acp] stdout chunk (${raw.length} bytes): ${raw.slice(0, 200)}`);
+    if (process.env.ACP_TRACE) log.debug(`[acp] stdout chunk (${raw.length} bytes): ${raw.slice(0, 200)}`);
     buffer += raw;
     const lines = buffer.split("\n");
     // 最後一個可能是不完整行，保留在 buffer
@@ -207,7 +207,7 @@ export async function* runClaudeTurn(
   });
 
   proc.stderr.on("data", (chunk: Buffer) => {
-    log.debug(`[acp] stderr: ${chunk.toString().slice(0, 200)}`);
+    if (process.env.ACP_TRACE) log.debug(`[acp] stderr: ${chunk.toString().slice(0, 200)}`);
   });
 
   proc.on("close", (code) => {
