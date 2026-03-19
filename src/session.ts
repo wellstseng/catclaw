@@ -12,6 +12,7 @@
  */
 
 import { runClaudeTurn, type AcpEvent } from "./acp.js";
+import { log } from "./logger.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────
 
@@ -51,7 +52,7 @@ async function runTurn(
 ): Promise<void> {
   // 取得快取的 session ID（首次為 null，claude CLI 會自動建立新 session）
   const existingSessionId = sessionCache.get(channelId) ?? null;
-  console.log(`[DEBUG] runTurn channel=${channelId} sessionId=${existingSessionId ?? "NEW"} text="${text.slice(0, 50)}"`);
+  log.debug(`[session] runTurn channel=${channelId} sessionId=${existingSessionId ?? "NEW"} text="${text.slice(0, 50)}"`);
 
   for await (const event of runClaudeTurn(
     existingSessionId,
@@ -60,11 +61,11 @@ async function runTurn(
     claudeCmd,
     signal
   )) {
-    console.log(`[DEBUG] event: ${event.type}`);
+    log.debug(`[session] event: ${event.type}`);
 
     // 攔截 session_init event：快取 session ID，不轉發給 reply handler
     if (event.type === "session_init") {
-      console.log(`[DEBUG] session_init: ${event.sessionId}`);
+      log.info(`[session] session_init: ${event.sessionId}`);
       sessionCache.set(channelId, event.sessionId);
       continue;
     }

@@ -22,6 +22,7 @@ import {
 import type { BridgeConfig } from "./config.js";
 import { enqueue } from "./session.js";
 import { createReplyHandler } from "./reply.js";
+import { log } from "./logger.js";
 
 // ── Debounce 內部狀態 ────────────────────────────────────────────────────────
 
@@ -120,11 +121,11 @@ async function handleMessage(
   message: Message,
   config: BridgeConfig
 ): Promise<void> {
-  console.log(`[DEBUG] 收到訊息 from=${message.author.tag} channel=${message.channelId} guild=${message.guild?.id ?? "DM"} content="${message.content.slice(0, 50)}"`);
+  log.debug(`[discord] 收到訊息 from=${message.author.tag} channel=${message.channelId} guild=${message.guild?.id ?? "DM"} content="${message.content.slice(0, 50)}"`);
 
   // NOTE: bot 自身訊息必須在 debounce 前過濾，避免 bot 回覆佔用 debounce 容量
   if (message.author.bot) {
-    console.log("[DEBUG] 忽略：bot 訊息");
+    log.debug("[discord] 忽略：bot 訊息");
     return;
   }
 
@@ -136,7 +137,7 @@ async function handleMessage(
     config.allowedChannelIds.size > 0 &&
     !config.allowedChannelIds.has(message.channelId)
   ) {
-    console.log(`[DEBUG] 忽略：頻道 ${message.channelId} 不在白名單`);
+    log.debug(`[discord] 忽略：頻道 ${message.channelId} 不在白名單`);
     return;
   }
 
@@ -152,11 +153,11 @@ async function handleMessage(
     // 確認是否有 mention bot
     const botUser = message.client.user;
     if (!botUser) {
-      console.log("[DEBUG] 忽略：botUser 為 null");
+      log.debug("[discord] 忽略：botUser 為 null");
       return;
     }
     if (!message.mentions.has(botUser)) {
-      console.log("[DEBUG] 忽略：未 mention bot");
+      log.debug("[discord] 忽略：未 mention bot");
       return;
     }
 
@@ -171,11 +172,11 @@ async function handleMessage(
 
   // 訊息為空（只有 mention 沒有文字）→ 忽略
   if (!text) {
-    console.log("[DEBUG] 忽略：文字為空");
+    log.debug("[discord] 忽略：文字為空");
     return;
   }
 
-  console.log(`[DEBUG] 通過過濾，text="${text.slice(0, 80)}" → 進入 debounce`);
+  log.debug(`[discord] 通過過濾，text="${text.slice(0, 80)}" → 進入 debounce`);
 
   // Debounce：合併短時間內同一人的多則訊息
   debounce(message, text, config, (combinedText, firstMessage) => {

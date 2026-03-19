@@ -14,27 +14,28 @@
 import "dotenv/config";
 import { config } from "./config.js";
 import { createDiscordClient } from "./discord.js";
+import { log } from "./logger.js";
 
 // ── 啟動 ─────────────────────────────────────────────────────────────────────
 
 const client = createDiscordClient(config);
 
 client.once("ready", (c) => {
-  console.log(`[discord-claude-bridge] Bot 上線：${c.user.tag}`);
-  console.log(`  觸發模式：${config.triggerMode}`);
-  console.log(
+  log.info(`[bridge] Bot 上線：${c.user.tag}`);
+  log.info(`  觸發模式：${config.triggerMode}`);
+  log.info(
     `  允許頻道：${
       config.allowedChannelIds.size > 0
         ? [...config.allowedChannelIds].join(", ")
         : "全部"
     }`
   );
-  console.log(`  Claude 工作目錄：${config.claudeCwd}`);
+  log.info(`  Claude 工作目錄：${config.claudeCwd}`);
 });
 
 // 優雅關閉：收到 SIGINT / SIGTERM 時先 destroy client 再退出
 function shutdown(signal: string): void {
-  console.log(`\n[discord-claude-bridge] 收到 ${signal}，關閉中...`);
+  log.info(`\n[bridge] 收到 ${signal}，關閉中...`);
   client.destroy();
   process.exit(0);
 }
@@ -44,7 +45,7 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // 捕捉未處理的 Promise rejection，避免 Node.js 靜默忽略
 process.on("unhandledRejection", (reason) => {
-  console.error("[discord-claude-bridge] unhandledRejection:", reason);
+  log.error("[bridge] unhandledRejection:", reason);
 });
 
 // 登入 Discord
