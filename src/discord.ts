@@ -24,6 +24,14 @@ import { enqueue } from "./session.js";
 import { createReplyHandler } from "./reply.js";
 import { log } from "./logger.js";
 
+// ── 訊息去重 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 已處理的 message ID 集合，防止 DM partial channel 導致重複觸發
+ * 超過 1000 筆時整批清除（重複訊息不可能間隔這麼久）
+ */
+const processedMessages = new Set<string>();
+
 // ── Debounce 內部狀態 ────────────────────────────────────────────────────────
 
 /** debounce key → timer handle */
@@ -128,6 +136,14 @@ async function handleMessage(
     log.debug("[discord] 忽略：bot 訊息");
     return;
   }
+
+  // 去重：防止同一訊息被處理兩次（DM partial channel 已知問題）
+  if (processedMessages.has(message.id)) {
+    log.debug(`[discord] 忽略：重複訊息 ${message.id}`);
+    return;
+  }
+  processedMessages.add(message.id);
+  if (processedMessages.size > 1000) processedMessages.clear();
 
   // 查詢 per-channel 存取設定
   const guildId = message.guild?.id ?? null;
