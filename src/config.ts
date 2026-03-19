@@ -125,7 +125,9 @@ function loadConfig(): BridgeConfig {
   let raw: RawConfig;
   try {
     const text = readFileSync(configPath, "utf-8");
-    raw = JSON.parse(text) as RawConfig;
+    // 支援 JSONC：strip 掉 // 註解（整行註解 + 行尾註解）後再 parse
+    const stripped = text.replace(/\/\/.*$/gm, "");
+    raw = JSON.parse(stripped) as RawConfig;
   } catch (err) {
     throw new Error(
       `無法讀取 config.json（${configPath}）：${err instanceof Error ? err.message : String(err)}\n` +
