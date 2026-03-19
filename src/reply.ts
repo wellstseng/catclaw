@@ -27,7 +27,7 @@ import { log } from "./logger.js";
 const TEXT_LIMIT = 2000;
 
 // 定時 flush 延遲（毫秒）：收到 text_delta 後多久自動送出
-const FLUSH_DELAY_MS = 1500;
+const FLUSH_DELAY_MS = 3000;
 
 // ── 工具函式 ────────────────────────────────────────────────────────────────
 
