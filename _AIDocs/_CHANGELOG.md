@@ -4,6 +4,7 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-19 | fix: fileMode + MEDIA token 並存時 buffer 未重建，導致文字重複或遺漏；新增 /upload skill | reply.ts |
 | 2026-03-19 | 檔案上傳下載：inbound 附件下載至 /tmp、outbound MEDIA token 解析上傳、fileUploadThreshold 長回覆自動轉 .md | discord.ts, reply.ts, config.ts, config.example.json |
 | 2026-03-19 | 設定改為 config.json：移除 dotenv/.env、per-channel 設定（allow/requireMention）、showToolCalls 開關、logger.ts log level | config.ts, discord.ts, reply.ts, logger.ts, index.ts, package.json, .gitignore |
 | 2026-03-19 | 文件原子化：拆分 6 個模組文件至 modules/、新增 CLI 參考與陷阱速查獨立文件 | modules/*.md, 08-CLAUDE-CLI.md, 09-PITFALLS.md, _INDEX.md |

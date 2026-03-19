@@ -266,16 +266,20 @@ export function createReplyHandler(
       const { text: cleanedText, mediaPaths } = extractMediaTokens(totalText);
 
       if (fileMode && mediaPaths.length === 0) {
-        // 長回覆且無 MEDIA token → 上傳完整內容為 .md 檔案
-        // NOTE: 若有 MEDIA token，優先以 MEDIA 指定的檔案為主，不再額外產生 response.md
+        // 長回覆且無 MEDIA → 上傳完整內容為 .md 檔案
         const preview = cleanedText.slice(0, 150).replace(/\n/g, " ") + "...";
         await sendFile(cleanedText, "response.md", originalMessage, isFirst, preview);
         isFirst = false;
-      } else if (!fileMode) {
-        // 短回覆 → 清理 buffer 中的 MEDIA token 再 flush
-        // NOTE: 已送出的 chunk 無法回收，但 MEDIA token 通常在回覆末尾
-        const { text: cleanedBuffer } = extractMediaTokens(buffer);
-        buffer = cleanedBuffer;
+      } else {
+        // 短回覆 or 有 MEDIA token → 文字以 chunk 送出，MEDIA 檔案另外上傳
+        // NOTE: fileMode + MEDIA 時，文字部分仍需送出（不產生 response.md 避免重複）
+        if (fileMode) {
+          // fileMode 期間 buffer 已停止累積，用清理後的完整文字重建 buffer
+          buffer = cleanedText;
+        } else {
+          const { text: cleanedBuffer } = extractMediaTokens(buffer);
+          buffer = cleanedBuffer;
+        }
         await flush(true);
       }
 
