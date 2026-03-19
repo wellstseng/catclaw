@@ -27,5 +27,6 @@
   "debounceMs": 500,
   "turnTimeoutMs": 300000,
   "fileUploadThreshold": 4000,
+  "sessionTtlHours": 168,
   "logLevel": "info"
 }

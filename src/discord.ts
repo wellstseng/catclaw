@@ -238,6 +238,7 @@ async function handleMessage(
       cwd: config.claudeCwd,
       claudeCmd: config.claudeCommand,
       turnTimeoutMs: config.turnTimeoutMs,
+      sessionTtlMs: config.sessionTtlHours * 3600_000,
     });
   });
 }

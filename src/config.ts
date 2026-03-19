@@ -53,6 +53,8 @@ export interface BridgeConfig {
   turnTimeoutMs: number;
   /** 回覆超過此字數時上傳為 .md 檔案，0 = 停用，預設 4000 */
   fileUploadThreshold: number;
+  /** Session 閒置超時（小時），超過此時間不 resume，預設 168（7 天） */
+  sessionTtlHours: number;
   /** Log 層級，預設 "info" */
   logLevel: LogLevel;
 }
@@ -70,6 +72,7 @@ interface RawConfig {
   debounceMs?: number;
   turnTimeoutMs?: number;
   fileUploadThreshold?: number;
+  sessionTtlHours?: number;
   logLevel?: string;
 }
 
@@ -120,6 +123,7 @@ function loadConfig(): BridgeConfig {
     debounceMs: raw.debounceMs ?? 500,
     turnTimeoutMs: raw.turnTimeoutMs ?? 300_000,
     fileUploadThreshold: raw.fileUploadThreshold ?? 4000,
+    sessionTtlHours: raw.sessionTtlHours ?? 168,
     logLevel,
   };
 }

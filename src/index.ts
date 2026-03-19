@@ -15,9 +15,13 @@ import { config } from "./config.js";
 import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
 import { createDiscordClient } from "./discord.js";
+import { loadSessions } from "./session.js";
 
 // 在其他模組開始 log 前設定層級
 setLogLevel(config.logLevel);
+
+// 從磁碟載入上次的 session 快取（重啟後延續對話上下文）
+loadSessions();
 
 // ── 啟動 ─────────────────────────────────────────────────────────────────────
 

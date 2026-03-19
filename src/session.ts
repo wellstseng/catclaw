@@ -1,6 +1,6 @@
 /**
  * @file session.ts
- * @description Claude session 管理 + per-channel 串行佇列
+ * @description Claude session 管理 + per-channel 串行佇列 + 磁碟持久化
  *
  * 職責：
  * 1. 維護 channelId → session_id（UUID）的快取
@@ -8,9 +8,14 @@
  *    後續對話帶 --resume <session_id> 延續上下文
  * 2. 以 Promise chain 實作 per-channel 串行佇列
  *    （同一 channel 的 turn 必須串行，不同 channel 完全並行）
- * 3. 對外只暴露 enqueue()，呼叫方不需要關心 session 細節
+ * 3. 磁碟持久化：sessionCache 寫入 data/sessions.json，重啟不遺失
+ * 4. TTL 機制：超過 sessionTtlHours 的 session 自動開新（不帶 --resume）
+ * 5. Resume 失敗處理：catch 後清除 session，不帶 --resume 重試
+ * 6. 對外只暴露 enqueue() + loadSessions()，呼叫方不需要關心 session 細節
  */
 
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { resolve, dirname } from "node:path";
 import { runClaudeTurn, type AcpEvent } from "./acp.js";
 import { log } from "./logger.js";
 
@@ -19,10 +24,26 @@ import { log } from "./logger.js";
 /** enqueue 收到的 event 回呼 */
 export type OnEvent = (event: AcpEvent) => void | Promise<void>;
 
+/** sessions.json 內每個 channel 的資料 */
+interface SessionRecord {
+  sessionId: string;
+  updatedAt: number;
+}
+
+/** sessions.json 的完整結構 */
+type SessionStore = Record<string, SessionRecord>;
+
+// ── 持久化路徑 ──────────────────────────────────────────────────────────────
+
+const SESSION_FILE = resolve(process.cwd(), "data", "sessions.json");
+
 // ── 內部狀態 ────────────────────────────────────────────────────────────────
 
 /** channelId → session_id（UUID，由 claude CLI 產生） */
 const sessionCache = new Map<string, string>();
+
+/** channelId → updatedAt timestamp */
+const sessionUpdatedAt = new Map<string, number>();
 
 /**
  * channelId → Promise chain 尾端
@@ -30,16 +51,114 @@ const sessionCache = new Map<string, string>();
  */
 const queues = new Map<string, Promise<void>>();
 
+// ── 磁碟 I/O ────────────────────────────────────────────────────────────────
+
+/**
+ * 啟動時從 data/sessions.json 載入 session 快取
+ * 檔案不存在或格式錯誤時靜默忽略（視為首次啟動）
+ */
+export function loadSessions(): void {
+  try {
+    const raw = readFileSync(SESSION_FILE, "utf-8");
+    const store = JSON.parse(raw) as SessionStore;
+    let loaded = 0;
+    for (const [channelId, record] of Object.entries(store)) {
+      if (record?.sessionId && record?.updatedAt) {
+        sessionCache.set(channelId, record.sessionId);
+        sessionUpdatedAt.set(channelId, record.updatedAt);
+        loaded++;
+      }
+    }
+    log.info(`[session] 從磁碟載入 ${loaded} 個 session`);
+  } catch {
+    // 檔案不存在或 JSON 格式錯誤，靜默忽略
+    log.debug("[session] sessions.json 不存在或無法解析，從空白狀態啟動");
+  }
+}
+
+/**
+ * 將 sessionCache 寫入磁碟（原子寫入：write tmp → rename）
+ * 寫入前清理超過 TTL 的過期項目
+ *
+ * @param ttlMs 過期門檻（毫秒），超過此時間的 session 不寫入
+ */
+function saveSessions(ttlMs: number): void {
+  const now = Date.now();
+  const store: SessionStore = {};
+
+  for (const [channelId, sessionId] of sessionCache) {
+    const updatedAt = sessionUpdatedAt.get(channelId) ?? now;
+    // 清理過期 session（不寫入檔案，也從記憶體清除）
+    if (now - updatedAt > ttlMs) {
+      sessionCache.delete(channelId);
+      sessionUpdatedAt.delete(channelId);
+      log.debug(`[session] 清理過期 session channel=${channelId}`);
+      continue;
+    }
+    store[channelId] = { sessionId, updatedAt };
+  }
+
+  try {
+    const dir = dirname(SESSION_FILE);
+    mkdirSync(dir, { recursive: true });
+
+    // 原子寫入：先寫暫存檔，再 rename 覆蓋
+    const tmpFile = SESSION_FILE + ".tmp";
+    writeFileSync(tmpFile, JSON.stringify(store, null, 2), "utf-8");
+    renameSync(tmpFile, SESSION_FILE);
+    log.debug(`[session] 已儲存 ${Object.keys(store).length} 個 session 到磁碟`);
+  } catch (err) {
+    log.warn(`[session] 儲存 sessions.json 失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // ── 內部函式 ────────────────────────────────────────────────────────────────
 
 /**
+ * 取得有效的 session ID（檢查 TTL，過期則清除）
+ *
+ * @param channelId Discord channel ID
+ * @param ttlMs 過期門檻（毫秒）
+ * @returns session ID 或 null（需開新 session）
+ */
+function getValidSessionId(channelId: string, ttlMs: number): string | null {
+  const sessionId = sessionCache.get(channelId);
+  if (!sessionId) return null;
+
+  const updatedAt = sessionUpdatedAt.get(channelId) ?? 0;
+  if (Date.now() - updatedAt > ttlMs) {
+    log.info(`[session] session 已過期 channel=${channelId}，將開新 session`);
+    sessionCache.delete(channelId);
+    sessionUpdatedAt.delete(channelId);
+    return null;
+  }
+
+  return sessionId;
+}
+
+/**
+ * 記錄 session 並持久化到磁碟
+ *
+ * @param channelId Discord channel ID
+ * @param sessionId Claude session ID
+ * @param ttlMs 過期門檻（毫秒，寫入時順便清理過期項目）
+ */
+function recordSession(channelId: string, sessionId: string, ttlMs: number): void {
+  sessionCache.set(channelId, sessionId);
+  sessionUpdatedAt.set(channelId, Date.now());
+  saveSessions(ttlMs);
+}
+
+/**
  * 執行單一 turn 的完整流程：串流 event → 逐一回呼 + 攔截 session_init
+ * 若帶 --resume 但失敗，自動清除 session 並不帶 --resume 重試一次
  *
  * @param channelId Discord channel ID
  * @param text 使用者訊息文字
  * @param onEvent event 回呼（由 reply.ts 建立，用於更新 Discord 回覆）
  * @param cwd Claude session 工作目錄
  * @param claudeCmd claude binary 路徑
+ * @param ttlMs session 過期門檻（毫秒）
  * @param signal AbortSignal（可選）
  */
 async function runTurn(
@@ -48,11 +167,13 @@ async function runTurn(
   onEvent: OnEvent,
   cwd: string,
   claudeCmd: string,
+  ttlMs: number,
   signal?: AbortSignal
 ): Promise<void> {
-  // 取得快取的 session ID（首次為 null，claude CLI 會自動建立新 session）
-  const existingSessionId = sessionCache.get(channelId) ?? null;
+  const existingSessionId = getValidSessionId(channelId, ttlMs);
   log.debug(`[session] runTurn channel=${channelId} sessionId=${existingSessionId ?? "NEW"} text="${text.slice(0, 50)}"`);
+
+  let hasError = false;
 
   for await (const event of runClaudeTurn(
     existingSessionId,
@@ -63,14 +184,47 @@ async function runTurn(
   )) {
     log.debug(`[session] event: ${event.type}`);
 
-    // 攔截 session_init event：快取 session ID，不轉發給 reply handler
+    // 攔截 session_init event：記錄 session ID + 持久化，不轉發給 reply handler
     if (event.type === "session_init") {
       log.info(`[session] session_init: ${event.sessionId}`);
-      sessionCache.set(channelId, event.sessionId);
+      recordSession(channelId, event.sessionId, ttlMs);
       continue;
     }
 
+    if (event.type === "error") {
+      hasError = true;
+    }
+
     await onEvent(event);
+  }
+
+  // resume 失敗處理：有帶 --resume 且出錯 → 清除 session，不帶 --resume 重試
+  if (hasError && existingSessionId) {
+    log.warn(`[session] resume 可能失敗，清除 session 並重試 channel=${channelId}`);
+    sessionCache.delete(channelId);
+    sessionUpdatedAt.delete(channelId);
+    saveSessions(ttlMs);
+
+    // 不帶 --resume 重試一次
+    for await (const event of runClaudeTurn(
+      null,
+      text,
+      cwd,
+      claudeCmd,
+      signal
+    )) {
+      if (event.type === "session_init") {
+        log.info(`[session] 重試成功，新 session_init: ${event.sessionId}`);
+        recordSession(channelId, event.sessionId, ttlMs);
+        continue;
+      }
+      await onEvent(event);
+    }
+  }
+
+  // turn 完成後更新 updatedAt（即使沒有 session_init，表示 resume 成功）
+  if (sessionCache.has(channelId)) {
+    recordSession(channelId, sessionCache.get(channelId)!, ttlMs);
   }
 }
 
@@ -84,6 +238,8 @@ export interface EnqueueOptions {
   claudeCmd: string;
   /** 回應超時毫秒數，超時自動 abort */
   turnTimeoutMs: number;
+  /** session 閒置超時毫秒數 */
+  sessionTtlMs: number;
 }
 
 /**
@@ -110,7 +266,7 @@ export function enqueue(
 
   // 將新 turn 接在尾端，錯誤不向上傳播（避免 Promise chain 中斷）
   const next = tail.then(() =>
-    runTurn(channelId, text, onEvent, opts.cwd, opts.claudeCmd, ac.signal)
+    runTurn(channelId, text, onEvent, opts.cwd, opts.claudeCmd, opts.sessionTtlMs, ac.signal)
       .catch((err: unknown) => {
         const message = ac.signal.aborted
           ? `回應超時（${Math.round(opts.turnTimeoutMs / 1000)}s），已取消`
