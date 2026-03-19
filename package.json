@@ -1,5 +1,5 @@
 {
-  "name": "claude-discord-bridge",
+  "name": "catclaw",
   "version": "1.0.0",
   "description": "Lightweight Discord → Claude CLI bridge via ACP protocol",
   "type": "module",
