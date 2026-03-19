@@ -32,7 +32,7 @@ client.once("ready", (c) => {
   log.info(`  DM：${config.discord.dm.enabled ? "啟用" : "停用"}`);
   const guildCount = Object.keys(config.discord.guilds).length;
   log.info(`  Guild 設定：${guildCount > 0 ? `${guildCount} 個` : "全部允許"}`);
-  log.info(`  工具訊息：${config.showToolCalls ? "顯示" : "隱藏"}`);
+  log.info(`  工具訊息：${config.showToolCalls}`);
   log.info(`  Claude 工作目錄：${config.claude.cwd}`);
 });
 

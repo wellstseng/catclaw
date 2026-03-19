@@ -4,10 +4,11 @@
  *
  * 核心功能：
  * - 累積 text_delta，達 2000 字（Discord API 上限）時自動切割
+ * - 定時 flush：收到 text_delta 後 1.5s 無新增即送出當前 buffer（漸進式顯示）
  * - 回覆超過 fileUploadThreshold 時改為上傳 .md 檔案
  * - Code fence 跨 chunk 平衡：奇數個 ``` 時自動補關/補開
  * - 第一段用 message.reply()，後續用 channel.send()
- * - tool_call event → 可透過 config.showToolCalls 控制是否顯示
+ * - tool_call event → showToolCalls 分級："all" 全顯示 / "summary" 僅提示 / "none" 隱藏
  * - error event → 傳送錯誤訊息
  *
  * 使用方式：
@@ -24,6 +25,9 @@ import { log } from "./logger.js";
 
 // Discord 訊息字數硬上限
 const TEXT_LIMIT = 2000;
+
+// 定時 flush 延遲（毫秒）：收到 text_delta 後多久自動送出
+const FLUSH_DELAY_MS = 1500;
 
 // ── 工具函式 ────────────────────────────────────────────────────────────────
 
@@ -165,8 +169,8 @@ async function sendFile(
  * 建立 AcpEvent 回呼處理器，用於接收 session.ts 的 onEvent 回呼
  *
  * 回傳的函式每次收到 AcpEvent 都會：
- * - text_delta → 累積文字，短回覆分段傳送，長回覆等 done 時上傳 .md
- * - tool_call  → 若 showToolCalls 開啟則傳送 🔧 提示
+ * - text_delta → 累積文字，≥2000 字立即切割，否則 1.5s 後自動送出
+ * - tool_call  → 依 showToolCalls 模式：all 顯示名稱 / summary 顯示提示 / none 隱藏
  * - done       → 短回覆 flush；長回覆上傳 .md 檔案
  * - error      → flush buffer + 傳送錯誤訊息
  * - status     → 靜默忽略
@@ -187,6 +191,33 @@ export function createReplyHandler(
   // 是否已切換為檔案模式（停止分段傳送，等 done 時上傳）
   let fileMode = false;
   const threshold = bridgeConfig.fileUploadThreshold;
+  const toolMode = bridgeConfig.showToolCalls;
+
+  // ── 定時 flush ──
+  // 收到 text_delta 後 1.5s 無新增即自動送出 buffer，實現漸進式顯示
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  // 防止 flushTimer 與手動 flush 並行衝突
+  let flushing = false;
+
+  /** 排程定時 flush：重設 timer，1.5s 後自動送出 */
+  function scheduleFlush(): void {
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      if (!flushing && buffer.length > 0 && !fileMode) {
+        flushing = true;
+        void flush(true).finally(() => { flushing = false; });
+      }
+    }, FLUSH_DELAY_MS);
+  }
+
+  /** 取消定時 flush */
+  function cancelFlushTimer(): void {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+  }
 
   // ── Typing indicator ──
   // Discord typing 持續約 10 秒，每 8 秒重發一次，直到第一則回覆送出
@@ -201,9 +232,13 @@ export function createReplyHandler(
   }, 8_000);
   // typing 清理函式，送出第一則回覆後呼叫
   const stopTyping = () => clearInterval(typingInterval);
+
   // NOTE: 追蹤上一個 chunk 末尾是否有未閉合 code fence
   //       若有，下一個 chunk 開頭要補開
   let prevChunkHadOpenFence = false;
+
+  // summary 模式：追蹤是否已送過「處理中」提示（只送一次）
+  let summaryHintSent = false;
 
   /**
    * 將 buffer 切割成 <= TEXT_LIMIT 的 chunk 並傳送
@@ -243,23 +278,45 @@ export function createReplyHandler(
       // 檢查是否應切換為檔案模式
       if (threshold > 0 && totalText.length > threshold) {
         fileMode = true;
+        cancelFlushTimer();
         // 不再送出新的 chunk，buffer 清空（已送出的就算了）
         buffer = "";
         return;
       }
 
       buffer += event.text;
-      await flush(false);
+
+      // ≥2000 字立即 flush，否則排程 1.5s 後自動送出
+      if (buffer.length >= TEXT_LIMIT) {
+        cancelFlushTimer();
+        await flush(false);
+      } else {
+        scheduleFlush();
+      }
     } else if (event.type === "tool_call") {
-      if (bridgeConfig.showToolCalls) {
+      if (toolMode === "all") {
+        // 全顯示：flush 當前 buffer + 顯示工具名稱
+        cancelFlushTimer();
         if (!fileMode) {
           await flush(true);
         }
         await sendChunk(`🔧 使用工具：${event.title}`, originalMessage, isFirst);
         if (isFirst) stopTyping();
         isFirst = false;
+      } else if (toolMode === "summary" && !summaryHintSent) {
+        // summary 模式：只在第一次 tool_call 時送一次「處理中」提示
+        cancelFlushTimer();
+        if (!fileMode) {
+          await flush(true);
+        }
+        await sendChunk("⏳ 處理中...", originalMessage, isFirst);
+        if (isFirst) stopTyping();
+        isFirst = false;
+        summaryHintSent = true;
       }
+      // "none" → 完全不輸出
     } else if (event.type === "done") {
+      cancelFlushTimer();
       stopTyping();
 
       // 先從完整文字中抽取 MEDIA token
@@ -289,6 +346,7 @@ export function createReplyHandler(
         if (uploaded) isFirst = false;
       }
     } else if (event.type === "error") {
+      cancelFlushTimer();
       stopTyping();
       if (!fileMode) {
         await flush(true);

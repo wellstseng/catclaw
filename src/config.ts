@@ -77,8 +77,8 @@ export interface BridgeConfig {
   discord: DiscordConfig;
   /** Claude CLI 相關設定 */
   claude: ClaudeConfig;
-  /** 是否顯示「🔧 使用工具：xxx」訊息 */
-  showToolCalls: boolean;
+  /** 工具呼叫顯示模式："all" 全顯示 / "summary" 只顯示「處理中」/ "none" 全隱藏 */
+  showToolCalls: "all" | "summary" | "none";
   /** Debounce 毫秒數，預設 500 */
   debounceMs: number;
   /** 回覆超過此字數時上傳為 .md 檔案，0 = 停用，預設 4000 */
@@ -108,10 +108,22 @@ interface RawConfig {
     turnTimeoutMs?: number;
     sessionTtlHours?: number;
   };
-  showToolCalls?: boolean;
+  showToolCalls?: string | boolean;
   debounceMs?: number;
   fileUploadThreshold?: number;
   logLevel?: string;
+}
+
+/**
+ * 解析 showToolCalls 設定值
+ * 相容舊格式（boolean）：true → "all"，false → "none"
+ */
+function parseShowToolCalls(value: string | boolean | undefined): "all" | "summary" | "none" {
+  if (value === undefined) return "all";
+  if (value === true) return "all";
+  if (value === false) return "none";
+  const valid = ["all", "summary", "none"];
+  return valid.includes(value) ? (value as "all" | "summary" | "none") : "all";
 }
 
 /**
@@ -171,7 +183,7 @@ function loadConfig(): BridgeConfig {
       turnTimeoutMs: raw.claude?.turnTimeoutMs ?? 300_000,
       sessionTtlHours: raw.claude?.sessionTtlHours ?? 168,
     },
-    showToolCalls: raw.showToolCalls ?? true,
+    showToolCalls: parseShowToolCalls(raw.showToolCalls),
     debounceMs: raw.debounceMs ?? 500,
     fileUploadThreshold: raw.fileUploadThreshold ?? 4000,
     logLevel,
