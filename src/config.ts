@@ -51,6 +51,8 @@ export interface BridgeConfig {
   debounceMs: number;
   /** Claude 回應超時毫秒數，預設 300000（5 分鐘） */
   turnTimeoutMs: number;
+  /** 回覆超過此字數時上傳為 .md 檔案，0 = 停用，預設 4000 */
+  fileUploadThreshold: number;
   /** Log 層級，預設 "info" */
   logLevel: LogLevel;
 }
@@ -67,6 +69,7 @@ interface RawConfig {
   claudeCommand?: string;
   debounceMs?: number;
   turnTimeoutMs?: number;
+  fileUploadThreshold?: number;
   logLevel?: string;
 }
 
@@ -116,6 +119,7 @@ function loadConfig(): BridgeConfig {
     claudeCommand: raw.claudeCommand || "claude",
     debounceMs: raw.debounceMs ?? 500,
     turnTimeoutMs: raw.turnTimeoutMs ?? 300_000,
+    fileUploadThreshold: raw.fileUploadThreshold ?? 4000,
     logLevel,
   };
 }

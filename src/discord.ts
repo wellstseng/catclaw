@@ -18,6 +18,9 @@ import {
   Partials,
   type Message,
 } from "discord.js";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { BridgeConfig } from "./config.js";
 import { getChannelAccess } from "./config.js";
 import { enqueue } from "./session.js";
@@ -90,6 +93,40 @@ function debounce(
   }, config.debounceMs);
 
   debounceTimers.set(key, timer);
+}
+
+// ── 附件下載 ─────────────────────────────────────────────────────────────────
+
+/** 附件暫存根目錄 */
+const UPLOAD_DIR = join(tmpdir(), "claude-discord-uploads");
+
+/**
+ * 下載 Discord 訊息中的附件到暫存目錄
+ * @param message Discord 訊息物件
+ * @returns 已下載檔案的本地路徑陣列（空陣列 = 無附件）
+ */
+async function downloadAttachments(message: Message): Promise<string[]> {
+  if (message.attachments.size === 0) return [];
+
+  // 每則訊息一個子目錄，避免檔名衝突
+  const dir = join(UPLOAD_DIR, message.id);
+  await mkdir(dir, { recursive: true });
+
+  const paths: string[] = [];
+  for (const [, att] of message.attachments) {
+    try {
+      const res = await fetch(att.url);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      const fileName = att.name ?? "file";
+      const filePath = join(dir, fileName);
+      await writeFile(filePath, buffer);
+      paths.push(filePath);
+      log.debug(`[discord] 附件下載：${fileName} (${buffer.length} bytes) → ${filePath}`);
+    } catch (err) {
+      log.warn(`[discord] 附件下載失敗：${att.name ?? att.url} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return paths;
 }
 
 // ── Discord Client 建立 ──────────────────────────────────────────────────────
@@ -178,7 +215,14 @@ async function handleMessage(
     text = message.content.trim();
   }
 
-  // 訊息為空（只有 mention 沒有文字）→ 忽略
+  // 下載附件（圖片、檔案等），路徑嵌入 prompt 讓 Claude 可存取
+  const attachmentPaths = await downloadAttachments(message);
+  if (attachmentPaths.length > 0) {
+    const fileList = attachmentPaths.map((p) => `- ${p}`).join("\n");
+    text += `\n\n[使用者附件，請用 Read 工具讀取]\n${fileList}`;
+  }
+
+  // 訊息為空（只有 mention 沒有文字，且無附件）→ 忽略
   if (!text) {
     log.debug("[discord] 忽略：文字為空");
     return;

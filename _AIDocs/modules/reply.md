@@ -47,13 +47,33 @@ Discord 訊息上限 2000 字（`TEXT_LIMIT`）。
 - 第一則回覆送出後 `clearInterval`（`stopTyping()`）
 - `done` / `error` event 也會觸發 `stopTyping()`
 
+## 檔案上傳模式（fileUploadThreshold）
+
+當回覆總文字超過 `fileUploadThreshold`（預設 4000 字）時，自動切換為檔案模式：
+
+1. `text_delta` 只累積 `totalText`，不再 flush chunk
+2. `done` 時將完整文字上傳為 `response.md`（附前 150 字預覽）
+
+設 0 = 停用。
+
+## MEDIA Token 解析
+
+Claude CLI 回覆中若包含 `MEDIA: /path/to/file`，reply.ts 會自動：
+
+1. `extractMediaTokens(text)` — 正規表達式 `/\bMEDIA:\s*`?([^\n`]+)`?/gi` 抽取路徑
+2. 移除 MEDIA token，清理多餘空行
+3. 只接受絕對路徑（`/` 開頭），避免誤抓
+4. `uploadMediaFile(path)` — `readFile` → `AttachmentBuilder` → Discord 附件上傳
+
+整合位置：`done` event handler 中，先 `extractMediaTokens(totalText)` 取得清理後文字 + 路徑，送出文字後逐一上傳檔案。
+
 ## Event 處理
 
 | Event | 行為 |
 |-------|------|
-| `text_delta` | 累積到 buffer → `flush(false)` |
+| `text_delta` | 累積到 buffer + totalText；超過 threshold 進入 fileMode |
 | `tool_call` | 若 `showToolCalls` 開啟 → `flush(true)` → 傳送 `🔧 使用工具：{title}` |
-| `done` | `stopTyping()` → `flush(true)` |
+| `done` | `stopTyping()` → 抽取 MEDIA token → flush 或上傳 .md → 上傳 media 檔案 |
 | `error` | `stopTyping()` → `flush(true)` → 傳送 `⚠️ 發生錯誤：{message}` |
 | `status` | 靜默忽略 |
 

@@ -60,6 +60,18 @@ Mention strip：`content.replace(/<@!?\d+>/g, "").trim()`
 2. timer 到期 → `lines.join("\n")` → `onFire(combinedText, firstMessage)`
 3. 清理三個 Map
 
+## 訊息去重
+
+`processedMessages` Set 追蹤已處理的 message ID，防止 DM partial channel 導致重複觸發。超過 1000 筆時整批清除。
+
+## 附件下載
+
+`downloadAttachments(message)` 將 Discord 訊息附件（圖片、檔案等）下載至暫存目錄：
+
+- 路徑：`/tmp/claude-discord-uploads/{messageId}/{fileName}`
+- 下載後路徑嵌入 prompt：`[使用者附件，請用 Read 工具讀取]\n- /path`
+- 讓 Claude CLI 可透過 Read 工具存取使用者上傳的檔案
+
 ## 對外 API
 
 ### `createDiscordClient(config): Client`

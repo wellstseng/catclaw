@@ -26,5 +26,6 @@
   "claudeCommand": "claude",
   "debounceMs": 500,
   "turnTimeoutMs": 300000,
+  "fileUploadThreshold": 4000,
   "logLevel": "info"
 }

@@ -13,6 +13,9 @@
 - Turn timeout（超時自動取消）
 - Debounce（短時間內多則訊息自動合併）
 - 2000 字自動分段 + code fence 跨段平衡
+- 附件下載（使用者上傳檔案 → Claude 可讀取）
+- MEDIA token 檔案上傳（Claude 回覆含 `MEDIA: /path` → 自動上傳至 Discord）
+- 長回覆自動轉 .md 檔案上傳（超過 fileUploadThreshold）
 
 ## 架構
 
@@ -209,7 +212,8 @@ cp config.example.json config.json
   "claudeCommand": "claude",
   "debounceMs": 500,
   "turnTimeoutMs": 300000,
-  "logLevel": "info"
+  "logLevel": "info",
+  "fileUploadThreshold": 4000
 }
 ```
 
@@ -226,6 +230,7 @@ cp config.example.json config.json
 | `debounceMs` | 同一人連續訊息的合併等待時間（ms） | `500` |
 | `turnTimeoutMs` | Claude 回應超時（ms） | `300000` |
 | `logLevel` | Log 層級：`debug` / `info` / `warn` / `error` / `silent` | `"info"` |
+| `fileUploadThreshold` | 回覆超過此字數自動上傳為 .md 檔（0 = 停用） | `4000` |
 
 ### Per-Channel 設定
 
@@ -236,6 +241,30 @@ cp config.example.json config.json
 
 - `guilds` 為空物件 → 所有頻道皆允許，預設需要 mention
 - `guilds` 有設定 → 只有明確 `allow: true` 的頻道會回應
+
+## 檔案上傳 / 下載
+
+### Inbound（使用者 → Claude）
+
+使用者在 Discord 附帶檔案（圖片、文件等），bot 會自動下載到 `/tmp/claude-discord-uploads/{messageId}/`，並在 prompt 中附上路徑，讓 Claude CLI 透過 Read 工具讀取。
+
+### Outbound（Claude → Discord）
+
+Claude CLI 回覆中包含 `MEDIA: /absolute/path/to/file`，bot 會自動解析並上傳該檔案到 Discord 作為附件。
+
+```
+# Claude 回覆範例
+這是分析結果。
+
+MEDIA: /tmp/output/chart.png
+MEDIA: /tmp/output/report.pdf
+```
+
+上述回覆會送出文字部分，並將 `chart.png` 和 `report.pdf` 作為 Discord 附件上傳。
+
+### 長回覆自動上傳
+
+當回覆總字數超過 `fileUploadThreshold`（預設 4000），會自動將完整內容上傳為 `response.md`，附帶前 150 字預覽。
 
 ## 啟動
 
