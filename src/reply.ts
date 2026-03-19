@@ -303,7 +303,7 @@ export function createReplyHandler(
 
     for (const chunk of chunks) {
       await sendChunk(chunk, originalMessage, isFirst);
-      if (isFirst) stopTyping();
+      // NOTE: thinking 送出時不停 typing，讓 typing 持續到正式 text 送出
       isFirst = false;
     }
 
