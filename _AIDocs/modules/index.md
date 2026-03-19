@@ -4,26 +4,25 @@
 
 ## 職責
 
-程式進入點：載入環境變數 → 建立 Discord Client → 登入 → 優雅關閉。
+程式進入點：載入設定 → 設定 log level → 建立 Discord Client → 登入 → 優雅關閉。
 
 ## 啟動順序
 
 ```
-1. import "dotenv/config"    ← 載入 .env 到 process.env
-2. import { config }          ← 讀取環境變數、驗證
+1. import { config }          ← 載入 config.json、驗證
+2. setLogLevel(config.logLevel) ← 設定 log 層級
 3. createDiscordClient(config) ← 建立 Client + 綁定事件
 4. client.once("ready")       ← 印出上線資訊
 5. await client.login()       ← 連線 Discord Gateway
 ```
 
-> **陷阱**：`import "dotenv/config"` 必須在 `import { config }` **之前**，否則 `process.env` 尚未填充。
-
 ## Ready 事件輸出
 
 ```
-[discord-claude-bridge] Bot 上線：BotName#1234
-  觸發模式：mention
-  允許頻道：全部
+[bridge] Bot 上線：BotName#1234
+  DM：啟用
+  Guild 設定：2 個
+  工具訊息：隱藏
   Claude 工作目錄：/Users/xxx
 ```
 
@@ -35,7 +34,7 @@
 
 ```typescript
 process.on("unhandledRejection", (reason) => {
-  console.error("[discord-claude-bridge] unhandledRejection:", reason);
+  log.error("[bridge] unhandledRejection:", reason);
 });
 ```
 

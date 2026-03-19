@@ -1,85 +1,175 @@
 /**
  * @file config.ts
- * @description 環境變數讀取與驗證
+ * @description 從 config.json 載入設定，提供 per-channel 存取 helper
  *
- * 從 process.env 讀取所有設定，進行型別轉換與驗證，
- * export 單一 BridgeConfig 物件供其他模組使用。
- * 缺少必填欄位時直接拋出錯誤，讓問題在啟動時立即浮現。
+ * 結構參考 OpenClaw 的 channel 設定模式：
+ * - guilds.{guildId}.channels.{channelId} 控制 allow / requireMention
+ * - dm.enabled 控制 DM 是否啟用
+ * - guilds 為空物件 → 所有頻道皆允許（開發方便）
  */
 
-/** 觸發模式：mention = 需 @mention bot；all = 白名單頻道內所有訊息 */
-export type TriggerMode = "mention" | "all";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { LogLevel } from "./logger.js";
+
+// ── 型別定義 ────────────────────────────────────────────────────────────────
+
+/** 單一頻道設定 */
+export interface ChannelConfig {
+  /** 是否允許回應此頻道 */
+  allow: boolean;
+  /** 是否需要 @mention bot 才觸發，預設 true */
+  requireMention?: boolean;
+}
+
+/** 單一 Guild（伺服器）設定 */
+export interface GuildConfig {
+  channels: Record<string, ChannelConfig>;
+}
+
+/** DM 設定 */
+export interface DmConfig {
+  /** 是否啟用 DM 回應，預設 true */
+  enabled: boolean;
+}
 
 /** 全域設定物件型別 */
 export interface BridgeConfig {
-  /** Discord Bot Token（必填） */
-  discordToken: string;
-  /** 訊息觸發模式，預設 "mention" */
-  triggerMode: TriggerMode;
-  /** 允許回應的頻道 ID 集合，空集合表示全部允許 */
-  allowedChannelIds: Set<string>;
+  /** Discord Bot Token */
+  token: string;
+  /** 是否顯示「🔧 使用工具：xxx」訊息 */
+  showToolCalls: boolean;
+  /** DM 設定 */
+  dm: DmConfig;
+  /** per-guild、per-channel 設定 */
+  guilds: Record<string, GuildConfig>;
   /** Claude session 工作目錄（spawn cwd），預設 $HOME */
   claudeCwd: string;
   /** claude CLI binary 路徑，預設 "claude" */
   claudeCommand: string;
-  /** Debounce 毫秒數，同一人連續訊息的合併等待時間，預設 500 */
+  /** Debounce 毫秒數，預設 500 */
   debounceMs: number;
-  /** Claude 回應超時毫秒數，超時自動 kill process，預設 300000（5 分鐘） */
+  /** Claude 回應超時毫秒數，預設 300000（5 分鐘） */
   turnTimeoutMs: number;
+  /** Log 層級，預設 "info" */
+  logLevel: LogLevel;
+}
+
+// ── JSON 載入 ────────────────────────────────────────────────────────────────
+
+/** config.json 的原始 JSON 型別（所有欄位皆可選） */
+interface RawConfig {
+  token?: string;
+  showToolCalls?: boolean;
+  dm?: { enabled?: boolean };
+  guilds?: Record<string, { channels?: Record<string, ChannelConfig> }>;
+  claudeCwd?: string;
+  claudeCommand?: string;
+  debounceMs?: number;
+  turnTimeoutMs?: number;
+  logLevel?: string;
 }
 
 /**
- * 從環境變數載入並驗證設定
+ * 從 config.json 載入設定
  * @returns 完整的 BridgeConfig 物件
- * @throws 若 DISCORD_BOT_TOKEN 未設定
- * @throws 若 TRIGGER_MODE 為非法值
+ * @throws 若 config.json 不存在或 token 未設定
  */
 function loadConfig(): BridgeConfig {
-  const discordToken = process.env.DISCORD_BOT_TOKEN;
-  if (!discordToken) {
-    throw new Error("DISCORD_BOT_TOKEN 環境變數必填，請設定後再啟動");
-  }
+  const configPath = resolve(process.cwd(), "config.json");
 
-  // 驗證 TRIGGER_MODE 只接受已知值
-  const rawTriggerMode = process.env.TRIGGER_MODE ?? "mention";
-  if (rawTriggerMode !== "mention" && rawTriggerMode !== "all") {
+  let raw: RawConfig;
+  try {
+    const text = readFileSync(configPath, "utf-8");
+    raw = JSON.parse(text) as RawConfig;
+  } catch (err) {
     throw new Error(
-      `TRIGGER_MODE 必須是 "mention" 或 "all"，收到："${rawTriggerMode}"`
+      `無法讀取 config.json（${configPath}）：${err instanceof Error ? err.message : String(err)}\n` +
+      "請複製 config.example.json 為 config.json 並填入設定"
     );
   }
-  const triggerMode: TriggerMode = rawTriggerMode;
 
-  // ALLOWED_CHANNEL_IDS 為逗號分隔字串，空字串或未設定 → 空集合（全部允許）
-  const rawChannelIds = process.env.ALLOWED_CHANNEL_IDS ?? "";
-  const allowedChannelIds = new Set(
-    rawChannelIds
-      .split(",")
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0)
-  );
+  if (!raw.token) {
+    throw new Error("config.json 中 token 欄位必填");
+  }
 
-  const claudeCwd = process.env.CLAUDE_CWD || process.env.HOME || "/";
+  // 正規化 guilds：確保每個 guild 都有 channels
+  const guilds: Record<string, GuildConfig> = {};
+  if (raw.guilds) {
+    for (const [guildId, guild] of Object.entries(raw.guilds)) {
+      guilds[guildId] = { channels: guild.channels ?? {} };
+    }
+  }
 
-  const claudeCommand = process.env.CLAUDE_COMMAND || "claude";
-
-  // NOTE: DEBOUNCE_MS 需轉 int，非數字時 fallback 500
-  const rawDebounce = parseInt(process.env.DEBOUNCE_MS ?? "500", 10);
-  const debounceMs = isNaN(rawDebounce) ? 500 : rawDebounce;
-
-  // NOTE: TURN_TIMEOUT_MS 需轉 int，非數字時 fallback 300000（5 分鐘）
-  const rawTimeout = parseInt(process.env.TURN_TIMEOUT_MS ?? "300000", 10);
-  const turnTimeoutMs = isNaN(rawTimeout) ? 300_000 : rawTimeout;
+  // 驗證 logLevel
+  const validLevels = ["debug", "info", "warn", "error", "silent"];
+  const logLevel = (
+    validLevels.includes(raw.logLevel ?? "") ? raw.logLevel : "info"
+  ) as LogLevel;
 
   return {
-    discordToken,
-    triggerMode,
-    allowedChannelIds,
-    claudeCwd,
-    claudeCommand,
-    debounceMs,
-    turnTimeoutMs,
+    token: raw.token,
+    showToolCalls: raw.showToolCalls ?? true,
+    dm: { enabled: raw.dm?.enabled ?? true },
+    guilds,
+    claudeCwd: raw.claudeCwd || process.env.HOME || "/",
+    claudeCommand: raw.claudeCommand || "claude",
+    debounceMs: raw.debounceMs ?? 500,
+    turnTimeoutMs: raw.turnTimeoutMs ?? 300_000,
+    logLevel,
   };
 }
+
+// ── Per-channel 存取 helper ─────────────────────────────────────────────────
+
+/** getChannelAccess 的回傳值 */
+export interface ChannelAccess {
+  /** 是否允許回應 */
+  allowed: boolean;
+  /** 是否需要 @mention bot */
+  requireMention: boolean;
+}
+
+/**
+ * 查詢指定頻道的存取設定
+ *
+ * 規則：
+ * - DM（guildId = null）→ 看 dm.enabled，不需 mention
+ * - guilds 為空物件 → 所有頻道允許，requireMention 預設 true
+ * - guilds 有設定 → 只允許明確 allow: true 的頻道
+ *
+ * @param guildId Guild ID（DM 時為 null）
+ * @param channelId Channel ID
+ */
+export function getChannelAccess(
+  guildId: string | null,
+  channelId: string
+): ChannelAccess {
+  // DM：不需 mention
+  if (!guildId) {
+    return { allowed: config.dm.enabled, requireMention: false };
+  }
+
+  // 沒有任何 guild 設定 → 全開，預設需 mention
+  if (Object.keys(config.guilds).length === 0) {
+    return { allowed: true, requireMention: true };
+  }
+
+  // 查 guild
+  const guild = config.guilds[guildId];
+  if (!guild) return { allowed: false, requireMention: true };
+
+  // 查 channel
+  const channel = guild.channels[channelId];
+  if (!channel) return { allowed: false, requireMention: true };
+
+  return {
+    allowed: channel.allow,
+    requireMention: channel.requireMention ?? true,
+  };
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
 
 /** 全域設定單例，啟動時載入一次 */
 export const config: BridgeConfig = loadConfig();

@@ -2,9 +2,8 @@
  * @file logger.ts
  * @description 簡易 log level 控制
  *
- * 依據 LOG_LEVEL 環境變數決定輸出層級。
  * 層級由低到高：debug < info < warn < error < silent
- * 預設 info，debug 訊息不會輸出。
+ * 預設 info。可透過 setLogLevel() 在啟動時設定。
  */
 
 /** 支援的 log level */
@@ -18,14 +17,12 @@ const LEVELS: Record<LogLevel, number> = {
   silent: 4,
 };
 
-/** 從環境變數解析 log level，無效值 fallback info */
-function resolveLevel(): LogLevel {
-  const raw = (process.env.LOG_LEVEL ?? "info").toLowerCase();
-  if (raw in LEVELS) return raw as LogLevel;
-  return "info";
-}
+let currentLevel: LogLevel = "info";
 
-const currentLevel = resolveLevel();
+/** 設定 log 層級（由 index.ts 在啟動時呼叫） */
+export function setLogLevel(level: LogLevel): void {
+  currentLevel = level;
+}
 
 function shouldLog(level: LogLevel): boolean {
   return LEVELS[level] >= LEVELS[currentLevel];

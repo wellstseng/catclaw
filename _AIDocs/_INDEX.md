@@ -22,11 +22,12 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 
 | 文件 | 對應原始碼 | 主題 |
 |------|-----------|------|
-| [modules/config.md](modules/config.md) | `src/config.ts` | 環境變數讀取、驗證、BridgeConfig 型別 |
+| [modules/config.md](modules/config.md) | `src/config.ts` | JSON 設定載入、per-channel helper |
 | [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn、串流 diff、AcpEvent 型別 |
 | [modules/session.md](modules/session.md) | `src/session.ts` | Session 快取、per-channel 串行佇列、timeout |
 | [modules/reply.md](modules/reply.md) | `src/reply.ts` | Discord 回覆分段、code fence 平衡、typing |
 | [modules/discord.md](modules/discord.md) | `src/discord.ts` | Discord Client、訊息過濾、debounce |
+| [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log level 控制、setLogLevel |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點、啟動順序、優雅關閉 |
 
 ## 架構一句話摘要

@@ -8,7 +8,7 @@
 
 ## API
 
-### `createReplyHandler(originalMessage): (event: AcpEvent) => Promise<void>`
+### `createReplyHandler(originalMessage, bridgeConfig): (event: AcpEvent) => Promise<void>`
 
 Factory 函式，建立閉包封裝的 event handler。回傳的函式可直接傳給 `session.enqueue` 的 `onEvent`。
 
@@ -52,7 +52,7 @@ Discord 訊息上限 2000 字（`TEXT_LIMIT`）。
 | Event | 行為 |
 |-------|------|
 | `text_delta` | 累積到 buffer → `flush(false)` |
-| `tool_call` | `flush(true)` → 傳送 `🔧 使用工具：{title}` |
+| `tool_call` | 若 `showToolCalls` 開啟 → `flush(true)` → 傳送 `🔧 使用工具：{title}` |
 | `done` | `stopTyping()` → `flush(true)` |
 | `error` | `stopTyping()` → `flush(true)` → 傳送 `⚠️ 發生錯誤：{message}` |
 | `status` | 靜默忽略 |

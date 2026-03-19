@@ -3,18 +3,21 @@
  * @description 進入點：載入設定、建立 Discord client、啟動 bot
  *
  * 流程：
- * 1. 從 config.ts 載入設定（失敗則印錯誤訊息並退出）
- * 2. 從 discord.ts 建立 Discord client
- * 3. 用 DISCORD_BOT_TOKEN 登入
- * 4. 監聽 ready 事件，確認上線後印出 bot tag
- * 5. 監聽 process 結束信號，優雅關閉
+ * 1. 從 config.ts 載入 config.json 設定
+ * 2. 設定 log level
+ * 3. 從 discord.ts 建立 Discord client
+ * 4. 用 token 登入
+ * 5. 監聽 ready 事件，確認上線後印出 bot tag
+ * 6. 監聽 process 結束信號，優雅關閉
  */
 
-// NOTE: dotenv 必須在 config.ts 之前載入，否則 process.env 尚未填充
-import "dotenv/config";
 import { config } from "./config.js";
-import { createDiscordClient } from "./discord.js";
+import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
+import { createDiscordClient } from "./discord.js";
+
+// 在其他模組開始 log 前設定層級
+setLogLevel(config.logLevel);
 
 // ── 啟動 ─────────────────────────────────────────────────────────────────────
 
@@ -22,14 +25,10 @@ const client = createDiscordClient(config);
 
 client.once("ready", (c) => {
   log.info(`[bridge] Bot 上線：${c.user.tag}`);
-  log.info(`  觸發模式：${config.triggerMode}`);
-  log.info(
-    `  允許頻道：${
-      config.allowedChannelIds.size > 0
-        ? [...config.allowedChannelIds].join(", ")
-        : "全部"
-    }`
-  );
+  log.info(`  DM：${config.dm.enabled ? "啟用" : "停用"}`);
+  const guildCount = Object.keys(config.guilds).length;
+  log.info(`  Guild 設定：${guildCount > 0 ? `${guildCount} 個` : "全部允許"}`);
+  log.info(`  工具訊息：${config.showToolCalls ? "顯示" : "隱藏"}`);
   log.info(`  Claude 工作目錄：${config.claudeCwd}`);
 });
 
@@ -49,4 +48,4 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // 登入 Discord
-await client.login(config.discordToken);
+await client.login(config.token);

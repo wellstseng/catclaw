@@ -17,7 +17,6 @@
 | 套件 | 用途 |
 |------|------|
 | `discord.js` ^14 | Discord Gateway 連線、訊息收發 |
-| `dotenv` ^17 | .env 環境變數載入 |
 | `typescript` ^5 | 編譯 |
 | `@types/node` ^22 | Node.js 型別 |
 | `claude` (PATH) | Claude Code CLI，外部安裝 |
@@ -31,7 +30,7 @@ Discord 訊息
     │
     ▼
 [discord.ts] onMessageCreate()
-    │  bot filter → 白名單 → 觸發模式 → strip mention
+    │  bot filter → getChannelAccess() → requireMention → strip mention
     ▼
 debounce(channelId:authorId, 500ms)
     │  多則訊息 \n 合併
@@ -53,15 +52,16 @@ debounce(channelId:authorId, 500ms)
 ```
 claude_discord/
 ├── src/
-│   ├── index.ts        進入點：dotenv + Discord login
-│   ├── config.ts       環境變數讀取與驗證
-│   ├── discord.ts      Discord client + debounce + 觸發模式
+│   ├── index.ts        進入點：設定 logLevel + Discord login
+│   ├── config.ts       config.json 載入 + per-channel helper
+│   ├── logger.ts       Log level 控制
+│   ├── discord.ts      Discord client + debounce + per-channel 過濾
 │   ├── session.ts      Session 快取 + per-channel queue + timeout
 │   ├── acp.ts          Claude CLI spawn + 串流 diff + event 解析
 │   └── reply.ts        Discord 回覆分段 + code fence 平衡 + typing
 ├── _AIDocs/            知識庫
 │   └── modules/        各模組詳細文件
-├── .env.example        環境變數範本
+├── config.example.json 設定範本（token + per-channel）
 ├── package.json
 └── tsconfig.json
 ```

@@ -6,11 +6,10 @@
  * 1. 建立 discord.js Client（含所有必要 Intents + Partials）
  * 2. messageCreate 事件：
  *    a. 忽略 bot 自身訊息
- *    b. 頻道白名單過濾
- *    c. 觸發模式判斷（mention / all / DM 永遠觸發）
- *    d. strip mention prefix
- *    e. debounce（同一人 500ms 內多則訊息合併）
- *    f. 觸發 session.enqueue → reply.createReplyHandler
+ *    b. getChannelAccess() 查詢 per-channel 設定（allow / requireMention）
+ *    c. strip mention prefix
+ *    d. debounce（同一人 500ms 內多則訊息合併）
+ *    e. 觸發 session.enqueue → reply.createReplyHandler
  */
 
 import {
@@ -20,6 +19,7 @@ import {
   type Message,
 } from "discord.js";
 import type { BridgeConfig } from "./config.js";
+import { getChannelAccess } from "./config.js";
 import { enqueue } from "./session.js";
 import { createReplyHandler } from "./reply.js";
 import { log } from "./logger.js";
@@ -129,28 +129,20 @@ async function handleMessage(
     return;
   }
 
-  const isDM = !message.guild;
+  // 查詢 per-channel 存取設定
+  const guildId = message.guild?.id ?? null;
+  const access = getChannelAccess(guildId, message.channelId);
 
-  // 頻道白名單過濾（DM 不受白名單限制）
-  if (
-    !isDM &&
-    config.allowedChannelIds.size > 0 &&
-    !config.allowedChannelIds.has(message.channelId)
-  ) {
-    log.debug(`[discord] 忽略：頻道 ${message.channelId} 不在白名單`);
+  if (!access.allowed) {
+    log.debug(`[discord] 忽略：頻道 ${message.channelId} 不允許`);
     return;
   }
 
   // 觸發模式判斷
-  // - DM：永遠觸發，無視 TRIGGER_MODE
-  // - mention 模式：訊息必須 @mention bot
-  // - all 模式：白名單頻道內所有訊息
   let text: string;
 
-  if (isDM) {
-    text = message.content.trim();
-  } else if (config.triggerMode === "mention") {
-    // 確認是否有 mention bot
+  if (access.requireMention) {
+    // 需要 @mention bot
     const botUser = message.client.user;
     if (!botUser) {
       log.debug("[discord] 忽略：botUser 為 null");
@@ -166,7 +158,7 @@ async function handleMessage(
       .replace(/<@!?\d+>/g, "")
       .trim();
   } else {
-    // all 模式：直接使用完整訊息
+    // 不需 mention：直接使用完整訊息
     text = message.content.trim();
   }
 
@@ -180,7 +172,7 @@ async function handleMessage(
 
   // Debounce：合併短時間內同一人的多則訊息
   debounce(message, text, config, (combinedText, firstMessage) => {
-    const onEvent = createReplyHandler(firstMessage);
+    const onEvent = createReplyHandler(firstMessage, config);
 
     enqueue(firstMessage.channelId, combinedText, onEvent, {
       cwd: config.claudeCwd,

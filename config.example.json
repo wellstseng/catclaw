@@ -1,0 +1,30 @@
+{
+  "token": "your_discord_bot_token_here",
+
+  "showToolCalls": false,
+
+  "dm": {
+    "enabled": true
+  },
+
+  "guilds": {
+    "123456789012345678": {
+      "channels": {
+        "111111111111111111": {
+          "allow": true,
+          "requireMention": false
+        },
+        "222222222222222222": {
+          "allow": true,
+          "requireMention": true
+        }
+      }
+    }
+  },
+
+  "claudeCwd": "",
+  "claudeCommand": "claude",
+  "debounceMs": 500,
+  "turnTimeoutMs": 300000,
+  "logLevel": "info"
+}

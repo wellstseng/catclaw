@@ -4,7 +4,7 @@
 
 ## 職責
 
-建立 Discord Client，處理 `messageCreate` 事件：bot 過濾 → 白名單 → 觸發模式判斷 → debounce 合併 → 觸發 session + reply。
+建立 Discord Client，處理 `messageCreate` 事件：bot 過濾 → `getChannelAccess()` 查詢 per-channel 設定 → debounce 合併 → 觸發 session + reply。
 
 ## Client 設定
 
@@ -20,18 +20,23 @@ partials: [Partials.Channel]
 ```
 messageCreate
   ├─ bot 自身 → 忽略
-  ├─ 非 DM + 不在白名單 → 忽略
-  ├─ mention 模式 + 未 mention bot → 忽略
+  ├─ getChannelAccess(guildId, channelId)
+  │   ├─ allowed = false → 忽略
+  │   └─ requireMention = true + 未 mention → 忽略
   ├─ strip mention → 文字為空 → 忽略
   └─ 通過 → debounce → enqueue
 ```
 
-### 觸發模式
+### Per-Channel 設定
 
-| 模式 | Guild | DM |
-|------|-------|----|
-| `mention` | 需 @mention bot | 永遠觸發 |
-| `all` | 白名單頻道所有訊息 | 永遠觸發 |
+透過 `config.ts` 的 `getChannelAccess()` 查詢：
+
+| 情境 | allowed | requireMention |
+|------|---------|---------------|
+| DM | `dm.enabled` | `false` |
+| guilds 空 | `true` | `true` |
+| 頻道有設定 | `channel.allow` | `channel.requireMention ?? true` |
+| 頻道未列出 | `false` | — |
 
 Mention strip：`content.replace(/<@!?\d+>/g, "").trim()`
 

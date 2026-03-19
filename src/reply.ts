@@ -6,16 +6,17 @@
  * - 累積 text_delta，達 2000 字（Discord API 上限）時自動切割
  * - Code fence 跨 chunk 平衡：奇數個 ``` 時自動補關/補開
  * - 第一段用 message.reply()，後續用 channel.send()
- * - tool_call event → 傳送 🔧 提示訊息
+ * - tool_call event → 可透過 config.showToolCalls 控制是否顯示
  * - error event → 傳送錯誤訊息
  *
  * 使用方式：
- *   const onEvent = createReplyHandler(message);
+ *   const onEvent = createReplyHandler(message, config);
  *   enqueue(channelId, text, onEvent, opts);
  */
 
 import type { Message, SendableChannels } from "discord.js";
 import type { AcpEvent } from "./acp.js";
+import type { BridgeConfig } from "./config.js";
 
 // Discord 訊息字數硬上限
 const TEXT_LIMIT = 2000;
@@ -66,16 +67,18 @@ async function sendChunk(
  *
  * 回傳的函式每次收到 AcpEvent 都會：
  * - text_delta → 累積到 buffer，達 TEXT_LIMIT 時 flush
- * - tool_call  → flush buffer + 傳送 🔧 提示
+ * - tool_call  → 若 showToolCalls 開啟則傳送 🔧 提示
  * - done       → flush 所有剩餘 buffer
  * - error      → flush buffer + 傳送錯誤訊息
  * - status     → 靜默忽略
  *
  * @param originalMessage 觸發此 turn 的 Discord 訊息（用於 reply）
+ * @param bridgeConfig 全域設定（用於 showToolCalls）
  * @returns async event handler，可直接傳給 session.enqueue 的 onEvent 參數
  */
 export function createReplyHandler(
-  originalMessage: Message
+  originalMessage: Message,
+  bridgeConfig: BridgeConfig
 ): (event: AcpEvent) => Promise<void> {
   let buffer = "";
   let isFirst = true;
@@ -128,11 +131,13 @@ export function createReplyHandler(
       buffer += event.text;
       await flush(false);
     } else if (event.type === "tool_call") {
-      // 先把目前 buffer flush 出去，再傳工具提示
-      await flush(true);
-      await sendChunk(`🔧 使用工具：${event.title}`, originalMessage, isFirst);
-      if (isFirst) stopTyping();
-      isFirst = false;
+      if (bridgeConfig.showToolCalls) {
+        // 先把目前 buffer flush 出去，再傳工具提示
+        await flush(true);
+        await sendChunk(`🔧 使用工具：${event.title}`, originalMessage, isFirst);
+        if (isFirst) stopTyping();
+        isFirst = false;
+      }
     } else if (event.type === "done") {
       stopTyping();
       await flush(true);
