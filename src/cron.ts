@@ -184,6 +184,7 @@ async function execClaude(channelId: string, prompt: string): Promise<void> {
     prompt,
     config.claude.cwd,
     config.claude.command,
+    channelId, // 排程 job 的目標頻道
   )) {
     if (event.type === "text_delta") {
       responseText += event.text;

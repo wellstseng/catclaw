@@ -34,12 +34,21 @@ function isRunning() {
   }
 }
 
-/** 寫入 signal file 觸發 PM2 watch 重啟 */
-function triggerRestart() {
+/**
+ * 寫入 signal file 觸發 PM2 watch 重啟
+ * channelId 從環境變數 CATCLAW_CHANNEL_ID 取得（由 acp.ts spawn 時設定）
+ * 手動執行時不帶 channelId（無通知）
+ *
+ * @param channelId 可選，指定要通知的頻道
+ */
+function triggerRestart(channelId) {
   const signalDir = resolve(__dirname, "signal");
   try { execSync(`mkdir -p "${signalDir}"`, { stdio: "pipe" }); } catch {}
   const signalPath = resolve(signalDir, "RESTART");
-  writeFileSync(signalPath, new Date().toISOString(), "utf-8");
+  writeFileSync(signalPath, JSON.stringify({
+    channelId: channelId ?? process.env.CATCLAW_CHANNEL_ID,
+    time: new Date().toISOString(),
+  }), "utf-8");
 }
 
 const cmd = process.argv[2] ?? "start";

@@ -11,6 +11,8 @@
  * 6. 監聽 process 結束信號，優雅關閉
  */
 
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { resolve } from "node:path";
 import { config, watchConfig } from "./config.js";
 import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
@@ -41,6 +43,42 @@ client.once("ready", (c) => {
 
   // Bot 上線後啟動排程服務（需要 client 來發送訊息）
   startCron(client);
+
+  // ── 重啟通知：檢查 signal/RESTART，向觸發重啟的頻道回報 ──
+  const signalPath = resolve(process.cwd(), "signal", "RESTART");
+  if (existsSync(signalPath)) {
+    try {
+      const raw = readFileSync(signalPath, "utf-8").trim();
+      unlinkSync(signalPath);
+
+      // signal file 格式：JSON { channelId, time } 或純時間字串（向下相容）
+      let channelId: string | undefined;
+      let restartTime: string;
+      try {
+        const parsed = JSON.parse(raw) as { channelId?: string; time?: string };
+        channelId = parsed.channelId;
+        restartTime = parsed.time ?? raw;
+      } catch {
+        restartTime = raw;
+      }
+
+      if (channelId) {
+        // NOTE: cache 在 ready 時可能尚未填充，用 fetch 確保取得頻道
+        client.channels.fetch(channelId).then((ch) => {
+          if (ch?.isTextBased() && "send" in ch) {
+            ch.send(`[CatClaw] 已重啟（${restartTime}）`);
+          }
+          log.info(`[bridge] 重啟通知已送出 channel=${channelId}`);
+        }).catch((err: unknown) => {
+          log.warn(`[bridge] 重啟通知失敗 channel=${channelId}: ${err}`);
+        });
+      } else {
+        log.info(`[bridge] 重啟偵測到但無 channelId，跳過通知`);
+      }
+    } catch (err) {
+      log.warn(`[bridge] 重啟通知處理失敗: ${err}`);
+    }
+  }
 });
 
 // 優雅關閉：收到 SIGINT / SIGTERM 時先 destroy client 再退出

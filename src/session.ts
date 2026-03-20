@@ -112,6 +112,25 @@ function saveSessions(ttlMs: number): void {
   }
 }
 
+/**
+ * 取得最近活躍的 channel ID 列表（用於重啟通知等）
+ * 只回傳 TTL 內的 channel
+ *
+ * @param ttlMs 過期門檻（毫秒）
+ * @returns 最近活躍的 channel ID 陣列
+ */
+export function getRecentChannelIds(ttlMs: number): string[] {
+  const now = Date.now();
+  const result: string[] = [];
+  for (const [channelId] of sessionCache) {
+    const updatedAt = sessionUpdatedAt.get(channelId) ?? 0;
+    if (now - updatedAt <= ttlMs) {
+      result.push(channelId);
+    }
+  }
+  return result;
+}
+
 // ── 內部函式 ────────────────────────────────────────────────────────────────
 
 /**
@@ -180,6 +199,7 @@ async function runTurn(
     text,
     cwd,
     claudeCmd,
+    channelId,
     signal
   )) {
     log.debug(`[session] event: ${event.type}`);
@@ -211,6 +231,7 @@ async function runTurn(
       text,
       cwd,
       claudeCmd,
+      channelId,
       signal
     )) {
       if (event.type === "session_init") {

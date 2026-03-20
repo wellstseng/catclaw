@@ -4,6 +4,8 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-20 | **feat: signal file 重啟機制 + 重啟回報 + 錯誤分類**：PM2 監聽 signal/ 目錄，寫入 RESTART 觸發重啟。重啟後自動在觸發頻道回報。acp.ts 錯誤訊息區分 overloaded/502/rate limit/timeout 等。spawn 時傳 CATCLAW_CHANNEL_ID env var | ecosystem.config.cjs, acp.ts, session.ts, index.ts, cron.ts |
+| 2026-03-20 | **feat: cron 排程模組**：croner 驅動，支援 cron/every/at 三種模式，config.json hot-reload 支援 | cron.ts, config.ts, config.example.json, package.json |
 | 2026-03-19 | feat: acp log 雜訊控制（ACP_TRACE 環境變數）+ prompt 加 displayName 識別多人對話 | acp.ts, discord.ts |
 | 2026-03-19 | feat: session 磁碟持久化 — 重啟後自動 resume、TTL 過期機制（預設 7 天）、resume 失敗自動重試、原子寫入 | session.ts, config.ts, index.ts, discord.ts, config.example.json, .gitignore |
 | 2026-03-19 | fix: fileMode + MEDIA token 並存時 buffer 未重建，導致文字重複或遺漏；新增 /upload skill | reply.ts |

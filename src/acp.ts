@@ -45,6 +45,36 @@ interface AssistantMessage {
   content: ContentBlock[];
 }
 
+// ── 錯誤分類 ────────────────────────────────────────────────────────────────
+
+/**
+ * 從 stderr 和 exit code 推測錯誤原因，產生使用者可讀的訊息
+ *
+ * @param stderr stderr 輸出尾段
+ * @param code process exit code
+ * @returns 錯誤描述
+ */
+function classifyError(stderr: string, code: number | null): string {
+  const lower = stderr.toLowerCase();
+
+  if (lower.includes("overloaded") || lower.includes("529"))
+    return "Claude API 過載（overloaded），請稍後再試";
+  if (lower.includes("rate") && lower.includes("limit"))
+    return "Claude API 速率限制（rate limit），請稍後再試";
+  if (lower.includes("502") || lower.includes("bad gateway"))
+    return "Claude API 連線失敗（502 Bad Gateway）";
+  if (lower.includes("503") || lower.includes("service unavailable"))
+    return "Claude API 暫時無法使用（503）";
+  if (lower.includes("timeout") || lower.includes("etimedout"))
+    return "Claude API 連線逾時";
+  if (lower.includes("econnreset") || lower.includes("econnrefused"))
+    return "Claude API 連線中斷";
+  if (lower.includes("authentication") || lower.includes("401") || lower.includes("unauthorized"))
+    return "Claude API 認證失敗";
+
+  return `claude 異常退出（exit ${code}）${stderr ? `：${stderr.slice(-100)}` : ""}`;
+}
+
 // ── 主要 API ────────────────────────────────────────────────────────────────
 
 /**
@@ -54,6 +84,7 @@ interface AssistantMessage {
  * @param text 使用者輸入文字
  * @param cwd Claude session 工作目錄（spawn cwd）
  * @param claudeCmd claude binary 路徑
+ * @param channelId Discord channel ID（傳給 Claude CLI 做為環境變數，用於重啟回報）
  * @param signal AbortSignal，用於取消進行中的 turn
  * @yields AcpEvent（session_init / text_delta / tool_call / done / error / status）
  */
@@ -62,6 +93,7 @@ export async function* runClaudeTurn(
   text: string,
   cwd: string,
   claudeCmd: string,
+  channelId: string,
   signal?: AbortSignal
 ): AsyncGenerator<AcpEvent> {
   const args = [
@@ -83,9 +115,11 @@ export async function* runClaudeTurn(
   log.debug(`[acp] spawn: ${claudeCmd} ${args.join(" ")}`);
 
   // NOTE: stdin 設 "ignore"，prompt 已透過 positional argument 傳入，不需要 stdin
+  // 傳遞 CATCLAW_CHANNEL_ID 讓 Claude CLI 知道當前頻道，用於重啟回報
   const proc = spawn(claudeCmd, args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, CATCLAW_CHANNEL_ID: channelId },
   });
 
   log.debug(`[acp] process spawned, pid=${proc.pid}`);
@@ -225,8 +259,12 @@ export async function* runClaudeTurn(
     }
   });
 
+  // 收集 stderr 用於錯誤診斷（只保留最後 500 字元）
+  let stderrTail = "";
   proc.stderr.on("data", (chunk: Buffer) => {
-    if (process.env.ACP_TRACE) log.debug(`[acp] stderr: ${chunk.toString().slice(0, 200)}`);
+    const text = chunk.toString();
+    if (process.env.ACP_TRACE) log.debug(`[acp] stderr: ${text.slice(0, 200)}`);
+    stderrTail = (stderrTail + text).slice(-500);
   });
 
   proc.on("close", (code) => {
@@ -253,7 +291,9 @@ export async function* runClaudeTurn(
       // Abort（timeout）→ 補 error event 讓上層清理 typing indicator
       push({ type: "error", message: "回應逾時，已取消" });
     } else if (code !== 0) {
-      push({ type: "error", message: `claude 異常退出（exit ${code}）` });
+      // 從 stderr 嘗試分類錯誤原因
+      const hint = classifyError(stderrTail, code);
+      push({ type: "error", message: hint });
     }
 
     push(null); // 結束信號

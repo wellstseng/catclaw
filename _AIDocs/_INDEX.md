@@ -28,8 +28,15 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 | [modules/reply.md](modules/reply.md) | `src/reply.ts` | Discord 回覆分段、code fence 平衡、typing |
 | [modules/discord.md](modules/discord.md) | `src/discord.ts` | Discord Client、訊息過濾、debounce |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log level 控制、setLogLevel |
-| [modules/index.md](modules/index.md) | `src/index.ts` | 進入點、啟動順序、優雅關閉 |
+| [modules/index.md](modules/index.md) | `src/index.ts` | 進入點、啟動順序、優雅關閉、重啟回報 |
+| [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務（cron/every/at）、croner 驅動 |
 
 ## 架構一句話摘要
 
 Discord 訊息 → debounce → displayName 前綴 → `claude -p stream-json [--resume]` → diff 串流 → 2000 字分段回覆 Discord
+
+## 重啟機制
+
+PM2 監聽 `signal/` 目錄。寫入 `signal/RESTART`（JSON: `{channelId, time}`）觸發重啟。
+重啟後自動在觸發頻道發送 `[CatClaw] 已重啟（時間）`。
+Claude CLI spawn 時帶 `CATCLAW_CHANNEL_ID` 環境變數，確保回報準確。
