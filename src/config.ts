@@ -98,13 +98,11 @@ export interface CronJobDef {
   maxRetries?: number;
 }
 
-/** Cron 全域設定 */
+/** Cron 全域設定（job 定義在 data/cron-jobs.json） */
 export interface CronConfig {
   enabled: boolean;
   /** 同時執行的 job 上限，預設 1 */
   maxConcurrentRuns: number;
-  /** job 定義（持久化到 data/cron-jobs.json，config 中的定義為初始種子） */
-  jobs: CronJobDef[];
 }
 
 /** 全域設定物件型別 */
@@ -156,7 +154,6 @@ interface RawConfig {
   cron?: {
     enabled?: boolean;
     maxConcurrentRuns?: number;
-    jobs?: CronJobDef[];
   };
 }
 
@@ -237,7 +234,6 @@ function loadConfig(): BridgeConfig {
     cron: {
       enabled: raw.cron?.enabled ?? false,
       maxConcurrentRuns: raw.cron?.maxConcurrentRuns ?? 1,
-      jobs: raw.cron?.jobs ?? [],
     },
   };
 }

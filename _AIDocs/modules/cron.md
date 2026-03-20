@@ -4,7 +4,9 @@
 
 ## 職責
 
-定時排程執行任務（發送訊息或呼叫 Claude），支援三種排程模式。由 `config.json` 的 `cron` 區塊設定。
+定時排程執行任務（發送訊息或呼叫 Claude），支援三種排程模式。
+Job 定義 + 執行狀態統一存在 `data/cron-jobs.json`，支援 hot-reload。
+`config.json` 只控制 `cron.enabled` 和 `maxConcurrentRuns`。
 
 ## 排程模式
 
@@ -18,50 +20,52 @@
 
 | Type | 說明 |
 |------|------|
-| `message` | 直接向指定頻道發送文字 |
+| `message` | 直接向指定頻道發送文字（不經過 Claude） |
 | `claude` | 呼叫 Claude CLI，將回覆送到指定頻道 |
 
 ## 生命週期
 
 ```
 startCron(client)          ← client.ready 後呼叫
-  → 遍歷 config.cron.jobs
-  → 為每個 enabled job 建立 croner 實例
-  → croner 到點觸發 → executeJob()
+  → loadStore()            ← 讀 data/cron-jobs.json
+  → initJobs()             ← 補齊狀態欄位、修正過期時間
+  → watchCronJobs()        ← fs.watch() hot-reload
+  → armTimer()             ← setTimeout loop 開始
+
+onTimer()                  ← 到期觸發
+  → collectRunnableJobs()  ← 找到期 job
+  → worker pool            ← maxConcurrentRuns 併發限制
+  → runJob()               ← 執行 + 更新狀態 + saveStore()
+  → armTimer()             ← 重新排程
 
 stopCron()                 ← SIGINT/SIGTERM 時呼叫
-  → 停止所有 croner 實例
+  → clearTimeout()
 ```
 
-## Config 格式
+## 檔案格式
+
+### config.json（全域開關）
 
 ```json
 {
   "cron": {
-    "enabled": false,
-    "maxConcurrentRuns": 1,
-    "jobs": [
-      {
-        "id": "morning-greeting",
-        "name": "早安問候",
-        "enabled": true,
-        "schedule": { "kind": "cron", "expr": "0 9 * * *", "tz": "Asia/Taipei" },
-        "action": { "type": "message", "channelId": "...", "text": "早安！" }
-      }
-    ]
+    "enabled": true,
+    "maxConcurrentRuns": 1
   }
 }
 ```
 
-## Job 持久化
-
-狀態檔案：`data/cron-jobs.json`（原子寫入，已 gitignore）
+### data/cron-jobs.json（job 定義 + 狀態合併）
 
 ```json
 {
   "version": 1,
   "jobs": {
-    "<jobId>": {
+    "morning-greeting": {
+      "name": "早安問候",
+      "enabled": true,
+      "schedule": { "kind": "cron", "expr": "0 9 * * *", "tz": "Asia/Taipei" },
+      "action": { "type": "message", "channelId": "...", "text": "早安！" },
       "nextRunAtMs": 1710000000000,
       "lastRunAtMs": 1710000000000,
       "lastResult": "success",
@@ -71,9 +75,8 @@ stopCron()                 ← SIGINT/SIGTERM 時呼叫
 }
 ```
 
-- config.json 中的 jobs 為初始種子定義，執行狀態與持久化狀態合併管理
-- 啟動時：載入 store → 合併 config jobs → 過期的非 at job 重新計算 nextRunAtMs
-- 執行後：更新狀態 + 原子寫入磁碟
+手動編輯 cron-jobs.json 存檔即生效（hot-reload，500ms debounce）。
+系統寫入時設 `selfWriting` flag 防止自己觸發 reload。
 
 ## 重試機制
 
@@ -91,11 +94,18 @@ stopCron()                 ← SIGINT/SIGTERM 時呼叫
 
 `maxConcurrentRuns` 限制同時執行的 job 數量（worker pool pattern）。
 
+## Hot-Reload
+
+`fs.watch()` 監聽 `data/cron-jobs.json`：
+- 500ms debounce 防多次觸發
+- `selfWriting` flag 過濾自己的寫入
+- reload 時保留正在執行中的 job 狀態，用新的定義覆蓋
+
 ## 與其他模組的關係
 
-- **config.ts**：`CronConfig`、`CronJobDef`、`CronSchedule`、`CronAction` 型別定義
+- **config.ts**：`CronSchedule`、`CronAction` 型別定義；`CronConfig` 只含 `enabled` + `maxConcurrentRuns`
 - **acp.ts**：claude 類型動作呼叫 `runClaudeTurn()`，傳入 job 的 `channelId`
-- **config hot-reload**：`cron.enabled` 和 job 設定可即時變更
+- **config hot-reload**：`cron.enabled` 變更即時生效
 
 ## 依賴
 

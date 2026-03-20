@@ -6,43 +6,55 @@
  * 1. setTimeout loop 輪詢到期 job（2-60s 間隔）
  * 2. croner 解析 cron 表達式、計算下次執行時間
  * 3. 兩種 action：message（直接發訊息）/ claude（spawn Claude turn）
- * 4. Job 狀態持久化到 data/cron-jobs.json
- * 5. 重試 + 指數退避
- * 6. 併發限制
+ * 4. Job 定義 + 狀態統一持久化到 data/cron-jobs.json
+ * 5. fs.watch() 監聽 cron-jobs.json 變更，自動 hot-reload
+ * 6. 重試 + 指數退避
+ * 7. 併發限制
  *
  * 對外 API：startCron(client) / stopCron()
  */
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, renameSync, watch, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { Cron } from "croner";
 import type { Client, SendableChannels } from "discord.js";
 import { config } from "./config.js";
-import type { CronJobDef, CronSchedule } from "./config.js";
+import type { CronSchedule, CronAction } from "./config.js";
 import { runClaudeTurn } from "./acp.js";
 import { log } from "./logger.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────
 
-/** 持久化的 job 狀態 */
-interface CronJobState {
-  nextRunAtMs: number;
+/** cron-jobs.json 中每個 job 的完整結構（定義 + 狀態合併） */
+interface CronJobEntry {
+  // ── 定義（使用者設定）──
+  name: string;
+  enabled?: boolean;
+  schedule: CronSchedule;
+  action: CronAction;
+  /** 一次性 job 執行後自動刪除 */
+  deleteAfterRun?: boolean;
+  /** 重試次數上限，預設 3 */
+  maxRetries?: number;
+
+  // ── 狀態（系統追蹤）──
+  nextRunAtMs?: number;
   lastRunAtMs?: number;
   lastResult?: "success" | "error";
   lastError?: string;
-  retryCount: number;
+  retryCount?: number;
 }
 
-/** 運行時 job = 定義 + 狀態 */
-interface CronJobRuntime {
-  def: CronJobDef;
-  state: CronJobState;
-}
-
-/** 持久化格式 */
+/** cron-jobs.json 的完整結構 */
 interface CronStore {
   version: 1;
-  jobs: Record<string, CronJobState>;
+  jobs: Record<string, CronJobEntry>;
+}
+
+/** 運行時 job（id + entry 引用） */
+interface CronJobRuntime {
+  id: string;
+  entry: CronJobEntry;
 }
 
 // ── 常數 ────────────────────────────────────────────────────────────────────
@@ -63,7 +75,10 @@ const BACKOFF_SCHEDULE_MS = [
 let discordClient: Client | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
-const jobs = new Map<string, CronJobRuntime>();
+/** 當前載入的 store（記憶體中的 source of truth） */
+let store: CronStore = { version: 1, jobs: {} };
+/** 防止自己寫入觸發 watch 的 flag */
+let selfWriting = false;
 
 // ── Schedule 計算 ───────────────────────────────────────────────────────────
 
@@ -94,30 +109,37 @@ function computeNextRunAtMs(schedule: CronSchedule, nowMs: number): number {
 
 // ── 持久化 ──────────────────────────────────────────────────────────────────
 
-/** 從磁碟載入 job 狀態 */
+/** 從磁碟載入 store */
 function loadStore(): CronStore {
   try {
     const raw = readFileSync(STORE_PATH, "utf-8");
-    return JSON.parse(raw) as CronStore;
+    const parsed = JSON.parse(raw) as CronStore;
+    if (parsed.version !== 1 || !parsed.jobs) {
+      log.warn("[cron] cron-jobs.json 格式不正確，使用空 store");
+      return { version: 1, jobs: {} };
+    }
+    return parsed;
   } catch {
     return { version: 1, jobs: {} };
   }
 }
 
-/** 將 job 狀態寫入磁碟（原子寫入） */
+/**
+ * 將 store 寫入磁碟（原子寫入）
+ * 寫入時設定 selfWriting flag，避免 watch 觸發重複 reload
+ */
 function saveStore(): void {
-  const store: CronStore = { version: 1, jobs: {} };
-  for (const [id, job] of jobs) {
-    store.jobs[id] = job.state;
-  }
-
   try {
     const dir = dirname(STORE_PATH);
     mkdirSync(dir, { recursive: true });
     const tmpFile = STORE_PATH + ".tmp";
+    selfWriting = true;
     writeFileSync(tmpFile, JSON.stringify(store, null, 2), "utf-8");
     renameSync(tmpFile, STORE_PATH);
+    // 延遲重置 flag，讓 watch 的 debounce 有機會過濾掉
+    setTimeout(() => { selfWriting = false; }, 1000);
   } catch (err) {
+    selfWriting = false;
     log.warn(`[cron] 儲存 cron-jobs.json 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -125,30 +147,89 @@ function saveStore(): void {
 // ── Job 初始化 ──────────────────────────────────────────────────────────────
 
 /**
- * 從 config 載入 job 定義，合併磁碟上的狀態
+ * 從 cron-jobs.json 載入所有 job，補齊缺少的狀態欄位
  */
 function initJobs(): void {
-  const store = loadStore();
+  store = loadStore();
   const nowMs = Date.now();
-  jobs.clear();
 
-  for (const def of config.cron.jobs) {
-    const existing = store.jobs[def.id];
-    const state: CronJobState = existing ?? {
-      nextRunAtMs: computeNextRunAtMs(def.schedule, nowMs),
-      retryCount: 0,
-    };
+  for (const [id, entry] of Object.entries(store.jobs)) {
+    // 補齊狀態欄位預設值
+    entry.retryCount ??= 0;
+    entry.nextRunAtMs ??= computeNextRunAtMs(entry.schedule, nowMs);
 
     // 若 nextRunAtMs 已過期（例如 bot 離線期間），立即排到下一次
-    if (state.nextRunAtMs < nowMs && def.schedule.kind !== "at") {
-      state.nextRunAtMs = computeNextRunAtMs(def.schedule, nowMs);
+    if (entry.nextRunAtMs < nowMs && entry.schedule.kind !== "at") {
+      entry.nextRunAtMs = computeNextRunAtMs(entry.schedule, nowMs);
     }
 
-    jobs.set(def.id, { def, state });
+    log.debug(`[cron] 載入 job: ${entry.name} (${id}), next: ${new Date(entry.nextRunAtMs).toISOString()}`);
   }
 
-  log.info(`[cron] 已載入 ${jobs.size} 個 job`);
+  log.info(`[cron] 已載入 ${Object.keys(store.jobs).length} 個 job`);
   saveStore();
+}
+
+/**
+ * Hot-reload：重新載入 cron-jobs.json，保留正在執行中的 job 狀態
+ */
+function reloadJobs(): void {
+  const newStore = loadStore();
+  const nowMs = Date.now();
+
+  // 合併：新 store 的定義為主，保留舊 store 中仍在跑的 job 狀態
+  for (const [id, entry] of Object.entries(newStore.jobs)) {
+    const existing = store.jobs[id];
+    if (existing) {
+      // 保留執行狀態，用新的定義覆蓋
+      entry.nextRunAtMs ??= existing.nextRunAtMs;
+      entry.lastRunAtMs ??= existing.lastRunAtMs;
+      entry.lastResult ??= existing.lastResult;
+      entry.lastError ??= existing.lastError;
+      entry.retryCount ??= existing.retryCount;
+    } else {
+      // 新 job，初始化狀態
+      entry.retryCount ??= 0;
+      entry.nextRunAtMs ??= computeNextRunAtMs(entry.schedule, nowMs);
+    }
+  }
+
+  store = newStore;
+  log.info(`[cron] hot-reload 完成，${Object.keys(store.jobs).length} 個 job`);
+
+  // 重新 arm timer（schedule 可能變了）
+  if (running) {
+    if (timer) clearTimeout(timer);
+    armTimer();
+  }
+}
+
+// ── Hot-Reload Watcher ──────────────────────────────────────────────────────
+
+/**
+ * 監聽 cron-jobs.json 變更，自動 reload（500ms debounce）
+ */
+function watchCronJobs(): void {
+  if (!existsSync(STORE_PATH)) return;
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    watch(STORE_PATH, () => {
+      // 自己寫入的不觸發 reload
+      if (selfWriting) return;
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        log.info("[cron] 偵測到 cron-jobs.json 變動，重新載入...");
+        reloadJobs();
+      }, 500);
+    });
+    log.info("[cron] 已啟動 cron-jobs.json 監聽（hot-reload）");
+  } catch (err) {
+    log.warn(`[cron] 無法監聽 cron-jobs.json：${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 // ── Job 執行 ────────────────────────────────────────────────────────────────
@@ -209,53 +290,54 @@ async function execClaude(channelId: string, prompt: string): Promise<void> {
  * 執行單一 job
  */
 async function runJob(job: CronJobRuntime): Promise<void> {
-  const { def, state } = job;
-  log.info(`[cron] 執行 job: ${def.name} (${def.id})`);
+  const { id, entry } = job;
+  log.info(`[cron] 執行 job: ${entry.name} (${id})`);
 
   try {
-    if (def.action.type === "message") {
-      await execMessage(def.action.channelId, def.action.text);
+    if (entry.action.type === "message") {
+      await execMessage(entry.action.channelId, entry.action.text);
     } else {
-      await execClaude(def.action.channelId, def.action.prompt);
+      await execClaude(entry.action.channelId, entry.action.prompt);
     }
 
     // 成功
-    state.lastResult = "success";
-    state.lastError = undefined;
-    state.retryCount = 0;
-    state.lastRunAtMs = Date.now();
+    entry.lastResult = "success";
+    entry.lastError = undefined;
+    entry.retryCount = 0;
+    entry.lastRunAtMs = Date.now();
 
     // 一次性 job → 移除
-    if (def.deleteAfterRun || def.schedule.kind === "at") {
-      log.info(`[cron] 一次性 job 完成，移除：${def.name}`);
-      jobs.delete(def.id);
+    if (entry.deleteAfterRun || entry.schedule.kind === "at") {
+      log.info(`[cron] 一次性 job 完成，移除：${entry.name}`);
+      delete store.jobs[id];
     } else {
       // 計算下次執行時間
-      state.nextRunAtMs = computeNextRunAtMs(def.schedule, Date.now());
+      entry.nextRunAtMs = computeNextRunAtMs(entry.schedule, Date.now());
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.warn(`[cron] job 執行失敗：${def.name} — ${message}`);
+    log.warn(`[cron] job 執行失敗：${entry.name} — ${message}`);
 
-    state.lastResult = "error";
-    state.lastError = message;
-    state.lastRunAtMs = Date.now();
+    entry.lastResult = "error";
+    entry.lastError = message;
+    entry.lastRunAtMs = Date.now();
 
-    const maxRetries = def.maxRetries ?? 3;
-    if (state.retryCount < maxRetries) {
+    const maxRetries = entry.maxRetries ?? 3;
+    const retryCount = entry.retryCount ?? 0;
+    if (retryCount < maxRetries) {
       // 重試：指數退避
-      const backoffMs = BACKOFF_SCHEDULE_MS[Math.min(state.retryCount, BACKOFF_SCHEDULE_MS.length - 1)];
-      state.retryCount++;
-      state.nextRunAtMs = Date.now() + backoffMs;
-      log.info(`[cron] 排程重試 #${state.retryCount}（${Math.round(backoffMs / 1000)}s 後）：${def.name}`);
+      const backoffMs = BACKOFF_SCHEDULE_MS[Math.min(retryCount, BACKOFF_SCHEDULE_MS.length - 1)];
+      entry.retryCount = retryCount + 1;
+      entry.nextRunAtMs = Date.now() + backoffMs;
+      log.info(`[cron] 排程重試 #${entry.retryCount}（${Math.round(backoffMs / 1000)}s 後）：${entry.name}`);
     } else {
       // 超過重試上限，跳到下次正常排程
-      state.retryCount = 0;
-      if (def.schedule.kind !== "at") {
-        state.nextRunAtMs = computeNextRunAtMs(def.schedule, Date.now());
+      entry.retryCount = 0;
+      if (entry.schedule.kind !== "at") {
+        entry.nextRunAtMs = computeNextRunAtMs(entry.schedule, Date.now());
       } else {
-        log.warn(`[cron] 一次性 job 重試用盡，移除：${def.name}`);
-        jobs.delete(def.id);
+        log.warn(`[cron] 一次性 job 重試用盡，移除：${entry.name}`);
+        delete store.jobs[id];
       }
     }
   }
@@ -270,9 +352,9 @@ async function runJob(job: CronJobRuntime): Promise<void> {
  */
 function collectRunnableJobs(nowMs: number): CronJobRuntime[] {
   const due: CronJobRuntime[] = [];
-  for (const job of jobs.values()) {
-    if (job.def.enabled !== false && job.state.nextRunAtMs <= nowMs) {
-      due.push(job);
+  for (const [id, entry] of Object.entries(store.jobs)) {
+    if (entry.enabled !== false && (entry.nextRunAtMs ?? Infinity) <= nowMs) {
+      due.push({ id, entry });
     }
   }
   return due;
@@ -313,9 +395,9 @@ function armTimer(): void {
 
   // 找最近的 nextRunAtMs
   let earliest = Infinity;
-  for (const job of jobs.values()) {
-    if (job.def.enabled !== false && job.state.nextRunAtMs < earliest) {
-      earliest = job.state.nextRunAtMs;
+  for (const entry of Object.values(store.jobs)) {
+    if (entry.enabled !== false && (entry.nextRunAtMs ?? Infinity) < earliest) {
+      earliest = entry.nextRunAtMs!;
     }
   }
 
@@ -348,9 +430,10 @@ export function startCron(client: Client): void {
   running = true;
 
   initJobs();
+  watchCronJobs();
   armTimer();
 
-  log.info(`[cron] 排程服務已啟動（${jobs.size} 個 job，max concurrent: ${config.cron.maxConcurrentRuns}）`);
+  log.info(`[cron] 排程服務已啟動（${Object.keys(store.jobs).length} 個 job，max concurrent: ${config.cron.maxConcurrentRuns}）`);
 }
 
 /**
