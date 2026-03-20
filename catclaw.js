@@ -2,10 +2,16 @@
 /**
  * catclaw 跨平台管理腳本
  * 用法：node catclaw.js [start|stop|restart|logs|status]
+ *
+ * 重啟機制：
+ * - start 使用 ecosystem.config.cjs，PM2 監聽 dist/.restart signal file
+ * - tsc 編譯不會觸發重啟（只編譯到 dist/，不動 signal file）
+ * - 寫入 signal/RESTART 才會觸發 PM2 自動重啟
  */
 
 import { execSync } from "node:child_process";
-import { dirname } from "node:path";
+import { writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,6 +34,14 @@ function isRunning() {
   }
 }
 
+/** 寫入 signal file 觸發 PM2 watch 重啟 */
+function triggerRestart() {
+  const signalDir = resolve(__dirname, "signal");
+  try { execSync(`mkdir -p "${signalDir}"`, { stdio: "pipe" }); } catch {}
+  const signalPath = resolve(signalDir, "RESTART");
+  writeFileSync(signalPath, new Date().toISOString(), "utf-8");
+}
+
 const cmd = process.argv[2] ?? "start";
 
 switch (cmd) {
@@ -37,8 +51,9 @@ switch (cmd) {
       process.exit(0);
     }
     run("npx tsc");
-    run("npx pm2 start dist/index.js --name catclaw");
-    console.log("✅ catclaw 已啟動（背景執行）");
+    run(`mkdir -p "${resolve(__dirname, "signal")}"`);
+    run("npx pm2 start ecosystem.config.cjs");
+    console.log("✅ catclaw 已啟動（背景執行，監聽 signal/RESTART）");
     break;
   case "stop":
     run("npx pm2 stop catclaw");
@@ -46,8 +61,8 @@ switch (cmd) {
     break;
   case "restart":
     run("npx tsc");
-    run("npx pm2 restart catclaw");
-    console.log("🔄 catclaw 已重啟");
+    triggerRestart();
+    console.log("🔄 catclaw 重啟信號已送出");
     break;
   case "logs":
     run("npx pm2 logs catclaw");

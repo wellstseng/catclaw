@@ -16,6 +16,7 @@ import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
 import { createDiscordClient } from "./discord.js";
 import { loadSessions } from "./session.js";
+import { startCron, stopCron } from "./cron.js";
 
 // 在其他模組開始 log 前設定層級
 setLogLevel(config.logLevel);
@@ -37,11 +38,15 @@ client.once("ready", (c) => {
   log.info(`  Guild 設定：${guildCount > 0 ? `${guildCount} 個` : "全部允許"}`);
   log.info(`  工具訊息：${config.showToolCalls}`);
   log.info(`  Claude 工作目錄：${config.claude.cwd}`);
+
+  // Bot 上線後啟動排程服務（需要 client 來發送訊息）
+  startCron(client);
 });
 
 // 優雅關閉：收到 SIGINT / SIGTERM 時先 destroy client 再退出
 function shutdown(signal: string): void {
   log.info(`\n[bridge] 收到 ${signal}，關閉中...`);
+  stopCron();
   client.destroy();
   process.exit(0);
 }

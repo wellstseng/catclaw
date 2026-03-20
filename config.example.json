@@ -56,5 +56,43 @@
   "showThinking": false,         // 是否顯示 Claude 推理過程（thinking block）
   "debounceMs": 500,             // 同一人訊息合併延遲（毫秒）
   "fileUploadThreshold": 4000,   // 回覆超過此字數時上傳為 .md 檔（0 = 停用）
-  "logLevel": "info"             // 日誌層級：debug / info / warn / error / silent
+  "logLevel": "info",            // 日誌層級：debug / info / warn / error / silent
+
+  // ── 排程（仿 OpenClaw timer loop）──────────────────────────────
+  "cron": {
+    "enabled": false,            // 是否啟用排程服務
+    "maxConcurrentRuns": 1,      // 同時執行的 job 上限
+
+    // Job 定義
+    "jobs": [
+      // 範例 1：每天早上 9 點發訊息
+      {
+        "id": "morning-greeting",
+        "name": "早安問候",
+        "enabled": true,
+        "schedule": { "kind": "cron", "expr": "0 9 * * *", "tz": "Asia/Taipei" },
+        "action": { "type": "message", "channelId": "111111111111111111", "text": "早安！" }
+      },
+
+      // 範例 2：每小時跑 Claude 摘要
+      {
+        "id": "hourly-summary",
+        "name": "每小時摘要",
+        "enabled": false,
+        "schedule": { "kind": "every", "everyMs": 3600000 },
+        "action": { "type": "claude", "channelId": "111111111111111111", "prompt": "摘要最近的對話" },
+        "maxRetries": 3
+      },
+
+      // 範例 3：一次性任務
+      {
+        "id": "one-shot",
+        "name": "指定時間提醒",
+        "enabled": true,
+        "schedule": { "kind": "at", "at": "2026-04-01T09:00:00+08:00" },
+        "action": { "type": "message", "channelId": "111111111111111111", "text": "提醒：今天有會議" },
+        "deleteAfterRun": true
+      }
+    ]
+  }
 }

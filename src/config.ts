@@ -72,6 +72,41 @@ export interface ClaudeConfig {
   sessionTtlHours: number;
 }
 
+// ── Cron 排程型別 ─────────────────────────────────────────────────────────
+
+/** 排程時間定義 */
+export type CronSchedule =
+  | { kind: "cron"; expr: string; tz?: string }     // cron 表達式（如 "0 9 * * *"）
+  | { kind: "every"; everyMs: number }                // 固定間隔（毫秒）
+  | { kind: "at"; at: string };                       // 一次性 ISO 時間
+
+/** 排程 Job 的執行動作 */
+export type CronAction =
+  | { type: "message"; channelId: string; text: string }     // 直接發訊息
+  | { type: "claude"; channelId: string; prompt: string };   // 跑 Claude turn，結果送到頻道
+
+/** 排程 Job 定義（config.json 中的格式） */
+export interface CronJobDef {
+  id: string;
+  name: string;
+  enabled?: boolean;
+  schedule: CronSchedule;
+  action: CronAction;
+  /** 一次性 job 執行後自動刪除 */
+  deleteAfterRun?: boolean;
+  /** 重試次數上限，預設 3 */
+  maxRetries?: number;
+}
+
+/** Cron 全域設定 */
+export interface CronConfig {
+  enabled: boolean;
+  /** 同時執行的 job 上限，預設 1 */
+  maxConcurrentRuns: number;
+  /** job 定義（持久化到 data/cron-jobs.json，config 中的定義為初始種子） */
+  jobs: CronJobDef[];
+}
+
 /** 全域設定物件型別 */
 export interface BridgeConfig {
   /** Discord 相關設定 */
@@ -88,6 +123,8 @@ export interface BridgeConfig {
   fileUploadThreshold: number;
   /** Log 層級，預設 "info" */
   logLevel: LogLevel;
+  /** Cron 排程設定 */
+  cron: CronConfig;
 }
 
 // ── JSON 載入 ────────────────────────────────────────────────────────────────
@@ -116,6 +153,11 @@ interface RawConfig {
   debounceMs?: number;
   fileUploadThreshold?: number;
   logLevel?: string;
+  cron?: {
+    enabled?: boolean;
+    maxConcurrentRuns?: number;
+    jobs?: CronJobDef[];
+  };
 }
 
 /**
@@ -192,6 +234,11 @@ function loadConfig(): BridgeConfig {
     debounceMs: raw.debounceMs ?? 500,
     fileUploadThreshold: raw.fileUploadThreshold ?? 4000,
     logLevel,
+    cron: {
+      enabled: raw.cron?.enabled ?? false,
+      maxConcurrentRuns: raw.cron?.maxConcurrentRuns ?? 1,
+      jobs: raw.cron?.jobs ?? [],
+    },
   };
 }
 

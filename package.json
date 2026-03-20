@@ -15,6 +15,7 @@
     "pm2:status": "pm2 status"
   },
   "dependencies": {
+    "croner": "^10.0.1",
     "discord.js": "^14.16.3"
   },
   "devDependencies": {
