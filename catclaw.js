@@ -4,7 +4,7 @@
  * 用法：node catclaw.js [start|stop|restart|logs|status]
  *
  * 重啟機制：
- * - start 使用 ecosystem.config.cjs，PM2 監聽 dist/.restart signal file
+ * - start 使用 ecosystem.config.cjs，PM2 監聽 signal/ 目錄
  * - tsc 編譯不會觸發重啟（只編譯到 dist/，不動 signal file）
  * - 寫入 signal/RESTART 才會觸發 PM2 自動重啟
  */

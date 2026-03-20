@@ -72,6 +72,7 @@ Claude CLI 回覆中若包含 `MEDIA: /path/to/file`，reply.ts 會自動：
 | Event | 行為 |
 |-------|------|
 | `text_delta` | 累積到 buffer + totalText；超過 threshold 進入 fileMode |
+| `thinking_delta` | `showThinking` 開啟時累積推理文字 → scheduleFlush；收到 text 時 flush thinking buffer |
 | `tool_call` | 若 `showToolCalls` 開啟 → `flush(true)` → 傳送 `🔧 使用工具：{title}` |
 | `done` | `stopTyping()` → 抽取 MEDIA token → flush 或上傳 .md → 上傳 media 檔案 |
 | `error` | `stopTyping()` → `flush(true)` → 傳送 `⚠️ 發生錯誤：{message}` |

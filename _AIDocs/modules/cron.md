@@ -53,6 +53,44 @@ stopCron()                 ← SIGINT/SIGTERM 時呼叫
 }
 ```
 
+## Job 持久化
+
+狀態檔案：`data/cron-jobs.json`（原子寫入，已 gitignore）
+
+```json
+{
+  "version": 1,
+  "jobs": {
+    "<jobId>": {
+      "nextRunAtMs": 1710000000000,
+      "lastRunAtMs": 1710000000000,
+      "lastResult": "success",
+      "retryCount": 0
+    }
+  }
+}
+```
+
+- config.json 中的 jobs 為初始種子定義，執行狀態與持久化狀態合併管理
+- 啟動時：載入 store → 合併 config jobs → 過期的非 at job 重新計算 nextRunAtMs
+- 執行後：更新狀態 + 原子寫入磁碟
+
+## 重試機制
+
+失敗時指數退避，預設最多 3 次：
+
+| 重試次數 | 等待時間 |
+|---------|---------|
+| 第 1 次 | 30s |
+| 第 2 次 | 1 min |
+| 第 3 次+ | 5 min |
+
+超過上限：週期 job 跳到下次正常排程；一次性 job 移除。
+
+## 併發控制
+
+`maxConcurrentRuns` 限制同時執行的 job 數量（worker pool pattern）。
+
 ## 與其他模組的關係
 
 - **config.ts**：`CronConfig`、`CronJobDef`、`CronSchedule`、`CronAction` 型別定義
