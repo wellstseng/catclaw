@@ -258,8 +258,10 @@ export function createReplyHandler(
    */
   async function flush(flushAll = false): Promise<void> {
     while (buffer.length >= TEXT_LIMIT || (flushAll && buffer.length > 0)) {
-      let chunk = buffer.slice(0, TEXT_LIMIT);
-      buffer = buffer.slice(TEXT_LIMIT);
+      // 預留空間給 code fence 補開/補關（各 4 字元 "```\n"）
+      const safeLimit = TEXT_LIMIT - 8;
+      let chunk = buffer.slice(0, safeLimit);
+      buffer = buffer.slice(safeLimit);
 
       // 補開：若上一個 chunk 有未閉合 fence，這個 chunk 開頭補 ```
       if (prevChunkHadOpenFence) {
@@ -409,11 +411,9 @@ export function createReplyHandler(
       if (!fileMode) {
         await flush(true);
       }
-      await sendChunk(
-        `⚠️ 發生錯誤：${event.message}`,
-        originalMessage,
-        isFirst
-      );
+      // 截斷過長的錯誤訊息（避免超過 Discord 2000 字限制）
+      const errorMsg = `⚠️ 發生錯誤：${event.message}`.slice(0, TEXT_LIMIT);
+      await sendChunk(errorMsg, originalMessage, isFirst);
       isFirst = false;
     }
     // status event 靜默忽略
