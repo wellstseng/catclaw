@@ -99,3 +99,45 @@ const ch = await client.channels.fetch(channelId);
 **原因**：`message.author.username` 是帳號名；`message.author.displayName` 才是伺服器暱稱。
 
 **解法**：prompt 前綴使用 `firstMessage.author.displayName`（在 discord.ts debounce callback 中）。
+
+## 13. fileMode + MEDIA token 並存時 buffer 未重建
+
+**現象**：同時有 fileMode 和 MEDIA token 時，回覆文字重複或遺漏。
+
+**原因**：切換 mode 時未清空並重建 buffer。
+
+**解法**：切換 mode 時明確清空並重建 buffer。（2026-03-19 修正）
+
+## 14. signal file 重啟後需傳 CATCLAW_CHANNEL_ID
+
+**現象**：寫入 signal file 觸發重啟後，bot 無法在正確頻道回報重啟訊息。
+
+**解法**：spawn 時透過 `CATCLAW_CHANNEL_ID` env var 傳入當前頻道 ID。（2026-03-20 修正）
+
+## 15. cron-jobs.json selfWriting 防自觸發
+
+**現象**：cron job 寫入 cron-jobs.json 更新 nextRunAtMs 後，fs.watch 偵測變更觸發 reload。
+
+**解法**：`selfWriting` flag + 延遲重置，bot 自己寫入時跳過 watch callback。（2026-03-20 修正）
+
+---
+
+## 常見錯誤訊息對照表
+
+| 錯誤訊息 / 現象 | 對應陷阱 | 快速解法 |
+|----------------|---------|---------|
+| stdout 無輸出，process hang | §1 | `stdio: ["ignore", "pipe", "pipe"]` |
+| `stream-json` 格式報錯 | §2 | 加 `--verbose` flag |
+| DM 收不到 messageCreate | §3 | 加 `partials: [Partials.Channel]` |
+| 環境變數必填（.env 存在仍報） | §4 | dotenv import 提到最前 |
+| channels 白名單設好但訊息被過濾 | §5 | 確認是頻道 ID 而非伺服器 ID |
+| `Property 'send' does not exist` | §6 | 改用 `SendableChannels` |
+| 回覆內容重複 | §7 | `slice(lastTextLength)` 取 delta |
+| Discord API 400 reject | §8 | flush 切割 + 預留 8 字元 |
+| bot 自身迴圈 | §9 | `author.bot` 最先檢查 |
+| 某 turn 錯後同 channel 後續全壞 | §10 | 每 turn 加 `.catch()` |
+| ready 後 channel.cache 為空 | §11 | 改用 `channels.fetch()` |
+| prompt 顯示帳號名非暱稱 | §12 | 用 `displayName` |
+| fileMode + MEDIA 回覆異常 | §13 | 切換 mode 時重建 buffer |
+| 重啟後回報頻道不對 | §14 | 傳 `CATCLAW_CHANNEL_ID` env |
+| cron 寫檔觸發自己 reload | §15 | `selfWriting` flag |
