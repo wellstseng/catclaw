@@ -88,6 +88,10 @@ Claude CLI 本身的 session 有 TTL，可能 catclaw 這邊未過期但 Claude 
 啟動時呼叫，從 `data/sessions.json` 載入 session 快取。
 檔案不存在或格式錯誤時靜默忽略。
 
+### `getRecentChannelIds(ttlMs): string[]`
+
+回傳 TTL 內最近活躍的 channel ID 列表。用於需要通知多個頻道的場景。
+
 ### `enqueue(channelId, text, onEvent, opts)`
 
 ```typescript

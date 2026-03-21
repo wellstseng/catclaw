@@ -30,6 +30,7 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log level 控制、setLogLevel |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點、啟動順序、優雅關閉、重啟回報 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務（cron/every/at）、croner 驅動 |
+| [modules/pm2.md](modules/pm2.md) | `catclaw.js` + `ecosystem.config.cjs` | PM2 進程管理、signal file 重啟機制 |
 
 ## 架構一句話摘要
 

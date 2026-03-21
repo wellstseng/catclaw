@@ -85,19 +85,6 @@ export type CronAction =
   | { type: "message"; channelId: string; text: string }     // 直接發訊息
   | { type: "claude"; channelId: string; prompt: string };   // 跑 Claude turn，結果送到頻道
 
-/** 排程 Job 定義（config.json 中的格式） */
-export interface CronJobDef {
-  id: string;
-  name: string;
-  enabled?: boolean;
-  schedule: CronSchedule;
-  action: CronAction;
-  /** 一次性 job 執行後自動刪除 */
-  deleteAfterRun?: boolean;
-  /** 重試次數上限，預設 3 */
-  maxRetries?: number;
-}
-
 /** Cron 全域設定（job 定義在 data/cron-jobs.json） */
 export interface CronConfig {
   enabled: boolean;
