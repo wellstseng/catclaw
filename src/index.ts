@@ -17,7 +17,7 @@ import { config, watchConfig } from "./config.js";
 import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
 import { createDiscordClient } from "./discord.js";
-import { loadSessions } from "./session.js";
+import { loadSessions, scanAndCleanActiveTurns } from "./session.js";
 import { startCron, stopCron } from "./cron.js";
 
 // 在其他模組開始 log 前設定層級
@@ -44,8 +44,12 @@ client.once("ready", (c) => {
   // Bot 上線後啟動排程服務（需要 client 來發送訊息）
   startCron(client);
 
-  // ── 重啟通知：檢查 signal/RESTART，向觸發重啟的頻道回報 ──
+  // ── 重啟通知 + Crash recovery ──
+  // 有意重啟（signal/RESTART）的 channelId 要排除在 crash recovery 之外，
+  // 因為觸發重啟的那個 turn 本身就是「有意結束」，不是中斷。
   const signalPath = resolve(process.cwd(), "signal", "RESTART");
+  const intentionalChannelIds = new Set<string>();
+
   if (existsSync(signalPath)) {
     try {
       const raw = readFileSync(signalPath, "utf-8").trim();
@@ -63,6 +67,7 @@ client.once("ready", (c) => {
       }
 
       if (channelId) {
+        intentionalChannelIds.add(channelId);
         // NOTE: cache 在 ready 時可能尚未填充，用 fetch 確保取得頻道
         client.channels.fetch(channelId).then((ch) => {
           if (ch?.isTextBased() && "send" in ch) {
@@ -78,6 +83,30 @@ client.once("ready", (c) => {
     } catch (err) {
       log.warn(`[bridge] 重啟通知處理失敗: ${err}`);
     }
+  }
+
+  // ── Crash recovery：掃描被中斷的 turn，排除有意重啟的頻道 ──
+  const interruptedTurns = scanAndCleanActiveTurns(10 * 60_000); // 10 分鐘內的才接續
+  for (const { channelId: chId, record } of interruptedTurns) {
+    // 有意重啟觸發的 turn 不視為中斷
+    if (intentionalChannelIds.has(chId)) {
+      log.info(`[bridge] 跳過有意重啟的 active-turn channel=${chId}`);
+      continue;
+    }
+
+    client.channels.fetch(chId).then((ch) => {
+      if (ch?.isTextBased() && "send" in ch) {
+        const promptPreview = record.prompt.length > 100
+          ? record.prompt.slice(0, 100) + "…"
+          : record.prompt;
+        ch.send(
+          `[CatClaw] 上一輪對話被意外中斷。\n中斷的指令：「${promptPreview}」\n要繼續嗎？`
+        );
+      }
+      log.info(`[bridge] crash recovery 確認訊息已送出 channel=${chId}`);
+    }).catch((err: unknown) => {
+      log.warn(`[bridge] crash recovery 確認訊息失敗 channel=${chId}: ${err}`);
+    });
   }
 });
 

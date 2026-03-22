@@ -8,7 +8,7 @@
 2. 以 Promise chain 實作 per-channel 串行佇列
 3. 磁碟持久化：sessionCache 寫入 `data/sessions.json`，重啟不遺失
 4. TTL 機制：超過 `sessionTtlHours` 的 session 自動開新（不帶 `--resume`）
-5. Resume 失敗處理：清除 session → 不帶 `--resume` 重試一次
+5. 錯誤處理：錯誤時保留 session，下次訊息繼續 `--resume` 同一 session
 6. 傳遞 `channelId` 給 `runClaudeTurn()`（注入 `CATCLAW_CHANNEL_ID` env var）
 7. 對外暴露 `enqueue()` + `loadSessions()` + `getRecentChannelIds()`
 
@@ -85,28 +85,21 @@ writeFileSync(sessions.json.tmp) → renameSync(sessions.json)
 
 `saveSessions(ttlMs)` 寫入時順便清理超過 TTL 的 session（從記憶體 + 磁碟同時移除）。
 
-## Resume 失敗處理
+## 錯誤處理（保留 Session）
 
-Claude CLI 本身有 session TTL，可能 catclaw 這邊未過期但 Claude 端已清除。
+錯誤時**不清除 session**，保留現有 session ID。下次使用者傳訊時繼續 `--resume` 同一 session。
 
-**觸發條件**：`hasError && existingSessionId`（兩個條件都需成立）
-
-- `hasError`：第一個 `for await` loop 中收到 `event.type === "error"` 時設為 `true`
-- `existingSessionId`：此 turn 開始時確實帶了 `--resume`（若本來就是新 session 則不重試）
+- `hasError`：`for await` loop 中收到 `event.type === "error"` 時設為 `true`
+- 錯誤發生時僅 `log.warn`，不刪除 session、不重試
 
 ```
 帶 --resume 執行 → 收到 error event（hasError=true）
-  ↓ 條件：hasError && existingSessionId（不是新 session 的失敗）
-  → sessionCache.delete(channelId)
-  → sessionUpdatedAt.delete(channelId)
-  → saveSessions(ttlMs)                ← 磁碟也同步清除
-  → runClaudeTurn(null, ...)           ← 不帶 --resume 重試一次
-      ├─ session_init → recordSession() 記錄新 session（不轉發）
-      └─ 其他 event  → await onEvent() 正常轉發給 reply handler
-  （無第二次重試：重試本身若失敗，error event 照常轉發）
+  → log.warn（記錄錯誤）
+  → 保留 session（不清除 cache / 磁碟）
+  → 下次訊息繼續 --resume 同一 session
 ```
 
-**注意**：純新 session 失敗（`existingSessionId === null`）不觸發重試，error 直接由 `onEvent` 轉發。
+**設計理由**：避免因暫時性錯誤清除 session 導致上下文遺失。
 
 ## Per-Channel 串行佇列
 
@@ -192,4 +185,4 @@ next.finally(() => {
 | `getValidSessionId(channelId, ttlMs)` | 取得有效 session ID，TTL 超過時清除並回傳 null |
 | `recordSession(channelId, sessionId, ttlMs)` | 更新快取 + 刷新 updatedAt + 寫入磁碟 |
 | `saveSessions(ttlMs)` | 原子寫入磁碟，同時清理過期 session |
-| `runTurn(...)` | 執行單一 turn，攔截 session_init，處理 resume 失敗 |
+| `runTurn(...)` | 執行單一 turn，攔截 session_init，錯誤時保留 session |

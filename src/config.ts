@@ -1,14 +1,18 @@
 /**
  * @file config.ts
- * @description 從 config.json 載入設定，提供 per-channel 存取 helper
+ * @description 從 catclaw.json 載入設定，提供 per-channel 存取 helper
  *
  * 設定結構：
  * - discord：Discord 連線、DM、guild/channel 權限（含繼承鏈）
- * - claude：CLI 路徑、工作目錄、timeout、session TTL
- * - 全域：showToolCalls、debounceMs、fileUploadThreshold、logLevel
+ * - 全域：turnTimeoutMs、sessionTtlHours、showToolCalls、debounceMs 等
  *
  * 繼承鏈（getChannelAccess）：
  *   Thread → channels[threadId] → channels[parentId] → Guild 預設
+ *
+ * 環境變數：
+ * - CATCLAW_CONFIG_DIR：catclaw.json 所在目錄（必填）
+ * - CATCLAW_WORKSPACE：Claude CLI agent 工作目錄（必填）
+ * - CATCLAW_CLAUDE_BIN：Claude CLI binary 路徑（可選，預設 "claude"）
  */
 
 import { readFileSync, watch } from "node:fs";
@@ -60,18 +64,6 @@ export interface DiscordConfig {
   guilds: Record<string, GuildConfig>;
 }
 
-/** Claude CLI 相關設定 */
-export interface ClaudeConfig {
-  /** Claude session 工作目錄（spawn cwd），預設 $HOME */
-  cwd: string;
-  /** claude CLI binary 路徑，預設 "claude" */
-  command: string;
-  /** Claude 回應超時毫秒數，預設 300000（5 分鐘） */
-  turnTimeoutMs: number;
-  /** Session 閒置超時（小時），超過此時間不 resume，預設 168（7 天） */
-  sessionTtlHours: number;
-}
-
 // ── Cron 排程型別 ─────────────────────────────────────────────────────────
 
 /** 排程時間定義 */
@@ -96,8 +88,10 @@ export interface CronConfig {
 export interface BridgeConfig {
   /** Discord 相關設定 */
   discord: DiscordConfig;
-  /** Claude CLI 相關設定 */
-  claude: ClaudeConfig;
+  /** Claude 回應超時毫秒數，預設 300000（5 分鐘） */
+  turnTimeoutMs: number;
+  /** Session 閒置超時（小時），超過此時間不 resume，預設 168（7 天） */
+  sessionTtlHours: number;
   /** 工具呼叫顯示模式："all" 全顯示 / "summary" 只顯示「處理中」/ "none" 全隱藏 */
   showToolCalls: "all" | "summary" | "none";
   /** 是否顯示 Claude 的推理過程（thinking），預設 false */
@@ -114,7 +108,7 @@ export interface BridgeConfig {
 
 // ── JSON 載入 ────────────────────────────────────────────────────────────────
 
-/** config.json 的原始 JSON 型別（所有欄位皆可選） */
+/** catclaw.json 的原始 JSON 型別（所有欄位皆可選） */
 interface RawConfig {
   discord?: {
     token?: string;
@@ -127,12 +121,9 @@ interface RawConfig {
       channels?: Record<string, ChannelConfig>;
     }>;
   };
-  claude?: {
-    cwd?: string;
-    command?: string;
-    turnTimeoutMs?: number;
-    sessionTtlHours?: number;
-  };
+  // claude.cwd / claude.command 已移除，改由環境變數控制
+  turnTimeoutMs?: number;
+  sessionTtlHours?: number;
   showToolCalls?: string | boolean;
   showThinking?: boolean;
   debounceMs?: number;
@@ -142,6 +133,47 @@ interface RawConfig {
     enabled?: boolean;
     maxConcurrentRuns?: number;
   };
+}
+
+// ── Config 路徑解析 ──────────────────────────────────────────────────────────
+
+/**
+ * 讀取 CATCLAW_CONFIG_DIR 環境變數決定 catclaw.json 位置
+ * 找不到直接 throw（不 fallback，錯了就要明確報錯）
+ */
+function resolveConfigPath(): string {
+  const dir = process.env.CATCLAW_CONFIG_DIR;
+  // 環境變數未設定時明確報錯，不猜路徑
+  if (!dir) {
+    throw new Error("環境變數 CATCLAW_CONFIG_DIR 未設定，無法定位 catclaw.json");
+  }
+  return resolve(dir, "catclaw.json");
+}
+
+// ── Workspace 路徑解析 ────────────────────────────────────────────────────────
+
+/**
+ * 讀取 CATCLAW_WORKSPACE 環境變數，找不到 throw
+ * Workspace 是 Claude CLI agent 的工作目錄，也是 data/ 存放位置
+ */
+export function resolveWorkspaceDir(): string {
+  const dir = process.env.CATCLAW_WORKSPACE;
+  // 環境變數未設定時明確報錯，不猜預設值
+  if (!dir) {
+    throw new Error("環境變數 CATCLAW_WORKSPACE 未設定");
+  }
+  return resolve(dir);
+}
+
+// ── Claude Binary 路徑解析 ────────────────────────────────────────────────────
+
+/**
+ * 讀取 CATCLAW_CLAUDE_BIN 環境變數，未設定用 "claude" 預設
+ * 允許不設定，因為大多數環境 PATH 中已有 claude
+ */
+export function resolveClaudeBin(): string {
+  // 未設定則依賴 PATH，讓 spawn 自動找 binary
+  return process.env.CATCLAW_CLAUDE_BIN ?? "claude";
 }
 
 /**
@@ -157,12 +189,13 @@ function parseShowToolCalls(value: string | boolean | undefined): "all" | "summa
 }
 
 /**
- * 從 config.json 載入設定
+ * 從 catclaw.json 載入設定
  * @returns 完整的 BridgeConfig 物件
- * @throws 若 config.json 不存在或 token 未設定
+ * @throws 若 catclaw.json 不存在或 token 未設定
  */
 function loadConfig(): BridgeConfig {
-  const configPath = resolve(process.cwd(), "config.json");
+  // 路徑由環境變數決定，找不到直接 throw
+  const configPath = resolveConfigPath();
 
   let raw: RawConfig;
   try {
@@ -172,13 +205,12 @@ function loadConfig(): BridgeConfig {
     raw = JSON.parse(stripped) as RawConfig;
   } catch (err) {
     throw new Error(
-      `無法讀取 config.json（${configPath}）：${err instanceof Error ? err.message : String(err)}\n` +
-      "請複製 config.example.json 為 config.json 並填入設定"
+      `無法讀取 catclaw.json（${configPath}）：${err instanceof Error ? err.message : String(err)}`
     );
   }
 
   if (!raw.discord?.token) {
-    throw new Error("config.json 中 discord.token 欄位必填");
+    throw new Error("catclaw.json 中 discord.token 欄位必填");
   }
 
   // 正規化 guilds：保留 Guild 級預設 + channels
@@ -207,12 +239,9 @@ function loadConfig(): BridgeConfig {
       dm: { enabled: raw.discord.dm?.enabled ?? true },
       guilds,
     },
-    claude: {
-      cwd: raw.claude?.cwd || process.env.HOME || "/",
-      command: raw.claude?.command || "claude",
-      turnTimeoutMs: raw.claude?.turnTimeoutMs ?? 300_000,
-      sessionTtlHours: raw.claude?.sessionTtlHours ?? 168,
-    },
+    // 原本在 claude.* 的欄位提升到頂層，從環境變數控制的路徑相關欄位已移除
+    turnTimeoutMs: raw.turnTimeoutMs ?? 300_000,
+    sessionTtlHours: raw.sessionTtlHours ?? 168,
     showToolCalls: parseShowToolCalls(raw.showToolCalls),
     showThinking: raw.showThinking ?? false,
     debounceMs: raw.debounceMs ?? 500,
@@ -327,11 +356,11 @@ function reloadConfig(): void {
 }
 
 /**
- * 監聽 config.json 變動，自動 hot-reload
+ * 監聽 catclaw.json 變動，自動 hot-reload
  * 使用 debounce 避免編輯過程中的多次觸發
  */
 export function watchConfig(): void {
-  const configPath = resolve(process.cwd(), "config.json");
+  const configPath = resolveConfigPath();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   try {

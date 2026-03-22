@@ -13,7 +13,10 @@
  */
 
 import { spawn } from "node:child_process";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { log } from "./logger.js";
+import { resolveWorkspaceDir, resolveClaudeBin } from "./config.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────
 
@@ -80,10 +83,10 @@ function classifyError(stderr: string, code: number | null): string {
 /**
  * 執行一輪 Claude 對話，以 AsyncGenerator 串流 AcpEvent
  *
+ * cwd 和 claudeCmd 從環境變數取得，不再由呼叫方傳入。
+ *
  * @param sessionId 上次對話的 session ID（首次為 null）
  * @param text 使用者輸入文字
- * @param cwd Claude session 工作目錄（spawn cwd）
- * @param claudeCmd claude binary 路徑
  * @param channelId Discord channel ID（傳給 Claude CLI 做為環境變數，用於重啟回報）
  * @param signal AbortSignal，用於取消進行中的 turn
  * @yields AcpEvent（session_init / text_delta / tool_call / done / error / status）
@@ -91,11 +94,13 @@ function classifyError(stderr: string, code: number | null): string {
 export async function* runClaudeTurn(
   sessionId: string | null,
   text: string,
-  cwd: string,
-  claudeCmd: string,
   channelId: string,
   signal?: AbortSignal
 ): AsyncGenerator<AcpEvent> {
+  // cwd 和 binary 路徑統一從環境變數取得，不依賴 config.json
+  const cwd = resolveWorkspaceDir();
+  const claudeCmd = resolveClaudeBin();
+
   const args = [
     "-p",
     "--output-format", "stream-json",
@@ -103,6 +108,21 @@ export async function* runClaudeTurn(
     "--include-partial-messages",
     "--dangerously-skip-permissions",
   ];
+
+  // ── System Prompt（AGENTS.md）──────────────────────────────────────────────
+  // 從 workspace 根目錄讀取 AGENTS.md 作為 system prompt
+  // 檔案不存在時跳過，不強制（讓 Claude 用預設行為）
+  const agentsPath = join(cwd, "AGENTS.md");
+  if (existsSync(agentsPath)) {
+    try {
+      const agentsContent = readFileSync(agentsPath, "utf-8");
+      args.push("--system-prompt", agentsContent);
+      log.debug(`[acp] 載入 system prompt: ${agentsPath} (${agentsContent.length} 字)`);
+    } catch (err) {
+      // 讀取失敗不中止，讓 Claude 繼續（不影響主流程）
+      log.warn(`[acp] 讀取 AGENTS.md 失敗，跳過 system prompt：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // 有上次 session → --resume 延續對話上下文
   if (sessionId) {

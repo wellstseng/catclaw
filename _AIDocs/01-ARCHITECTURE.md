@@ -51,7 +51,7 @@ Discord Gateway
       ▼
 [session.ts] runTurn()
       │  呼叫 runClaudeTurn()，攔截 session_init，記錄 UUID + 持久化
-      │  resume 失敗 → 清除 session → 無 --resume 重試
+      │  錯誤時保留 session，下次繼續 --resume
       ▼
 [acp.ts] runClaudeTurn(sessionId, text, cwd, claudeCmd, channelId)
       │  spawn: claude -p --output-format stream-json --verbose
@@ -202,7 +202,7 @@ catclaw/
 - 首次 → claude CLI 建立 session → `system/init` 取得 UUID → 快取 + 持久化
 - 後續 → `--resume <UUID>` 延續
 - 超過 TTL → 開新 session
-- resume 失敗 → 清除 session → 不帶 `--resume` 重試
+- 錯誤時保留 session，下次繼續 `--resume`
 - 重啟 → `loadSessions()` 從 `data/sessions.json` 載入
 
 ## PM2 重啟流程

@@ -10,13 +10,14 @@
  *    （同一 channel 的 turn 必須串行，不同 channel 完全並行）
  * 3. 磁碟持久化：sessionCache 寫入 data/sessions.json，重啟不遺失
  * 4. TTL 機制：超過 sessionTtlHours 的 session 自動開新（不帶 --resume）
- * 5. Resume 失敗處理：catch 後清除 session，不帶 --resume 重試
+ * 5. 錯誤處理：錯誤時保留 session，下次訊息繼續 --resume 同一 session
  * 6. 對外只暴露 enqueue() + loadSessions()，呼叫方不需要關心 session 細節
  */
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, readdirSync, existsSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { runClaudeTurn, type AcpEvent } from "./acp.js";
+import { resolveWorkspaceDir } from "./config.js";
 import { log } from "./logger.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────
@@ -33,9 +34,21 @@ interface SessionRecord {
 /** sessions.json 的完整結構 */
 type SessionStore = Record<string, SessionRecord>;
 
+/** active-turns/{channelId}.json 的結構 */
+export interface ActiveTurnRecord {
+  /** turn 開始時間（用於過期判斷） */
+  startedAt: number;
+  /** 使用者 prompt 前 200 字（重啟後顯示給使用者確認） */
+  prompt: string;
+}
+
 // ── 持久化路徑 ──────────────────────────────────────────────────────────────
 
-const SESSION_FILE = resolve(process.cwd(), "data", "sessions.json");
+// 存在 workspace/data/ 下，讓 session 資料跟著 workspace 走，不依賴 process.cwd()
+const SESSION_FILE = join(resolveWorkspaceDir(), "data", "sessions.json");
+
+/** active-turn 追蹤目錄：每個頻道一個檔案，用於 crash recovery */
+const ACTIVE_TURNS_DIR = resolve(process.cwd(), "data", "active-turns");
 
 // ── 內部狀態 ────────────────────────────────────────────────────────────────
 
@@ -131,6 +144,89 @@ export function getRecentChannelIds(ttlMs: number): string[] {
   return result;
 }
 
+// ── Active-turn 追蹤 ─────────────────────────────────────────────────────────
+// turn 執行中寫入 data/active-turns/{channelId}.json，結束時刪除
+// 若 crash 後殘留，index.ts 啟動時掃描並向使用者確認是否接續
+
+/**
+ * 標記 turn 開始（寫入 active-turn file）
+ * @param channelId Discord channel ID
+ * @param prompt 使用者 prompt（截斷至 200 字）
+ */
+function markTurnActive(channelId: string, prompt: string): void {
+  try {
+    mkdirSync(ACTIVE_TURNS_DIR, { recursive: true });
+    const record: ActiveTurnRecord = {
+      startedAt: Date.now(),
+      prompt: prompt.slice(0, 200),
+    };
+    writeFileSync(
+      join(ACTIVE_TURNS_DIR, `${channelId}.json`),
+      JSON.stringify(record),
+      "utf-8"
+    );
+  } catch (err) {
+    log.warn(`[session] markTurnActive 失敗: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * 標記 turn 結束（刪除 active-turn file）
+ * @param channelId Discord channel ID
+ */
+function markTurnDone(channelId: string): void {
+  try {
+    unlinkSync(join(ACTIVE_TURNS_DIR, `${channelId}.json`));
+  } catch {
+    // 檔案不存在時靜默忽略
+  }
+}
+
+/**
+ * 掃描 active-turns 目錄，回傳未過期的中斷 turn 列表
+ * 掃描後清理所有檔案（無論是否過期）
+ *
+ * @param maxAgeMs 過期門檻（毫秒），超過此時間的視為過期不接續
+ * @returns 未過期的 { channelId, record } 陣列
+ */
+export function scanAndCleanActiveTurns(maxAgeMs: number = 10 * 60_000): Array<{ channelId: string; record: ActiveTurnRecord }> {
+  const result: Array<{ channelId: string; record: ActiveTurnRecord }> = [];
+
+  if (!existsSync(ACTIVE_TURNS_DIR)) return result;
+
+  try {
+    const files = readdirSync(ACTIVE_TURNS_DIR).filter(f => f.endsWith(".json"));
+    const now = Date.now();
+
+    for (const file of files) {
+      const filePath = join(ACTIVE_TURNS_DIR, file);
+      try {
+        const raw = readFileSync(filePath, "utf-8");
+        const record = JSON.parse(raw) as ActiveTurnRecord;
+        const channelId = file.replace(".json", "");
+        const age = now - record.startedAt;
+
+        if (age <= maxAgeMs) {
+          result.push({ channelId, record });
+          log.info(`[session] 偵測到中斷 turn channel=${channelId} age=${Math.round(age / 1000)}s prompt="${record.prompt.slice(0, 50)}"`);
+        } else {
+          log.debug(`[session] 忽略過期 active-turn channel=${channelId} age=${Math.round(age / 1000)}s`);
+        }
+
+        // 無論是否過期都清理
+        unlinkSync(filePath);
+      } catch (err) {
+        log.warn(`[session] 讀取 active-turn ${file} 失敗: ${err instanceof Error ? err.message : String(err)}`);
+        try { unlinkSync(filePath); } catch { /* ignore */ }
+      }
+    }
+  } catch (err) {
+    log.warn(`[session] 掃描 active-turns 失敗: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return result;
+}
+
 // ── 內部函式 ────────────────────────────────────────────────────────────────
 
 /**
@@ -170,13 +266,13 @@ function recordSession(channelId: string, sessionId: string, ttlMs: number): voi
 
 /**
  * 執行單一 turn 的完整流程：串流 event → 逐一回呼 + 攔截 session_init
- * 若帶 --resume 但失敗，自動清除 session 並不帶 --resume 重試一次
+ * 錯誤時保留 session，下次訊息繼續 --resume 同一 session
+ *
+ * cwd 和 claudeCmd 已由 acp.ts 內部從環境變數取得，不再從這裡傳入。
  *
  * @param channelId Discord channel ID
  * @param text 使用者訊息文字
  * @param onEvent event 回呼（由 reply.ts 建立，用於更新 Discord 回覆）
- * @param cwd Claude session 工作目錄
- * @param claudeCmd claude binary 路徑
  * @param ttlMs session 過期門檻（毫秒）
  * @param signal AbortSignal（可選）
  */
@@ -184,48 +280,52 @@ async function runTurn(
   channelId: string,
   text: string,
   onEvent: OnEvent,
-  cwd: string,
-  claudeCmd: string,
   ttlMs: number,
   signal?: AbortSignal
 ): Promise<void> {
   const existingSessionId = getValidSessionId(channelId, ttlMs);
   log.debug(`[session] runTurn channel=${channelId} sessionId=${existingSessionId ?? "NEW"} text="${text.slice(0, 50)}"`);
 
+  // 標記 turn 開始（crash recovery 用）
+  markTurnActive(channelId, text);
+
   let hasError = false;
 
-  for await (const event of runClaudeTurn(
-    existingSessionId,
-    text,
-    cwd,
-    claudeCmd,
-    channelId,
-    signal
-  )) {
-    log.debug(`[session] event: ${event.type}`);
+  try {
+    for await (const event of runClaudeTurn(
+      existingSessionId,
+      text,
+      channelId,
+      signal
+    )) {
+      log.debug(`[session] event: ${event.type}`);
 
-    // 攔截 session_init event：記錄 session ID + 持久化，不轉發給 reply handler
-    if (event.type === "session_init") {
-      log.info(`[session] session_init: ${event.sessionId}`);
-      recordSession(channelId, event.sessionId, ttlMs);
-      continue;
+      // 攔截 session_init event：記錄 session ID + 持久化，不轉發給 reply handler
+      if (event.type === "session_init") {
+        log.info(`[session] session_init: ${event.sessionId}`);
+        recordSession(channelId, event.sessionId, ttlMs);
+        continue;
+      }
+
+      if (event.type === "error") {
+        hasError = true;
+      }
+
+      await onEvent(event);
     }
 
-    if (event.type === "error") {
-      hasError = true;
+    // 錯誤不清除 session：下次訊息繼續 --resume 同一 session
+    if (hasError) {
+      log.warn(`[session] turn 發生錯誤，保留 session channel=${channelId}`);
     }
 
-    await onEvent(event);
-  }
-
-  // 錯誤不清除 session：下次訊息繼續 --resume 同一 session
-  if (hasError) {
-    log.warn(`[session] turn 發生錯誤，保留 session channel=${channelId}`);
-  }
-
-  // turn 完成後更新 updatedAt（即使沒有 session_init，表示 resume 成功）
-  if (sessionCache.has(channelId)) {
-    recordSession(channelId, sessionCache.get(channelId)!, ttlMs);
+    // turn 完成後更新 updatedAt（即使沒有 session_init，表示 resume 成功）
+    if (sessionCache.has(channelId)) {
+      recordSession(channelId, sessionCache.get(channelId)!, ttlMs);
+    }
+  } finally {
+    // 無論成功或錯誤，turn 結束都清理 active-turn 標記
+    markTurnDone(channelId);
   }
 }
 
@@ -233,10 +333,7 @@ async function runTurn(
 
 /** enqueue 的選項 */
 export interface EnqueueOptions {
-  /** Claude session 工作目錄 */
-  cwd: string;
-  /** claude CLI binary 路徑 */
-  claudeCmd: string;
+  // cwd 和 claudeCmd 已移除，由 acp.ts 從環境變數取得
   /** 回應超時毫秒數，超時自動 abort */
   turnTimeoutMs: number;
   /** session 閒置超時毫秒數 */
@@ -267,7 +364,7 @@ export function enqueue(
 
   // 將新 turn 接在尾端，錯誤不向上傳播（避免 Promise chain 中斷）
   const next = tail.then(() =>
-    runTurn(channelId, text, onEvent, opts.cwd, opts.claudeCmd, opts.sessionTtlMs, ac.signal)
+    runTurn(channelId, text, onEvent, opts.sessionTtlMs, ac.signal)
       .catch((err: unknown) => {
         const message = ac.signal.aborted
           ? `回應超時（${Math.round(opts.turnTimeoutMs / 1000)}s），已取消`

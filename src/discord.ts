@@ -274,10 +274,9 @@ async function handleMessage(
     const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
 
     enqueue(firstMessage.channelId, prompt, onEvent, {
-      cwd: config.claude.cwd,
-      claudeCmd: config.claude.command,
-      turnTimeoutMs: config.claude.turnTimeoutMs,
-      sessionTtlMs: config.claude.sessionTtlHours * 3600_000,
+      // cwd 和 claudeCmd 已移除，由 acp.ts 從環境變數取得
+      turnTimeoutMs: config.turnTimeoutMs,
+      sessionTtlMs: config.sessionTtlHours * 3600_000,
     });
   });
 }

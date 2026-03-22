@@ -41,7 +41,7 @@ Discord Gateway
       ▼
 [session.ts] runTurn()
       │  呼叫 runClaudeTurn()，攔截 session_init，記錄 UUID + 持久化
-      │  resume 失敗 → 清除 session → 無 --resume 重試
+      │  錯誤時保留 session，下次繼續 --resume
       ▼
 [acp.ts] runClaudeTurn(sessionId, text, cwd, claudeCmd, channelId)
       │  spawn: claude -p --output-format stream-json --verbose

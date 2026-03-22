@@ -15,10 +15,10 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync, watch, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { join, dirname } from "node:path";
 import { Cron } from "croner";
 import type { Client, SendableChannels } from "discord.js";
-import { config } from "./config.js";
+import { config, resolveWorkspaceDir } from "./config.js";
 import type { CronSchedule, CronAction } from "./config.js";
 import { runClaudeTurn } from "./acp.js";
 import { log } from "./logger.js";
@@ -59,7 +59,8 @@ interface CronJobRuntime {
 
 // ── 常數 ────────────────────────────────────────────────────────────────────
 
-const STORE_PATH = resolve(process.cwd(), "data", "cron-jobs.json");
+// 存在 workspace/data/ 下，讓 cron 資料跟著 workspace 走
+const STORE_PATH = join(resolveWorkspaceDir(), "data", "cron-jobs.json");
 const MIN_TIMER_MS = 2_000;
 const MAX_TIMER_MS = 60_000;
 
@@ -259,12 +260,11 @@ async function execClaude(channelId: string, prompt: string): Promise<void> {
   }
 
   // 收集 Claude 回覆
+  // cwd 和 binary 路徑由 runClaudeTurn 內部從環境變數取得
   let responseText = "";
   for await (const event of runClaudeTurn(
     null, // 不 resume，每次獨立 session
     prompt,
-    config.claude.cwd,
-    config.claude.command,
     channelId, // 排程 job 的目標頻道
   )) {
     if (event.type === "text_delta") {
