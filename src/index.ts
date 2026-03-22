@@ -39,7 +39,7 @@ client.once("ready", (c) => {
   const guildCount = Object.keys(config.discord.guilds).length;
   log.info(`  Guild 設定：${guildCount > 0 ? `${guildCount} 個` : "全部允許"}`);
   log.info(`  工具訊息：${config.showToolCalls}`);
-  log.info(`  Claude 工作目錄：${config.claude.cwd}`);
+  log.info(`  Claude 工作目錄：${process.env.CATCLAW_WORKSPACE ?? "(未設定)"}`);
 
   // Bot 上線後啟動排程服務（需要 client 來發送訊息）
   startCron(client);
