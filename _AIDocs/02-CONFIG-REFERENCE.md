@@ -65,7 +65,8 @@
   },
 
   // ── 全域設定（原 claude.* 的欄位已提升至頂層）────────────────────
-  "turnTimeoutMs": 300000,       // 單次回應超時（毫秒），預設 5 分鐘（300000）
+  "turnTimeoutMs": 300000,       // 基礎回應超時（毫秒），預設 5 分鐘（300000）
+  "turnTimeoutToolCallMs": 480000, // tool_call 延長超時（毫秒），預設 turnTimeoutMs×1.6
   "sessionTtlHours": 168,       // Session 閒置 TTL（小時），預設 7 天（168）
   "showToolCalls": "summary",   // 工具呼叫顯示模式：
                                  //   "all"     → 顯示完整工具呼叫內容
@@ -90,7 +91,8 @@
 | 欄位 | 預設值 | 說明 |
 |------|--------|------|
 | `discord.dm.enabled` | `true` | DM 預設啟用 |
-| `turnTimeoutMs` | `300000` | 5 分鐘（頂層，非 claude.* 下） |
+| `turnTimeoutMs` | `300000` | 基礎 5 分鐘（頂層，非 claude.* 下） |
+| `turnTimeoutToolCallMs` | `turnTimeoutMs×1.6` | tool_call 延長（預設 8 分鐘） |
 | `sessionTtlHours` | `168` | 7 天（頂層，非 claude.* 下） |
 | `showToolCalls` | `"all"` | 完整顯示（config.example 預設 "summary"） |
 | `showThinking` | `false` | 不顯示推理 |

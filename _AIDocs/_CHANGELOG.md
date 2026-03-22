@@ -4,6 +4,7 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-22 | **feat: timeout 預警 + 分級 timeout**：80% timeout 時送出 `⏳ 任務仍在進行中` 提示；偵測到 tool_call 自動延長 timeout 至 `turnTimeoutToolCallMs`（預設 turnTimeoutMs×1.6）。新增 AcpEvent `timeout_warning` 型別。 | acp.ts, config.ts, session.ts, reply.ts, discord.ts |
 | 2026-03-22 | **fix(session): ACTIVE_TURNS_DIR 改用 resolveWorkspaceDir()**（6192b97）：crash recovery 路徑與 SESSION_FILE 統一，不再依賴 process.cwd()。09-PITFALLS §16 標記已修正。 | session.ts, 09-PITFALLS.md |
 | 2026-03-22 | **docs: _AIDocs 全面校正**：§16 bug 標記為已修正（ACTIVE_TURNS_DIR 已改用 resolveWorkspaceDir）；專案結構圖更新為雙目錄架構（catclaw/ + ~/.catclaw/）；modules/session.md 路徑說明同步 | 09-PITFALLS.md, 00-OVERVIEW.md, 01-ARCHITECTURE.md, modules/session.md |
 | 2026-03-22 | **feat(catclaw.js): reset-session 指令**：新增 `node catclaw.js reset-session [channelId]`，清除指定或全部 channel 的 session（sessions.json）。讀 CATCLAW_WORKSPACE 定位路徑，fallback 到 ~/.catclaw/workspace。 | catclaw.js, modules/pm2.md, 04-DEPLOY.md |

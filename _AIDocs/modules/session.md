@@ -48,8 +48,9 @@ export interface ActiveTurnRecord {
 /** enqueue() 的選項參數 */
 export interface EnqueueOptions {
   // cwd 和 claudeCmd 已移除，由 acp.ts 從環境變數取得
-  turnTimeoutMs: number; // 回應超時毫秒數，超時自動 abort
-  sessionTtlMs: number;  // session 閒置超時毫秒數
+  turnTimeoutMs: number;          // 基礎回應超時毫秒數，超時自動 abort
+  turnTimeoutToolCallMs: number;  // tool_call 偵測後延長至此值
+  sessionTtlMs: number;           // session 閒置超時毫秒數
 }
 ```
 
@@ -161,12 +162,28 @@ next.finally(() => {
 - `.catch()` 消化 rejection → chain 永遠不會因單一 turn 失敗而中斷
 - identity check（`=== next`）防止後進 turn 誤刪其他人建立的 chain entry
 
-## Turn Timeout
+## Turn Timeout（分級 + 預警）
 
-- `new AbortController()` + `setTimeout(turnTimeoutMs)` → `ac.abort()`
+基礎機制：`new AbortController()` + `setTimeout(turnTimeoutMs)` → `ac.abort()`
 - acp.ts 收到 signal → SIGTERM → 250ms → SIGKILL
 - 超時錯誤訊息：`` 回應超時（${N}s），已取消 ``
-- `.finally(() => clearTimeout(timer))` 正常完成時清除 timer
+- `.finally(cleanup)` 正常完成時清除所有 timer
+
+### 80% 預警
+
+到達 `turnTimeoutMs × 0.8` 時，送出 `timeout_warning` event → reply.ts 顯示：
+```
+⏳ 任務仍在進行中，已耗時 N 分鐘...
+```
+不中斷流程，純通知。
+
+### 分級 Timeout（tool_call 自動延長）
+
+`runTurn()` 首次偵測到 `tool_call` event → 呼叫 `extendTimeout()` → 延長至 `turnTimeoutToolCallMs`：
+- 重新計算剩餘時間，重設主 timer
+- 預警 timer 也跟著重設（若尚未送出）
+- 只延長不縮短（`turnTimeoutToolCallMs <= currentTimeoutMs` 時跳過）
+- config 可設 `turnTimeoutToolCallMs`，預設 `turnTimeoutMs × 1.6`
 
 ## Crash Recovery（Active-Turn 追蹤）
 

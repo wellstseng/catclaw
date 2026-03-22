@@ -275,13 +275,15 @@ function recordSession(channelId: string, sessionId: string, ttlMs: number): voi
  * @param onEvent event 回呼（由 reply.ts 建立，用於更新 Discord 回覆）
  * @param ttlMs session 過期門檻（毫秒）
  * @param signal AbortSignal（可選）
+ * @param onToolCall 偵測到 tool_call 時的回呼（用於延長 timeout）
  */
 async function runTurn(
   channelId: string,
   text: string,
   onEvent: OnEvent,
   ttlMs: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onToolCall?: () => void
 ): Promise<void> {
   const existingSessionId = getValidSessionId(channelId, ttlMs);
   log.debug(`[session] runTurn channel=${channelId} sessionId=${existingSessionId ?? "NEW"} text="${text.slice(0, 50)}"`);
@@ -290,6 +292,7 @@ async function runTurn(
   markTurnActive(channelId, text);
 
   let hasError = false;
+  let toolCallNotified = false;
 
   try {
     for await (const event of runClaudeTurn(
@@ -305,6 +308,12 @@ async function runTurn(
         log.info(`[session] session_init: ${event.sessionId}`);
         recordSession(channelId, event.sessionId, ttlMs);
         continue;
+      }
+
+      // 首次 tool_call → 通知 enqueue 延長 timeout
+      if (event.type === "tool_call" && !toolCallNotified && onToolCall) {
+        toolCallNotified = true;
+        onToolCall();
       }
 
       if (event.type === "error") {
@@ -336,6 +345,8 @@ export interface EnqueueOptions {
   // cwd 和 claudeCmd 已移除，由 acp.ts 從環境變數取得
   /** 回應超時毫秒數，超時自動 abort */
   turnTimeoutMs: number;
+  /** 涉及工具呼叫時的延長超時毫秒數 */
+  turnTimeoutToolCallMs: number;
   /** session 閒置超時毫秒數 */
   sessionTtlMs: number;
 }
@@ -344,6 +355,11 @@ export interface EnqueueOptions {
  * 將一個 turn 加入指定 channel 的串行佇列
  *
  * 同一 channelId 的呼叫會依序執行，不同 channelId 完全並行。
+ *
+ * Timeout 機制：
+ * - 基礎 timeout = turnTimeoutMs（預設 5 分鐘）
+ * - 偵測到 tool_call → 自動延長至 turnTimeoutToolCallMs（預設 8 分鐘）
+ * - 到達 80% timeout 時送出 timeout_warning event（Discord 提示使用者）
  *
  * @param channelId Discord channel ID（佇列 key）
  * @param text 使用者訊息文字
@@ -358,20 +374,80 @@ export function enqueue(
 ): void {
   const tail = queues.get(channelId) ?? Promise.resolve();
 
-  // 建立帶 timeout 的 AbortController
+  // ── Timeout 管理（可延長）──────────────────────────────────────────
+  const startedAt = Date.now();
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), opts.turnTimeoutMs);
+  let currentTimeoutMs = opts.turnTimeoutMs;
+  let warningSent = false;
+
+  // 主 timeout timer
+  let mainTimer = setTimeout(() => ac.abort(), currentTimeoutMs);
+
+  // 80% 預警 timer
+  let warningTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    if (!ac.signal.aborted && !warningSent) {
+      warningSent = true;
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      log.info(`[session] timeout 預警 channel=${channelId} elapsed=${elapsedSec}s`);
+      void onEvent({ type: "timeout_warning", elapsedSec });
+    }
+  }, currentTimeoutMs * 0.8);
+
+  /**
+   * 延長 timeout（首次 tool_call 時呼叫）
+   * 重新計算剩餘時間，重設主 timer 和預警 timer
+   */
+  const extendTimeout = () => {
+    if (ac.signal.aborted) return;
+    if (opts.turnTimeoutToolCallMs <= currentTimeoutMs) return; // 不縮短
+
+    const elapsed = Date.now() - startedAt;
+    currentTimeoutMs = opts.turnTimeoutToolCallMs;
+    const remaining = currentTimeoutMs - elapsed;
+
+    log.info(`[session] tool_call 偵測，延長 timeout channel=${channelId} → ${Math.round(currentTimeoutMs / 1000)}s（剩餘 ${Math.round(remaining / 1000)}s）`);
+
+    if (remaining <= 0) {
+      ac.abort();
+      return;
+    }
+
+    // 重設主 timer
+    clearTimeout(mainTimer);
+    mainTimer = setTimeout(() => ac.abort(), remaining);
+
+    // 重設預警 timer（若尚未送出）
+    if (!warningSent && warningTimer !== null) {
+      clearTimeout(warningTimer);
+      const warningAt = currentTimeoutMs * 0.8 - elapsed;
+      if (warningAt > 0) {
+        warningTimer = setTimeout(() => {
+          if (!ac.signal.aborted && !warningSent) {
+            warningSent = true;
+            const elSec = Math.round((Date.now() - startedAt) / 1000);
+            log.info(`[session] timeout 預警（延長後）channel=${channelId} elapsed=${elSec}s`);
+            void onEvent({ type: "timeout_warning", elapsedSec: elSec });
+          }
+        }, warningAt);
+      }
+    }
+  };
+
+  const cleanup = () => {
+    clearTimeout(mainTimer);
+    if (warningTimer !== null) clearTimeout(warningTimer);
+  };
 
   // 將新 turn 接在尾端，錯誤不向上傳播（避免 Promise chain 中斷）
   const next = tail.then(() =>
-    runTurn(channelId, text, onEvent, opts.sessionTtlMs, ac.signal)
+    runTurn(channelId, text, onEvent, opts.sessionTtlMs, ac.signal, extendTimeout)
       .catch((err: unknown) => {
         const message = ac.signal.aborted
-          ? `回應超時（${Math.round(opts.turnTimeoutMs / 1000)}s），已取消`
+          ? `回應超時（${Math.round(currentTimeoutMs / 1000)}s），已取消`
           : err instanceof Error ? err.message : String(err);
         void onEvent({ type: "error", message });
       })
-      .finally(() => clearTimeout(timer))
+      .finally(cleanup)
   );
 
   queues.set(channelId, next);

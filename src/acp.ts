@@ -28,7 +28,8 @@ export type AcpEvent =
   | { type: "done" }
   | { type: "error"; message: string }
   | { type: "status"; raw: unknown }
-  | { type: "session_init"; sessionId: string };
+  | { type: "session_init"; sessionId: string }
+  | { type: "timeout_warning"; elapsedSec: number };
 
 // ── 型別守衛（解析 claude stream-json 用） ───────────────────────────────────
 

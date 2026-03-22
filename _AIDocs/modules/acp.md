@@ -52,13 +52,14 @@ cwd 和 binary 路徑統一從環境變數取得（`resolveWorkspaceDir()` / `re
 
 ```typescript
 export type AcpEvent =
-  | { type: "text_delta"; text: string }        // 新增的文字片段（diff 結果）
-  | { type: "thinking_delta"; text: string }    // 新增的推理文字片段
-  | { type: "tool_call"; title: string }         // 新增的工具呼叫（工具名）
-  | { type: "done" }                             // turn 正常結束
-  | { type: "error"; message: string }           // 錯誤（分類後的可讀訊息）
-  | { type: "status"; raw: unknown }             // 其他 claude 系統事件（靜默忽略）
-  | { type: "session_init"; sessionId: string }; // 首次 turn 取得 session UUID
+  | { type: "text_delta"; text: string }          // 新增的文字片段（diff 結果）
+  | { type: "thinking_delta"; text: string }      // 新增的推理文字片段
+  | { type: "tool_call"; title: string }           // 新增的工具呼叫（工具名）
+  | { type: "done" }                               // turn 正常結束
+  | { type: "error"; message: string }             // 錯誤（分類後的可讀訊息）
+  | { type: "status"; raw: unknown }               // 其他 claude 系統事件（靜默忽略）
+  | { type: "session_init"; sessionId: string }    // 首次 turn 取得 session UUID
+  | { type: "timeout_warning"; elapsedSec: number }; // 80% timeout 預警（由 session.ts 產生）
 ```
 
 > `session_init` 在 session.ts 中被攔截，reply.ts 永遠不會收到此事件。

@@ -140,7 +140,8 @@ index.ts
 | `FLUSH_DELAY_MS` | 3000ms | 定時 flush 延遲（收到 text_delta 後多久自動送出） | reply.ts |
 | `debounceMs` | 500ms（預設） | 多則訊息合併等待時間，config 可調 | discord.ts/config.ts |
 | `typingInterval` | 8000ms | Typing indicator 重發間隔（Discord 約 10s 自動消失） | reply.ts |
-| `turnTimeoutMs` | 300000ms（預設） | Claude 回應超時（5分鐘），config 可調 | config.ts |
+| `turnTimeoutMs` | 300000ms（預設） | 基礎回應超時（5分鐘），config 可調 | config.ts |
+| `turnTimeoutToolCallMs` | turnTimeoutMs×1.6（預設） | tool_call 延長超時（預設 8 分鐘），config 可調 | config.ts |
 | `sessionTtlHours` | 168h（預設） | Session 閒置超時（7天），config 可調 | config.ts |
 | `fileUploadThreshold` | 4000（預設） | 超過此字數上傳為 .md，0=停用，config 可調 | config.ts |
 | `MIN_TIMER_MS` | 2000ms | cron timer 最短間隔 | cron.ts |

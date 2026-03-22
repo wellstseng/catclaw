@@ -405,6 +405,13 @@ export function createReplyHandler(
         const uploaded = await uploadMediaFile(filePath, originalMessage, isFirst);
         if (uploaded) isFirst = false;
       }
+    } else if (event.type === "timeout_warning") {
+      // Timeout 預警：不中斷流程，送出提示讓使用者知道任務仍在進行
+      const minutes = Math.ceil(event.elapsedSec / 60);
+      const warningMsg = `⏳ 任務仍在進行中，已耗時 ${minutes} 分鐘...`;
+      await sendChunk(warningMsg, originalMessage, isFirst);
+      if (isFirst) stopTyping();
+      isFirst = false;
     } else if (event.type === "error") {
       cancelFlushTimer();
       stopTyping();

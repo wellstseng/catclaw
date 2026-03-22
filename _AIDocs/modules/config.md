@@ -24,7 +24,8 @@ export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronActio
 | `discord.token` | `string` | — | ✓ | Discord Bot Token |
 | `discord.dm.enabled` | `boolean` | `true` | — | 是否啟用 DM 回應 |
 | `discord.guilds` | `Record<string, GuildConfig>` | `{}` | — | per-guild 設定，空物件=全部允許 |
-| `turnTimeoutMs` | `number` | `300000` | — | 回應超時毫秒（5 分鐘），頂層欄位 |
+| `turnTimeoutMs` | `number` | `300000` | — | 基礎回應超時毫秒（5 分鐘），頂層欄位 |
+| `turnTimeoutToolCallMs` | `number` | `turnTimeoutMs×1.6` | — | tool_call 延長超時（預設 8 分鐘） |
 | `sessionTtlHours` | `number` | `168` | — | Session 閒置超時（7 天），頂層欄位 |
 | `showToolCalls` | `"all" \| "summary" \| "none"` | `"all"` | — | 工具呼叫顯示模式 |
 | `showThinking` | `boolean` | `false` | — | 是否顯示 Claude 推理過程 |

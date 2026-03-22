@@ -276,6 +276,7 @@ async function handleMessage(
     enqueue(firstMessage.channelId, prompt, onEvent, {
       // cwd 和 claudeCmd 已移除，由 acp.ts 從環境變數取得
       turnTimeoutMs: config.turnTimeoutMs,
+      turnTimeoutToolCallMs: config.turnTimeoutToolCallMs,
       sessionTtlMs: config.sessionTtlHours * 3600_000,
     });
   });

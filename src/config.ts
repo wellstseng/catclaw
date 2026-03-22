@@ -90,6 +90,8 @@ export interface BridgeConfig {
   discord: DiscordConfig;
   /** Claude 回應超時毫秒數，預設 300000（5 分鐘） */
   turnTimeoutMs: number;
+  /** 涉及工具呼叫時的延長超時毫秒數，預設 turnTimeoutMs * 1.6（8 分鐘） */
+  turnTimeoutToolCallMs: number;
   /** Session 閒置超時（小時），超過此時間不 resume，預設 168（7 天） */
   sessionTtlHours: number;
   /** 工具呼叫顯示模式："all" 全顯示 / "summary" 只顯示「處理中」/ "none" 全隱藏 */
@@ -123,6 +125,7 @@ interface RawConfig {
   };
   // claude.cwd / claude.command 已移除，改由環境變數控制
   turnTimeoutMs?: number;
+  turnTimeoutToolCallMs?: number;
   sessionTtlHours?: number;
   showToolCalls?: string | boolean;
   showThinking?: boolean;
@@ -241,6 +244,7 @@ function loadConfig(): BridgeConfig {
     },
     // 原本在 claude.* 的欄位提升到頂層，從環境變數控制的路徑相關欄位已移除
     turnTimeoutMs: raw.turnTimeoutMs ?? 300_000,
+    turnTimeoutToolCallMs: raw.turnTimeoutToolCallMs ?? Math.round((raw.turnTimeoutMs ?? 300_000) * 1.6),
     sessionTtlHours: raw.sessionTtlHours ?? 168,
     showToolCalls: parseShowToolCalls(raw.showToolCalls),
     showThinking: raw.showThinking ?? false,
