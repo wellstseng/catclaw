@@ -39,20 +39,34 @@ interface SessionRecord {
 /** sessions.json 的完整結構 */
 type SessionStore = Record<string, SessionRecord>;
 
+/** active-turns/{channelId}.json 的結構（crash recovery 用） */
+export interface ActiveTurnRecord {
+  startedAt: number;  // turn 開始時間（Unix ms），用於過期判斷
+  prompt: string;     // 使用者 prompt 前 200 字（重啟後顯示確認用）
+}
+
 /** enqueue() 的選項參數 */
 export interface EnqueueOptions {
-  cwd: string;           // Claude session 工作目錄（spawn cwd）
-  claudeCmd: string;     // claude CLI binary 路徑
+  // cwd 和 claudeCmd 已移除，由 acp.ts 從環境變數取得
   turnTimeoutMs: number; // 回應超時毫秒數，超時自動 abort
   sessionTtlMs: number;  // session 閒置超時毫秒數
 }
 ```
 
+## 持久化路徑
+
+| 資料 | 路徑 | 說明 |
+|------|------|------|
+| Session 快取 | `<CATCLAW_WORKSPACE>/data/sessions.json` | `resolveWorkspaceDir()` 取路徑 |
+| Active-turn 追蹤 | `<process.cwd()>/data/active-turns/{channelId}.json` | 暫存，turn 結束自動刪除 |
+
+> ⚠️ `ACTIVE_TURNS_DIR` 用 `process.cwd()`（非 `CATCLAW_WORKSPACE`），兩者通常相同（catclaw 專案根目錄）。
+
 ## 磁碟持久化
 
 ### 檔案位置
 
-`data/sessions.json`（已加入 `.gitignore`）
+`<CATCLAW_WORKSPACE>/data/sessions.json`（已加入 `.gitignore`）
 
 ### 檔案格式
 
@@ -156,12 +170,44 @@ next.finally(() => {
 - 超時錯誤訊息：`` 回應超時（${N}s），已取消 ``
 - `.finally(() => clearTimeout(timer))` 正常完成時清除 timer
 
+## Crash Recovery（Active-Turn 追蹤）
+
+turn 執行中寫入 `data/active-turns/{channelId}.json`，結束時刪除。
+bot crash 後重啟，`scanAndCleanActiveTurns()` 掃描殘留檔案，向使用者確認是否接續。
+
+### 流程
+
+```
+turn 開始 → markTurnActive(channelId, prompt)
+              寫入 data/active-turns/{channelId}.json
+                     ↓
+            turn 執行（runTurn finally 區塊保證清理）
+                     ↓
+turn 結束 → markTurnDone(channelId)
+              unlinkSync(active-turns/{channelId}.json)
+```
+
+若在執行中間 crash：
+- `active-turns/{channelId}.json` 殘留
+- 重啟後 `scanAndCleanActiveTurns()` 偵測（10 分鐘內算有效）
+- `index.ts` 向頻道發送確認訊息
+
+### `markTurnActive(channelId, prompt)` / `markTurnDone(channelId)`
+
+私有函式，由 `runTurn()` 的 try/finally 自動呼叫，呼叫方無需管理。
+
 ## 對外 API
 
 ### `loadSessions()`
 
-啟動時呼叫，從 `data/sessions.json` 載入 session 快取。
+啟動時呼叫，從 `<CATCLAW_WORKSPACE>/data/sessions.json` 載入 session 快取。
 檔案不存在或格式錯誤時靜默忽略（視為首次啟動）。
+
+### `scanAndCleanActiveTurns(maxAgeMs?): Array<{ channelId, record }>`
+
+掃描 `data/active-turns/` 目錄，回傳未過期（預設 10 分鐘內）的中斷 turn 列表。
+掃描後**無論是否過期都清理**所有 active-turn 檔案。
+由 `index.ts` 在 ready 事件中呼叫。
 
 ### `getRecentChannelIds(ttlMs): string[]`
 
@@ -185,4 +231,6 @@ next.finally(() => {
 | `getValidSessionId(channelId, ttlMs)` | 取得有效 session ID，TTL 超過時清除並回傳 null |
 | `recordSession(channelId, sessionId, ttlMs)` | 更新快取 + 刷新 updatedAt + 寫入磁碟 |
 | `saveSessions(ttlMs)` | 原子寫入磁碟，同時清理過期 session |
-| `runTurn(...)` | 執行單一 turn，攔截 session_init，錯誤時保留 session |
+| `runTurn(...)` | 執行單一 turn，攔截 session_init，錯誤時保留 session，try/finally 清理 active-turn |
+| `markTurnActive(channelId, prompt)` | 寫入 active-turn 追蹤檔（crash recovery 用） |
+| `markTurnDone(channelId)` | 刪除 active-turn 追蹤檔（turn 結束時自動呼叫） |

@@ -16,9 +16,10 @@
 5. watchConfig()                 ← 啟動 config.json hot-reload 監聽
 6. await client.login()          ← 連線 Discord Gateway
 7. client.once("ready")          ← Bot 上線後執行：
-   ├─ 印出上線資訊
+   ├─ 印出上線資訊（DM/Guild/工具訊息/CATCLAW_WORKSPACE）
    ├─ startCron(client)          ← 啟動排程服務（需要 client 傳送訊息）
-   └─ 重啟回報                   ← 偵測 signal/RESTART 並發送通知
+   ├─ 重啟回報                   ← 偵測 signal/RESTART 並發送通知
+   └─ Crash Recovery             ← 掃描 active-turns，向使用者確認中斷 turn
 ```
 
 ## Ready 事件輸出
@@ -28,8 +29,10 @@
   DM：啟用
   Guild 設定：2 個（或「全部允許」）
   工具訊息：summary
-  Claude 工作目錄：/home/user
+  Claude 工作目錄：/home/user/.catclaw/workspace
 ```
+
+> 「Claude 工作目錄」顯示 `CATCLAW_WORKSPACE` 環境變數的值（未設定時顯示 `(未設定)`）。
 
 ## 重啟回報
 
@@ -97,6 +100,36 @@ if (existsSync(signalPath)) {
 2026-03-21T10:00:00+08:00
 ```
 
+## Crash Recovery
+
+`ready` 事件中，在重啟回報之後，掃描 `data/active-turns/` 目錄偵測未正常結束的 turn：
+
+```typescript
+const interruptedTurns = scanAndCleanActiveTurns(10 * 60_000); // 10 分鐘內才算有效
+for (const { channelId: chId, record } of interruptedTurns) {
+  // 有意重啟觸發的 turn 不視為中斷（從 signal/RESTART 的 channelId 排除）
+  if (intentionalChannelIds.has(chId)) continue;
+
+  client.channels.fetch(chId).then((ch) => {
+    if (ch?.isTextBased() && "send" in ch) {
+      ch.send(
+        `[CatClaw] 上一輪對話被意外中斷。\n中斷的指令：「${promptPreview}」\n要繼續嗎？`
+      );
+    }
+  });
+}
+```
+
+### 有意重啟 vs Crash 的區分
+
+| 場景 | `signal/RESTART` | `active-turns/` | 結果 |
+|------|-----------------|-----------------|------|
+| 正常 `node catclaw.js restart` | 存在，含 channelId | 可能有殘留 | 重啟通知 + 跳過 active-turn（intentionalChannelIds） |
+| Crash / OOM / SIGKILL | 不存在 | 有殘留 | 掃描 + 向使用者確認 |
+| 正常 SIGTERM（stop） | 不存在 | 無殘留（turn 結束才 stop） | 無動作 |
+
+`intentionalChannelIds`：從 `signal/RESTART` 的 `channelId` 建立 `Set<string>`，用於排除「有意重啟的頻道不當成 crash」。
+
 ## 優雅關閉
 
 ```
@@ -124,6 +157,6 @@ import { resolve } from "node:path";
 import { config, watchConfig } from "./config.js";     // ← module eval 時載入設定
 import { setLogLevel, log } from "./logger.js";
 import { createDiscordClient } from "./discord.js";
-import { loadSessions } from "./session.js";
+import { loadSessions, scanAndCleanActiveTurns } from "./session.js";
 import { startCron, stopCron } from "./cron.js";
 ```
