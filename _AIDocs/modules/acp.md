@@ -6,6 +6,18 @@
 
 Spawn `claude -p --output-format stream-json` 子程序進行對話，以 `AsyncGenerator<AcpEvent>` 串流事件給上層（session.ts）消費。
 
+## System Prompt（AGENTS.md）
+
+每次 turn 開始時，自動從 `workspace/AGENTS.md` 讀取內容作為 `--system-prompt` 參數傳給 Claude CLI。
+
+| 行為 | 說明 |
+|------|------|
+| 檔案存在 | `--system-prompt <content>`，支援修改後下次 turn 自動生效 |
+| 檔案不存在 | 靜默跳過，不影響主流程 |
+| 讀取失敗 | `log.warn` 後跳過，不中止 |
+
+> `AGENTS.md` 定義 bot 的身份、行為規則、回應風格等。與專案根目錄的 `CLAUDE.md` 不同：`CLAUDE.md` 供 Claude Code CLI 自動載入，`AGENTS.md` 由 catclaw 主動讀取並注入。
+
 ## Spawn 指令
 
 ```bash
@@ -14,6 +26,7 @@ claude -p \
   --verbose \
   --include-partial-messages \
   --dangerously-skip-permissions \
+  [--system-prompt <agentsContent>] \
   [--resume <sessionId>] \
   "<prompt>"
 ```
@@ -32,6 +45,8 @@ stdio 配置：`["ignore", "pipe", "pipe"]`
 > **陷阱**：stdin 必須設 `"ignore"`。若為 `"pipe"` 且未關閉，claude 會等待 stdin 而永遠不輸出（hang）。
 
 env 額外傳遞：`CATCLAW_CHANNEL_ID`（當前 Discord 頻道 ID，注入到 Claude CLI 子程序環境，用於重啟回報機制）。
+
+cwd 和 binary 路徑統一從環境變數取得（`resolveWorkspaceDir()` / `resolveClaudeBin()`），不依賴 config.json，不由呼叫方傳入。
 
 ## AcpEvent 型別
 
@@ -148,9 +163,9 @@ stderr 最多保留最後 **500 字元**（`stderrTail`）供診斷。
 export async function* runClaudeTurn(
   sessionId: string | null,  // null = 首次（不帶 --resume）
   text: string,              // 使用者輸入文字（positional argument）
-  cwd: string,               // Claude session 工作目錄（spawn cwd）
-  claudeCmd: string,         // claude binary 路徑（通常 "claude"）
   channelId: string,         // Discord channel ID（注入 CATCLAW_CHANNEL_ID env）
   signal?: AbortSignal       // 來自 session.ts AbortController（turnTimeout）
 ): AsyncGenerator<AcpEvent>
 ```
+
+> **重構變更**：`cwd` 和 `claudeCmd` 參數已移除。內部透過 `resolveWorkspaceDir()` / `resolveClaudeBin()` 從環境變數取得。

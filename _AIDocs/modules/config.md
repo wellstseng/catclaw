@@ -4,14 +4,16 @@
 
 ## 職責
 
-從 `config.json` 載入設定，提供 per-channel 存取 helper + config hot-reload。
+從 `catclaw.json` 載入設定，提供 per-channel 存取 helper + config hot-reload。
+提供環境變數路徑解析（`resolveWorkspaceDir` / `resolveClaudeBin`）。
 export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronAction`）。
 
 ## 設定來源
 
-- `config.json`（根目錄，已加入 `.gitignore`）
-- 範本：`config.example.json`
+- `catclaw.json`（位於 `$CATCLAW_CONFIG_DIR` 目錄，預設 `~/.catclaw/`）
+- 範本：`config.example.json`（專案根目錄）
 - 格式：JSONC（支援 `//` 整行 + 行尾註解，strip 後 JSON.parse）
+- 路徑相關設定已從 config.json 移除，改由環境變數控制
 
 ## 型別定義
 
@@ -22,10 +24,8 @@ export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronActio
 | `discord.token` | `string` | — | ✓ | Discord Bot Token |
 | `discord.dm.enabled` | `boolean` | `true` | — | 是否啟用 DM 回應 |
 | `discord.guilds` | `Record<string, GuildConfig>` | `{}` | — | per-guild 設定，空物件=全部允許 |
-| `claude.cwd` | `string` | `$HOME` | — | Claude CLI spawn 工作目錄（空字串 fallback `$HOME`） |
-| `claude.command` | `string` | `"claude"` | — | claude CLI binary 路徑 |
-| `claude.turnTimeoutMs` | `number` | `300000` | — | 回應超時毫秒（5 分鐘） |
-| `claude.sessionTtlHours` | `number` | `168` | — | Session 閒置超時（7 天） |
+| `turnTimeoutMs` | `number` | `300000` | — | 回應超時毫秒（5 分鐘），頂層欄位 |
+| `sessionTtlHours` | `number` | `168` | — | Session 閒置超時（7 天），頂層欄位 |
 | `showToolCalls` | `"all" \| "summary" \| "none"` | `"all"` | — | 工具呼叫顯示模式 |
 | `showThinking` | `boolean` | `false` | — | 是否顯示 Claude 推理過程 |
 | `debounceMs` | `number` | `500` | — | 訊息合併等待毫秒 |
@@ -34,9 +34,11 @@ export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronActio
 | `cron.enabled` | `boolean` | `false` | — | 是否啟用排程服務 |
 | `cron.maxConcurrentRuns` | `number` | `1` | — | 同時執行的排程 job 上限 |
 
+> **重構變更**：`claude.cwd` / `claude.command` 已移除，改由環境變數控制。`turnTimeoutMs` / `sessionTtlHours` 從 `claude.*` 提升至頂層。
+
 > `showToolCalls` 舊版支援 boolean：`true` → `"all"`，`false` → `"none"`。
 
-> NOTE: 排程 job 定義不在 config.json，在 `data/cron-jobs.json`（參考 `cron-jobs.example.json`）。
+> NOTE: 排程 job 定義不在 catclaw.json，在 `data/cron-jobs.json`（參考 `cron-jobs.example.json`）。
 
 ### `GuildConfig` / `ChannelConfig`
 
@@ -111,15 +113,28 @@ DM：永遠 `allowBot = false`（硬擋 bot 互敲）。
 
 ## 主要函式
 
+### `resolveConfigPath(): string`（私有）
+
+讀取 `CATCLAW_CONFIG_DIR` 環境變數，回傳 `catclaw.json` 完整路徑。未設定時 throw 錯誤（不猜預設值）。
+
+### `resolveWorkspaceDir(): string`（public export）
+
+讀取 `CATCLAW_WORKSPACE` 環境變數，回傳 Claude CLI agent 工作目錄。未設定時 throw 錯誤。
+用途：acp.ts spawn cwd、session.ts 磁碟持久化路徑。
+
+### `resolveClaudeBin(): string`（public export）
+
+讀取 `CATCLAW_CLAUDE_BIN` 環境變數，回傳 claude binary 路徑。未設定時回傳 `"claude"`（依賴 PATH）。
+
 ### `loadConfig(): BridgeConfig`（私有）
 
-1. 讀取 `<cwd>/config.json`
+1. `resolveConfigPath()` 取得 catclaw.json 路徑
 2. Strip `//` JSONC 註解：`text.replace(/\/\/.*$/gm, "")`
 3. `JSON.parse`
 4. 驗證 `discord.token` 必填（缺少時拋出錯誤）
 5. 正規化 guilds：填入預設值
 6. 驗證 logLevel（不合法 → 回退 `"info"`）
-7. 回傳完整 `BridgeConfig`
+7. 回傳完整 `BridgeConfig`（`turnTimeoutMs` / `sessionTtlHours` 在頂層）
 
 ### `parseShowToolCalls(value): "all" | "summary" | "none"`（私有）
 
@@ -137,7 +152,7 @@ DM：永遠 `allowBot = false`（硬擋 bot 互敲）。
 
 ```
 watchConfig()
-  → fs.watch(config.json)
+  → fs.watch(catclaw.json)
   → 500ms debounce
   → reloadConfig()
       ├─ token 變更 → log.warn（需重啟，不套用）
@@ -174,12 +189,13 @@ export function getChannelAccess(
 export let config: BridgeConfig;
 export function watchConfig(): void;
 export function getChannelAccess(...): ChannelAccess;
+export function resolveWorkspaceDir(): string;   // 環境變數 CATCLAW_WORKSPACE
+export function resolveClaudeBin(): string;       // 環境變數 CATCLAW_CLAUDE_BIN
 export interface ChannelConfig;
 export interface GuildConfig;
 export interface DmConfig;
 export interface DiscordConfig;
-export interface ClaudeConfig;
-export interface BridgeConfig;
+export interface BridgeConfig;    // 不再包含 ClaudeConfig（已移除）
 export interface ChannelAccess;
 export type CronSchedule;
 export type CronAction;
@@ -191,3 +207,5 @@ export interface CronConfig;
 - `config` 是 `let`（非 `const`），hot-reload 會整體替換物件引用
 - discord.ts 不在 closure 中捕獲 config，每次 messageCreate 讀全域 `config`，確保 hot-reload 生效
 - token 變更警告但無法阻止，重啟才能套用新 token
+- `claude.cwd` / `claude.command` 已移除，路徑相關設定由環境變數控制
+- 環境變數未設定時 `resolveConfigPath()` / `resolveWorkspaceDir()` 直接 throw，不猜預設值

@@ -1,6 +1,6 @@
 # catclaw 部署指南
 
-> 根據 `catclaw.js`、`ecosystem.config.cjs`、`package.json`、`_AIDocs/modules/pm2.md` 整理，2026-03-21
+> 根據 `catclaw.js`、`ecosystem.config.cjs`、`package.json`、`_AIDocs/modules/pm2.md` 整理，2026-03-22
 
 ---
 
@@ -64,12 +64,16 @@ Bot 上線後會在 log 中顯示：
 ### 透過 catclaw.js 管理腳本（推薦）
 
 ```bash
-node catclaw.js start     # tsc 編譯 + pm2 start（首次啟動）
-node catclaw.js restart   # tsc 編譯 + 寫 signal/RESTART 觸發重啟
-node catclaw.js stop      # pm2 stop catclaw
-node catclaw.js logs      # pm2 logs catclaw（即時串流）
-node catclaw.js status    # pm2 status（所有程序）
+node catclaw.js start                     # tsc 編譯 + pm2 start（首次啟動）
+node catclaw.js restart                   # tsc 編譯 + 寫 signal/RESTART 觸發重啟
+node catclaw.js stop                      # pm2 stop catclaw
+node catclaw.js logs                      # pm2 logs catclaw（即時串流）
+node catclaw.js status                    # pm2 status（所有程序）
+node catclaw.js reset-session             # 清除所有 channel 的 session
+node catclaw.js reset-session <channelId> # 只清除指定 channel 的 session
 ```
+
+> **reset-session**：讀取 `CATCLAW_WORKSPACE` 定位 `data/sessions.json`，清除後下次訊息自動開新 session（不需重啟 bot）。
 
 ### 透過 package.json scripts
 

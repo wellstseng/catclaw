@@ -1,13 +1,15 @@
 # catclaw 設定參考
 
-> 根據 `config.example.json`、`cron-jobs.example.json`、`src/config.ts` 整理，2026-03-21
+> 根據 `config.example.json`、`cron-jobs.example.json`、`src/config.ts` 整理，2026-03-22
 
 ---
 
-## config.json 完整範例
+## catclaw.json 完整範例
 
 格式：JSONC（支援 `//` 整行 + 行尾註解）。
-位置：專案根目錄 `config.json`（已 gitignore，從 `config.example.json` 複製後填入）。
+位置：`$CATCLAW_CONFIG_DIR/catclaw.json`（預設 `~/.catclaw/catclaw.json`，已 gitignore）。
+
+> **重構變更（2026-03-22）**：config 檔改名為 `catclaw.json`，`claude.cwd` / `claude.command` 已移除，改由環境變數控制。`turnTimeoutMs` / `sessionTtlHours` 提升至頂層。
 
 ```jsonc
 // catclaw 設定檔（JSONC 格式，支援 // 註解）
@@ -62,16 +64,10 @@
     }
   },
 
-  // ── Claude CLI ─────────────────────────────────────────────────
-  "claude": {
-    "cwd": "",                   // Claude session 工作目錄（空字串 = $HOME）
-    "command": "claude",         // Claude CLI 執行檔路徑（PATH 中的 binary）
-    "turnTimeoutMs": 300000,     // 單次回應超時（毫秒），預設 5 分鐘（300000）
-    "sessionTtlHours": 168       // Session 閒置 TTL（小時），預設 7 天（168）
-  },
-
-  // ── 全域顯示設定 ───────────────────────────────────────────────
-  "showToolCalls": "summary",    // 工具呼叫顯示模式：
+  // ── 全域設定（原 claude.* 的欄位已提升至頂層）────────────────────
+  "turnTimeoutMs": 300000,       // 單次回應超時（毫秒），預設 5 分鐘（300000）
+  "sessionTtlHours": 168,       // Session 閒置 TTL（小時），預設 7 天（168）
+  "showToolCalls": "summary",   // 工具呼叫顯示模式：
                                  //   "all"     → 顯示完整工具呼叫內容
                                  //   "summary" → 只顯示 ⏳ 處理中...
                                  //   "none"    → 完全隱藏
@@ -94,11 +90,9 @@
 | 欄位 | 預設值 | 說明 |
 |------|--------|------|
 | `discord.dm.enabled` | `true` | DM 預設啟用 |
-| `claude.cwd` | `$HOME` | 空字串時自動 fallback |
-| `claude.command` | `"claude"` | PATH 中的 binary |
-| `claude.turnTimeoutMs` | `300000` | 5 分鐘 |
-| `claude.sessionTtlHours` | `168` | 7 天 |
-| `showToolCalls` | `"all"` | 完整顯示（注意 example 預設 "summary"） |
+| `turnTimeoutMs` | `300000` | 5 分鐘（頂層，非 claude.* 下） |
+| `sessionTtlHours` | `168` | 7 天（頂層，非 claude.* 下） |
+| `showToolCalls` | `"all"` | 完整顯示（config.example 預設 "summary"） |
 | `showThinking` | `false` | 不顯示推理 |
 | `debounceMs` | `500` | 0.5 秒 |
 | `fileUploadThreshold` | `4000` | 4000 字 |
@@ -209,19 +203,40 @@ Hot-reload：存檔後 500ms 內自動生效，不需重啟。
 
 ## 環境變數說明
 
-| 變數名 | 設定位置 | 說明 |
-|--------|---------|------|
-| `ACP_TRACE` | shell 或啟動腳本 | 設為 `1` 開啟 ACP 串流除錯 log，輸出 stdout chunk 和 stderr（前 200 字元）。查 Claude CLI 通訊問題時使用 |
-| `CATCLAW_CHANNEL_ID` | 由 `acp.ts` 自動注入 | Claude spawn 時帶入當前 Discord 頻道 ID，供 `CLAUDE.md` 重啟機制使用（寫 signal/RESTART 需要此值） |
+### 必填環境變數（路徑控制）
 
-使用方式：
+| 變數名 | 設定位置 | 預設值 | 說明 |
+|--------|---------|--------|------|
+| `CATCLAW_CONFIG_DIR` | ecosystem.config.cjs / shell | `~/.catclaw` | `catclaw.json` 所在目錄。未設定時 throw 錯誤（不猜路徑） |
+| `CATCLAW_WORKSPACE` | ecosystem.config.cjs / shell | `~/.catclaw/workspace` | Claude CLI agent 工作目錄 + `data/` 存放位置。未設定時 throw 錯誤 |
+
+### 可選環境變數
+
+| 變數名 | 設定位置 | 預設值 | 說明 |
+|--------|---------|--------|------|
+| `CATCLAW_CLAUDE_BIN` | ecosystem.config.cjs / shell | `"claude"` | Claude CLI binary 路徑。未設定時依賴 PATH 中的 `claude` |
+| `ACP_TRACE` | shell 或啟動腳本 | — | 設為 `1` 開啟 ACP 串流除錯 log，輸出 stdout chunk 和 stderr（前 200 字元） |
+| `CATCLAW_CHANNEL_ID` | 由 `acp.ts` 自動注入 | — | Claude spawn 時帶入當前 Discord 頻道 ID，供重啟回報機制使用 |
+
+### ecosystem.config.cjs 中的預設值
+
+```javascript
+env: {
+  CATCLAW_CONFIG_DIR: process.env.CATCLAW_CONFIG_DIR || `${require('os').homedir()}/.catclaw`,
+  CATCLAW_WORKSPACE: process.env.CATCLAW_WORKSPACE || `${require('os').homedir()}/.catclaw/workspace`,
+}
+```
+
+> 用 `require('os').homedir()` 取代 `process.env.HOME`，避免 PM2 環境中 HOME 未定義。
+
+### 使用方式
 
 ```bash
 # 開啟 ACP 除錯模式（臨時）
 ACP_TRACE=1 node dist/index.js
 
-# 或 pm2 啟動前設定
-ACP_TRACE=1 node catclaw.js start
+# 自訂路徑啟動
+CATCLAW_CONFIG_DIR=/opt/catclaw CATCLAW_WORKSPACE=/opt/catclaw/workspace node catclaw.js start
 ```
 
 > `CATCLAW_CHANNEL_ID` 不需手動設定，由程式自動注入到 Claude 子程序環境。

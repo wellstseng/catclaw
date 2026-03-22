@@ -17,12 +17,22 @@ CatClaw 使用 PM2 做進程管理。透過 signal file 機制觸發重啟，tsc
 ## 管理指令
 
 ```bash
-node catclaw.js start     # tsc 編譯 + pm2 start ecosystem.config.cjs
-node catclaw.js stop      # pm2 stop catclaw
-node catclaw.js restart   # tsc 編譯 + 寫 signal/RESTART 觸發重啟
-node catclaw.js logs      # pm2 logs catclaw
-node catclaw.js status    # pm2 status
+node catclaw.js start                    # tsc 編譯 + pm2 start ecosystem.config.cjs
+node catclaw.js stop                     # pm2 stop catclaw
+node catclaw.js restart                  # tsc 編譯 + 寫 signal/RESTART 觸發重啟
+node catclaw.js logs                     # pm2 logs catclaw
+node catclaw.js status                   # pm2 status
+node catclaw.js reset-session            # 清除所有 channel 的 session（sessions.json）
+node catclaw.js reset-session <channelId> # 只清除指定 channel 的 session
 ```
+
+### reset-session 細節
+
+- 讀取 `CATCLAW_WORKSPACE` 環境變數定位 `sessions.json`（未設定則 fallback 到 `~/.catclaw/workspace`）
+- 路徑：`<CATCLAW_WORKSPACE>/data/sessions.json`
+- 指定 channelId：只刪除對應 key，其他 session 保留
+- 不指定：覆寫整個 sessions.json 為 `{ sessions: {} }`
+- bot 不需重啟即可生效（下次訊息自動開新 session）
 
 ## 重啟機制
 

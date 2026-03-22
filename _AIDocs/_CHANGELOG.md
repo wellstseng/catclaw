@@ -4,6 +4,7 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-22 | **feat(catclaw.js): reset-session 指令**：新增 `node catclaw.js reset-session [channelId]`，清除指定或全部 channel 的 session（sessions.json）。讀 CATCLAW_WORKSPACE 定位路徑，fallback 到 ~/.catclaw/workspace。 | catclaw.js, modules/pm2.md, 04-DEPLOY.md |
 | 2026-03-22 | **refactor: 環境變數化路徑設定**：移除 config.json 的 claude.cwd / claude.command；改由 CATCLAW_CONFIG_DIR / CATCLAW_WORKSPACE / CATCLAW_CLAUDE_BIN 三個環境變數控制。turnTimeoutMs / sessionTtlHours 提升至 BridgeConfig 頂層。acp.ts 新增 AGENTS.md system prompt 支援。CLAUDE.md 改為 @import workspace/AGENTS.md。ecosystem.config.cjs 加入 env 預設值。 | config.ts, acp.ts, session.ts, cron.ts, discord.ts, ecosystem.config.cjs, CLAUDE.md, .env.example |
 | 2026-03-22 | **docs: session 錯誤處理描述同步**：配合 17bff14 修改，將「resume 失敗→清除 session→重試」更新為「錯誤時保留 session，下次繼續 --resume」 | 00-OVERVIEW.md, 01-ARCHITECTURE.md, modules/session.md, session.ts（註解） |
 | 2026-03-21 | **知識包 v1.0 匯入**：新增 00-OVERVIEW（架構全貌）、02-CONFIG-REFERENCE（設定參考）、04-DEPLOY（部署指南）；09-PITFALLS 新增 3 條陷阱（§13-15）+ 錯誤訊息對照表 | 00-OVERVIEW.md, 02-CONFIG-REFERENCE.md, 04-DEPLOY.md, 09-PITFALLS.md, _INDEX.md |

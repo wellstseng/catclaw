@@ -1,6 +1,6 @@
 # claude_discord _AIDocs 知識庫索引
 
-> 建立日期：2026-03-18 | 最近更新：2026-03-21 | 專案：catclaw | 知識包 v1.0 匯入
+> 建立日期：2026-03-18 | 最近更新：2026-03-22 | 專案：catclaw | 知識包 v1.0 匯入
 
 ## 專案簡介
 
@@ -12,10 +12,10 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 
 | 文件 | 主題 | 更新日期 |
 |------|------|---------|
-| [00-OVERVIEW.md](00-OVERVIEW.md) | 架構全貌：資料流圖、模組關係、常數速查、config 欄位一覽 | 2026-03-21 |
+| [00-OVERVIEW.md](00-OVERVIEW.md) | 架構全貌：資料流圖、模組關係、常數速查、config 欄位一覽 | 2026-03-22 |
 | [01-ARCHITECTURE.md](01-ARCHITECTURE.md) | 整體架構 + 資料流 + 專案結構 | 2026-03-19 |
 | [02-CONFIG-REFERENCE.md](02-CONFIG-REFERENCE.md) | config.json + cron-jobs.json 完整範例 + 環境變數 | 2026-03-21 |
-| [04-DEPLOY.md](04-DEPLOY.md) | 部署流程、PM2 管理、hot-reload、健康檢查 | 2026-03-21 |
+| [04-DEPLOY.md](04-DEPLOY.md) | 部署流程、PM2 管理、hot-reload、健康檢查 | 2026-03-22 |
 | [08-CLAUDE-CLI.md](08-CLAUDE-CLI.md) | Claude CLI 指令格式 + stream-json event 規格 | 2026-03-19 |
 | [09-PITFALLS.md](09-PITFALLS.md) | 15 項陷阱速查 + 錯誤訊息對照表 | 2026-03-21 |
 | [PLAN.md](PLAN.md) | 初始實作計畫（已完成） | 2026-03-18 |
@@ -33,7 +33,7 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log level 控制、setLogLevel |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點、啟動順序、優雅關閉、重啟回報 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務（cron/every/at）、croner 驅動 |
-| [modules/pm2.md](modules/pm2.md) | `catclaw.js` + `ecosystem.config.cjs` | PM2 進程管理、signal file 重啟機制 |
+| [modules/pm2.md](modules/pm2.md) | `catclaw.js` + `ecosystem.config.cjs` | PM2 進程管理、signal file 重啟機制、reset-session 指令 |
 
 ## 架構一句話摘要
 

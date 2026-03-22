@@ -43,7 +43,7 @@ Discord Gateway
       │  呼叫 runClaudeTurn()，攔截 session_init，記錄 UUID + 持久化
       │  錯誤時保留 session，下次繼續 --resume
       ▼
-[acp.ts] runClaudeTurn(sessionId, text, cwd, claudeCmd, channelId)
+[acp.ts] runClaudeTurn(sessionId, text, channelId, signal?)
       │  spawn: claude -p --output-format stream-json --verbose
       │          --include-partial-messages --dangerously-skip-permissions
       │          [--resume <sessionId>] "<prompt>"
@@ -171,10 +171,8 @@ index.ts
 | `discord.guilds[id].channels[chId].requireMention` | boolean | guild預設 | — | per-channel 覆寫 requireMention |
 | `discord.guilds[id].channels[chId].allowBot` | boolean | guild預設 | — | per-channel 覆寫 allowBot |
 | `discord.guilds[id].channels[chId].allowFrom` | string[] | guild預設 | — | per-channel 覆寫 allowFrom |
-| `claude.cwd` | string | `$HOME` | — | Claude session spawn cwd |
-| `claude.command` | string | `"claude"` | — | claude CLI binary 路徑 |
-| `claude.turnTimeoutMs` | number | `300000` | — | 回應超時毫秒（5分鐘） |
-| `claude.sessionTtlHours` | number | `168` | — | Session 閒置超時小時（7天） |
+| `turnTimeoutMs` | number | `300000` | — | 回應超時毫秒（5分鐘），頂層欄位 |
+| `sessionTtlHours` | number | `168` | — | Session 閒置超時小時（7天），頂層欄位 |
 | `showToolCalls` | "all"/"summary"/"none" | `"all"` | — | 工具呼叫顯示模式（舊版 boolean 相容） |
 | `showThinking` | boolean | `false` | — | 顯示 Claude 推理過程 |
 | `debounceMs` | number | `500` | — | 訊息合併等待毫秒 |
@@ -183,7 +181,7 @@ index.ts
 | `cron.enabled` | boolean | `false` | — | 啟用排程服務 |
 | `cron.maxConcurrentRuns` | number | `1` | — | 同時執行 job 上限 |
 
-> **注意**：config.json 支援 JSONC（`//` 行尾 / 整行註解）
+> **注意**：config.json（catclaw.json）支援 JSONC（`//` 行尾 / 整行註解）。`claude.cwd` / `claude.command` 已移除，改由環境變數 `CATCLAW_CONFIG_DIR` / `CATCLAW_WORKSPACE` / `CATCLAW_CLAUDE_BIN` 控制。
 
 ---
 
