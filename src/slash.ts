@@ -19,7 +19,6 @@ import {
   ApplicationCommandOptionType,
 } from "discord.js";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
@@ -111,20 +110,6 @@ async function handleRestart(interaction: ChatInputCommandInteraction): Promise<
 
   await interaction.reply("🔄 重啟信號已送出，幾秒後 bot 會重新上線並在此頻道回報。");
   log.info(`[slash] /restart 觸發，channel=${interaction.channelId} by=${interaction.user.tag}`);
-
-  // 直接呼叫 pm2 restart，不依賴 PM2 watch
-  // signal 檔只用來傳遞 channelId 給重啟後的 ready 事件
-  // 先讓 ready 事件有機會讀到，但在 pm2 restart 前從 watch 角度已無需保留
-  // 注意：pm2 restart 後 ready 會讀取並 unlink signal，正常流程不需要在這裡刪
-  setTimeout(() => {
-    try {
-      execSync("npx pm2 restart catclaw", { cwd: resolve(__dirname, ".."), stdio: "pipe" });
-      log.info("[slash] pm2 restart catclaw 直接觸發成功");
-    } catch (e) {
-      // 進程被 kill 屬正常，catch 住避免 unhandled rejection
-      log.info("[slash] pm2 restart 已觸發（進程重啟中）");
-    }
-  }, 300);
 }
 
 async function handleResetSession(interaction: ChatInputCommandInteraction): Promise<void> {
