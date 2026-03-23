@@ -141,6 +141,7 @@ export async function* runClaudeTurn(
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, CATCLAW_CHANNEL_ID: channelId },
+    windowsHide: true,
   });
 
   log.debug(`[acp] process spawned, pid=${proc.pid}`);
