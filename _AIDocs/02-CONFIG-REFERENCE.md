@@ -161,6 +161,21 @@ Hot-reload：存檔後 500ms 內自動生效，不需重啟。
         "text": "提醒：今天有重要會議"
       },
       "deleteAfterRun": true
+    },
+
+    "atom-sync": {
+      "name": "原子記憶同步",
+      "enabled": true,
+      "schedule": {
+        "kind": "every",
+        "everyMs": 300000
+      },
+      "action": {
+        "type": "exec",
+        "command": "python _tools/atom-sync.py sync",
+        "silent": true,
+        "timeoutSec": 300
+      }
     }
   }
 }
@@ -174,12 +189,22 @@ Hot-reload：存檔後 500ms 內自動生效，不需重啟。
 | `"every"` | `everyMs`（毫秒） | — | 固定間隔，從啟動時起算 |
 | `"at"` | `at`（ISO 8601 字串） | — | 一次性，時間到即執行 |
 
-### CronAction 兩種格式
+### CronAction 三種格式
 
-| type | 必填欄位 | 說明 |
-|------|---------|------|
-| `"message"` | `channelId`, `text` | 直接發送純文字訊息 |
-| `"claude"` | `channelId`, `prompt` | spawn Claude turn（每次獨立 session，不 resume） |
+| type | 必填欄位 | 選填欄位 | 說明 |
+|------|---------|---------|------|
+| `"message"` | `channelId`, `text` | — | 直接發送純文字訊息 |
+| `"claude"` | `channelId`, `prompt` | — | spawn Claude turn（每次獨立 session，不 resume） |
+| `"exec"` | `command` | `channelId`, `silent`, `timeoutSec` | 執行 shell 指令（`sh -c`），cwd 為 CATCLAW_WORKSPACE |
+
+#### exec action 欄位說明
+
+| 欄位 | 型別 | 預設 | 說明 |
+|------|------|------|------|
+| `command` | string | — | shell 指令（透過 `sh -c` 執行） |
+| `channelId` | string | — | 可選，設了會把 stdout 送到 Discord 頻道 |
+| `silent` | boolean | `false` | `true` 時有 channelId 也不送訊息（只在 log） |
+| `timeoutSec` | number | `120` | 逾時秒數，超過後 SIGTERM 終止 |
 
 ### CronJobEntry 所有欄位
 

@@ -4,6 +4,7 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-23 | **feat(cron): 新增 exec action type**：排程可直接執行 shell 指令（`sh -c`），支援 `channelId` 回報、`silent` 靜默、`timeoutSec` 可調逾時（預設 120s）。timeout 時正確辨識 `err.killed` + `err.signal`。整合測試 5/5 通過。 | cron.ts, config.ts, 02-CONFIG-REFERENCE.md, modules/cron.md |
 | 2026-03-22 | **fix(restart): 雙保險機制 + watch 關閉**：`/restart` slash command 改為 `rmSync` 舊檔後 `writeFileSync` 新檔，再 `setTimeout 300ms` 直接 `execSync("npx pm2 restart catclaw")`，不依賴 PM2 watch。`ecosystem.config.cjs` 的 `watch` 改為 `false`，消除 double-restart 問題。`catclaw.js restart` 改為直接 `pm2 restart`（不走 signal，無通知）。新增 `start -f` 強制 delete + re-register PM2。 | slash.ts, ecosystem.config.cjs, catclaw.js, modules/pm2.md |
 | 2026-03-22 | **feat: timeout 預警 + 分級 timeout**：80% timeout 時送出 `⏳ 任務仍在進行中` 提示；偵測到 tool_call 自動延長 timeout 至 `turnTimeoutToolCallMs`（預設 turnTimeoutMs×1.6）。新增 AcpEvent `timeout_warning` 型別。 | acp.ts, config.ts, session.ts, reply.ts, discord.ts |
 | 2026-03-22 | **fix(session): ACTIVE_TURNS_DIR 改用 resolveWorkspaceDir()**（6192b97）：crash recovery 路徑與 SESSION_FILE 統一，不再依賴 process.cwd()。09-PITFALLS §16 標記已修正。 | session.ts, 09-PITFALLS.md |
@@ -17,4 +18,3 @@
 | 2026-03-20 | **feat: signal file 重啟機制 + 重啟回報 + 錯誤分類**：PM2 監聽 signal/ 目錄，寫入 RESTART 觸發重啟。重啟後自動在觸發頻道回報。acp.ts 錯誤訊息區分 overloaded/502/rate limit/timeout 等。spawn 時傳 CATCLAW_CHANNEL_ID env var | ecosystem.config.cjs, acp.ts, session.ts, index.ts, cron.ts |
 | 2026-03-20 | **feat: cron 排程模組**：croner 驅動，支援 cron/every/at 三種模式，config.json hot-reload 支援 | cron.ts, config.ts, config.example.json, package.json |
 | 2026-03-19 | feat: session 磁碟持久化 — 重啟後自動 resume、TTL 過期機制（預設 7 天）、錯誤時保留 session、原子寫入 | session.ts, config.ts, index.ts, discord.ts, config.example.json, .gitignore |
-| 2026-03-19 | feat: acp log 雜訊控制（ACP_TRACE 環境變數）+ prompt 加 displayName 識別多人對話 | acp.ts, discord.ts |

@@ -77,7 +77,7 @@ startCron(client) [client.ready 後]
 onTimer() [setTimeout 觸發]
       │  collectRunnableJobs(nowMs) ← entry.enabled≠false && nextRunAtMs<=nowMs
       │  worker pool（maxConcurrentRuns 限制）
-      │  runJob() → execMessage() or execClaude()
+      │  runJob() → execMessage() / execCommand() / execClaude()
       │  成功：更新狀態 / at job 刪除 / 計算 nextRunAtMs
       │  失敗：指數退避 (30s/1m/5m) / 超上限跳下次排程
       │  saveStore() 原子寫入
