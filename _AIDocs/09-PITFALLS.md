@@ -161,3 +161,21 @@ const ch = await client.channels.fetch(channelId);
 | cron 寫檔觸發自己 reload | §15 | `selfWriting` flag |
 | crash recovery 掃不到 active-turns/ | §16（已修正） | 已統一使用 CATCLAW_WORKSPACE |
 | 修改 claude.cwd 但不生效 | §17 | 改設 `CATCLAW_WORKSPACE` 環境變數 |
+| cron exec job 在 Windows 失敗 ENOENT | §18 | `execFile("sh")` → `exec()` |
+| catclaw.json trailing comma 導致 hot-reload 失敗 | §19 | JSONC strip 後仍需合法 JSON |
+
+## 18. cron exec 在 Windows 失敗（spawn sh ENOENT）
+
+**現象**：cron exec action 執行時報 `spawn sh ENOENT`，job 持續重試失敗。
+
+**原因**：`execFile("sh", ["-c", command])` 在 Windows PM2 環境中 PATH 沒有 MSYS2 的 `sh`。
+
+**解法**：改用 `exec(command, opts)` — Node.js `exec` 會自動選擇 platform shell（Windows=cmd, Unix=/bin/sh），跨平台相容。
+
+## 19. catclaw.json trailing comma 導致 hot-reload 持續失敗
+
+**現象**：PM2 error log 持續報 `Expected double-quoted property name in JSON at position N`，config 改了但不生效。
+
+**原因**：catclaw.json 支援 JSONC（`//` 註解），但 strip 註解後仍需合法 JSON。guilds 物件最後一個 entry 後面的 trailing comma 在 `JSON.parse()` 時報錯。
+
+**解法**：移除 trailing comma。注意 JSONC ≠ JSON5，只有 `//` 註解會被 strip，其他語法糖（trailing comma）不支援。

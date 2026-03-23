@@ -16,7 +16,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync, watch, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, exec } from "node:child_process";
 import { Cron } from "croner";
 import type { Client, SendableChannels } from "discord.js";
 import { config, resolveWorkspaceDir } from "./config.js";
@@ -296,8 +296,9 @@ async function execCommand(command: string, channelId?: string, silent?: boolean
   const cwd = resolveWorkspaceDir();
   const timeout = (timeoutSec ?? 120) * 1000;
 
+  // 用 exec（自動選 platform shell：Windows=cmd, Unix=sh）取代 execFile("sh")
   const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    execFile("sh", ["-c", command], { cwd, timeout, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+    exec(command, { cwd, timeout, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const detail = (err as NodeJS.ErrnoException & { killed?: boolean; signal?: string });
         const reason = detail.killed
