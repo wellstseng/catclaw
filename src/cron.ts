@@ -299,7 +299,11 @@ async function execCommand(command: string, channelId?: string, silent?: boolean
   const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     execFile("sh", ["-c", command], { cwd, timeout, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
-        reject(new Error(`exit ${err.code ?? "unknown"}: ${stderr.trim() || err.message}`));
+        const detail = (err as NodeJS.ErrnoException & { killed?: boolean; signal?: string });
+        const reason = detail.killed
+          ? `timeout (${detail.signal ?? "SIGTERM"}) after ${timeout / 1000}s`
+          : `exit ${err.code ?? "unknown"}: ${stderr.trim() || err.message}`;
+        reject(new Error(reason));
       } else {
         resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
       }
