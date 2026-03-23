@@ -380,7 +380,7 @@ async function execCommand(command: string, channelId?: string, silent?: boolean
   };
 
   const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    execFile(shell.bin, shell.args(command), { cwd, timeout, maxBuffer: 1024 * 1024, env }, (err, stdout, stderr) => {
+    execFile(shell.bin, shell.args(command), { cwd, timeout, maxBuffer: 1024 * 1024, env, windowsHide: true }, (err, stdout, stderr) => {
       if (err) {
         const detail = (err as NodeJS.ErrnoException & { killed?: boolean; signal?: string });
         const reason = detail.killed
