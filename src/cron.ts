@@ -361,10 +361,15 @@ async function execCommand(command: string, channelId?: string, silent?: boolean
   const cwd = resolveWorkspaceDir();
   const timeout = (timeoutSec ?? 120) * 1000;
 
-  // shell 選擇：job 指定 > 自動偵測
+  // Windows 路徑偵測：指令含 C:\... 或 .bat → 改用 cmd 避免 bash 把反斜線吃掉
+  const needsCmd = IS_WIN && !shellOverride && /[A-Za-z]:[\\\/]/.test(command);
+
+  // shell 選擇：job 指定 > Windows路徑自動選cmd > 自動偵測
   const shell = shellOverride
     ? availableShells.get(shellOverride)
-    : defaultShell;
+    : needsCmd
+      ? (availableShells.get("cmd") ?? defaultShell)
+      : defaultShell;
 
   if (!shell) {
     const available = [...availableShells.keys()].join(", ") || "(none)";
