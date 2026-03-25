@@ -220,6 +220,7 @@ switch (cmd) {
 
   case "restart":
     run("npx tsc");
+    triggerRestart();
     run("npx pm2 restart catclaw");
     console.log("🔄 catclaw 已重啟");
     break;
