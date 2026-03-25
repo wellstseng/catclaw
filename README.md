@@ -112,10 +112,11 @@ pnpm build
 ### 2. 建立設定目錄
 
 ```bash
-mkdir -p ~/.catclaw/workspace/data
 mkdir -p ~/.catclaw/workspace/data/active-turns
-cp catclaw.example.json ~/.catclaw/catclaw.json
+node -e "const fs=require('fs'),h=require('os').homedir();fs.writeFileSync(h+'/.catclaw/catclaw.json',fs.readFileSync('catclaw.example.json','utf-8').replace(/\/\/.*$/gm,'').replace(/\n\s*\n/g,'\n'))"
 ```
+
+這會把 `catclaw.example.json` 的 `//` 註解清除後複製到 `~/.catclaw/catclaw.json`。
 
 ### 3. 編輯 catclaw.json
 
