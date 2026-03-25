@@ -13,7 +13,7 @@
 
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { resolveWorkspaceDir } from "./config.js";
+import { resolveWorkspaceDir, config } from "./config.js";
 import { log } from "./logger.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ function rotate(): void {
 // ── 寫入 ─────────────────────────────────────────────────────────────────────
 
 function append(row: Omit<HistoryRow, "id">): void {
-  if (!historyPath) return;
+  if (!historyPath || !config.history.enabled) return;
   try {
     const record: HistoryRow = { id: nextId++, ...row };
     appendFileSync(historyPath, JSON.stringify(record) + "\n", "utf-8");

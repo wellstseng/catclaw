@@ -91,6 +91,12 @@ export interface CronConfig {
   maxConcurrentRuns: number;
 }
 
+/** 訊息歷史記錄設定 */
+export interface HistoryConfig {
+  /** 是否記錄訊息歷史，預設 true */
+  enabled: boolean;
+}
+
 /** 全域設定物件型別 */
 export interface BridgeConfig {
   /** Discord 相關設定 */
@@ -115,6 +121,8 @@ export interface BridgeConfig {
   logLevel: LogLevel;
   /** Cron 排程設定 */
   cron: CronConfig;
+  /** 訊息歷史記錄設定 */
+  history: HistoryConfig;
 }
 
 // ── JSON 載入 ────────────────────────────────────────────────────────────────
@@ -147,6 +155,9 @@ interface RawConfig {
   cron?: {
     enabled?: boolean;
     maxConcurrentRuns?: number;
+  };
+  history?: {
+    enabled?: boolean;
   };
 }
 
@@ -269,6 +280,9 @@ function loadConfig(): BridgeConfig {
     cron: {
       enabled: raw.cron?.enabled ?? false,
       maxConcurrentRuns: raw.cron?.maxConcurrentRuns ?? 1,
+    },
+    history: {
+      enabled: raw.history?.enabled ?? true,
     },
   };
 }
