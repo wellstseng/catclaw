@@ -24,10 +24,12 @@ import {
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import type { BridgeConfig } from "./config.js";
 import { config, getChannelAccess } from "./config.js";
 import { enqueue } from "./session.js";
 import { createReplyHandler } from "./reply.js";
+import { recordUserMessage } from "./history.js";
 import { log } from "./logger.js";
 
 // ── 訊息去重 ─────────────────────────────────────────────────────────────────
@@ -268,7 +270,23 @@ async function handleMessage(
 
   // Debounce：合併短時間內同一人的多則訊息
   debounce(message, text, config, (combinedText, firstMessage) => {
-    const onEvent = createReplyHandler(firstMessage, config);
+    // 生成 turn_id，串聯 user input + AI response
+    const turnId = randomUUID();
+
+    // 記錄 user 訊息到 history DB
+    recordUserMessage({
+      turnId,
+      messageId: firstMessage.id,
+      authorId: firstMessage.author.id,
+      authorName: firstMessage.author.displayName,
+      isBot: firstMessage.author.bot ?? false,
+      channelId: firstMessage.channelId,
+      guildId: firstMessage.guild?.id ?? null,
+      content: combinedText,
+      attachments: [...firstMessage.attachments.values()].map(a => a.name ?? a.url),
+    });
+
+    const onEvent = createReplyHandler(firstMessage, config, turnId);
 
     // 多人頻道中讓 Claude 知道發言者身份
     const prompt = `${firstMessage.author.displayName}: ${combinedText}`;

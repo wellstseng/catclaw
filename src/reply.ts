@@ -21,6 +21,8 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { AcpEvent } from "./acp.js";
 import type { BridgeConfig } from "./config.js";
+import { getSessionIdForChannel } from "./session.js";
+import { recordAssistantTurn } from "./history.js";
 import { log } from "./logger.js";
 
 // Discord 訊息字數硬上限
@@ -181,7 +183,8 @@ async function sendFile(
  */
 export function createReplyHandler(
   originalMessage: Message,
-  bridgeConfig: BridgeConfig
+  bridgeConfig: BridgeConfig,
+  turnId?: string,
 ): (event: AcpEvent) => Promise<void> {
   let buffer = "";
   let isFirst = true;
@@ -192,6 +195,10 @@ export function createReplyHandler(
   let fileMode = false;
   const threshold = bridgeConfig.fileUploadThreshold;
   const toolMode = bridgeConfig.showToolCalls;
+
+  // ── History 記錄用累積 ──
+  let totalThinking = "";
+  const toolCallNames: string[] = [];
 
   // ── Thinking 顯示 ──
   // 推理文字用 Discord 引用格式（> 💭 ...）送出
@@ -314,6 +321,8 @@ export function createReplyHandler(
 
   return async (event: AcpEvent): Promise<void> => {
     if (event.type === "thinking_delta") {
+      // history 記錄用（不論 showThinking 開關都累積）
+      totalThinking += event.text;
       // 推理文字：showThinking 開啟時累積，切換到 text 時 flush
       if (bridgeConfig.showThinking) {
         thinkingBuffer += event.text;
@@ -354,6 +363,7 @@ export function createReplyHandler(
         scheduleFlush();
       }
     } else if (event.type === "tool_call") {
+      toolCallNames.push(event.title);
       if (toolMode === "all") {
         // 全顯示：flush 當前 buffer + 顯示工具名稱
         cancelFlushTimer();
@@ -405,6 +415,22 @@ export function createReplyHandler(
         const uploaded = await uploadMediaFile(filePath, originalMessage, isFirst);
         if (uploaded) isFirst = false;
       }
+
+      // 寫入 history DB
+      if (turnId) {
+        const botUser = originalMessage.client.user;
+        recordAssistantTurn({
+          turnId,
+          channelId: originalMessage.channelId,
+          guildId: originalMessage.guild?.id ?? null,
+          botId: botUser?.id ?? "unknown",
+          botName: botUser?.displayName ?? "catclaw",
+          sessionId: getSessionIdForChannel(originalMessage.channelId),
+          text: totalText,
+          thinking: totalThinking,
+          toolCalls: toolCallNames,
+        });
+      }
     } else if (event.type === "timeout_warning") {
       // Timeout 預警：不中斷流程，送出提示讓使用者知道任務仍在進行
       const minutes = Math.ceil(event.elapsedSec / 60);
@@ -422,6 +448,22 @@ export function createReplyHandler(
       const errorMsg = `⚠️ 發生錯誤：${event.message}`.slice(0, TEXT_LIMIT);
       await sendChunk(errorMsg, originalMessage, isFirst);
       isFirst = false;
+
+      // error 也記入 history
+      if (turnId) {
+        const botUser = originalMessage.client.user;
+        recordAssistantTurn({
+          turnId,
+          channelId: originalMessage.channelId,
+          guildId: originalMessage.guild?.id ?? null,
+          botId: botUser?.id ?? "unknown",
+          botName: botUser?.displayName ?? "catclaw",
+          sessionId: getSessionIdForChannel(originalMessage.channelId),
+          text: `[ERROR] ${event.message}`,
+          thinking: totalThinking,
+          toolCalls: toolCallNames,
+        });
+      }
     }
     // status event 靜默忽略
   };

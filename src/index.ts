@@ -20,12 +20,16 @@ import { createDiscordClient } from "./discord.js";
 import { loadSessions, scanAndCleanActiveTurns } from "./session.js";
 import { startCron, stopCron } from "./cron.js";
 import { setupSlashCommands, registerSlashCommands } from "./slash.js";
+import { initHistory } from "./history.js";
 
 // 在其他模組開始 log 前設定層級
 setLogLevel(config.logLevel);
 
 // 從磁碟載入上次的 session 快取（重啟後延續對話上下文）
 loadSessions();
+
+// 初始化訊息歷史 DB
+initHistory();
 
 // ── 啟動 ─────────────────────────────────────────────────────────────────────
 

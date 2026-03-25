@@ -58,6 +58,11 @@ const sessionCache = new Map<string, string>();
 /** channelId → updatedAt timestamp */
 const sessionUpdatedAt = new Map<string, number>();
 
+/** 取得指定 channel 的 session ID（供 history 模組用） */
+export function getSessionIdForChannel(channelId: string): string | null {
+  return sessionCache.get(channelId) ?? null;
+}
+
 /**
  * channelId → Promise chain 尾端
  * per-channel 串行佇列核心：每個新 turn 接在上一個 Promise 後面
