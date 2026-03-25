@@ -1,16 +1,18 @@
 /**
  * @file history.ts
- * @description 訊息歷史記錄 — SQLite 存儲所有 user/assistant/thinking/tool 訊息
+ * @description 訊息歷史記錄 — NDJSON 存儲（append-only）
  *
- * Schema：單表 messages，用 turn_id (UUID) 串聯同一輪的 user input + AI response
- * DB 寫入失敗不影響 bot 正常運作（try-catch + log.warn）
+ * 原 SQLite（better-sqlite3）實作已替換為純 Node.js NDJSON 檔案，
+ * 不依賴 native build，全平台通用（Windows / macOS / Linux）。
+ *
+ * 格式：data/history.ndjson（每行一個 JSON 物件）
+ * 自動輪換：超過 MAX_LINES 行時保留最後 KEEP_LINES 行
  *
  * 對外 API：initHistory() / recordUserMessage() / recordAssistantTurn() / query functions
  */
 
-import Database from "better-sqlite3";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
 import { resolveWorkspaceDir } from "./config.js";
 import { log } from "./logger.js";
 
@@ -65,232 +67,159 @@ export interface HistoryRow {
   session_id: string | null;
 }
 
+// ── 常數 ────────────────────────────────────────────────────────────────────
+
+const MAX_LINES = 50_000;  // 超過此行數觸發輪換
+const KEEP_LINES = 30_000; // 輪換後保留最新的行數
+
 // ── 內部狀態 ────────────────────────────────────────────────────────────────
 
-let db: Database.Database | null = null;
+let historyPath = "";
+let lineCount = 0;
+let nextId = 1;
 
-// Prepared statements cache
-let stmtInsert: Database.Statement | null = null;
+// ── 輪換 ─────────────────────────────────────────────────────────────────────
 
-// ── 初始化 ────────────────────────────────────────────────────────────────
+function rotate(): void {
+  try {
+    const raw = readFileSync(historyPath, "utf-8");
+    const lines = raw.split("\n").filter((l) => l.trim());
+    const kept = lines.slice(-KEEP_LINES);
+    writeFileSync(historyPath, kept.join("\n") + "\n", "utf-8");
+    lineCount = kept.length;
+    log.info(`[history] 輪換完成，保留 ${lineCount} 筆`);
+  } catch (err) {
+    log.warn(`[history] 輪換失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS messages (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  turn_id       TEXT NOT NULL,
-  message_id    TEXT,
-  role          TEXT NOT NULL,
-  author_id     TEXT,
-  author_name   TEXT,
-  is_bot        INTEGER NOT NULL DEFAULT 0,
-  channel_id    TEXT NOT NULL,
-  guild_id      TEXT,
-  content       TEXT,
-  tool_name     TEXT,
-  attachments   TEXT,
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', 'localtime')),
-  session_id    TEXT
-);
+// ── 寫入 ─────────────────────────────────────────────────────────────────────
 
-CREATE INDEX IF NOT EXISTS idx_messages_channel_time ON messages (channel_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_messages_turn_id ON messages (turn_id);
-CREATE INDEX IF NOT EXISTS idx_messages_author ON messages (author_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_messages_role ON messages (role);
-`;
+function append(row: Omit<HistoryRow, "id">): void {
+  if (!historyPath) return;
+  try {
+    const record: HistoryRow = { id: nextId++, ...row };
+    appendFileSync(historyPath, JSON.stringify(record) + "\n", "utf-8");
+    lineCount++;
+    if (lineCount >= MAX_LINES) rotate();
+  } catch (err) {
+    log.warn(`[history] 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+// ── 公開 API ─────────────────────────────────────────────────────────────────
 
 /**
- * 初始化 SQLite DB（data/history.db）
- * 設定 WAL mode + NORMAL sync，建立 schema
+ * 初始化歷史記錄（data/history.ndjson）
  */
 export function initHistory(): void {
   try {
     const dir = join(resolveWorkspaceDir(), "data");
     mkdirSync(dir, { recursive: true });
-    const dbPath = join(dir, "history.db");
+    historyPath = join(dir, "history.ndjson");
 
-    db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
-    db.pragma("synchronous = NORMAL");
-    db.exec(SCHEMA);
+    // 計算現有行數
+    if (existsSync(historyPath)) {
+      const raw = readFileSync(historyPath, "utf-8");
+      const lines = raw.split("\n").filter((l) => l.trim());
+      lineCount = lines.length;
+      // 推算 nextId
+      if (lines.length > 0) {
+        try {
+          const last = JSON.parse(lines[lines.length - 1]) as { id?: number };
+          if (typeof last.id === "number") nextId = last.id + 1;
+        } catch { /* 忽略 */ }
+      }
+    }
 
-    stmtInsert = db.prepare(`
-      INSERT INTO messages (turn_id, message_id, role, author_id, author_name, is_bot, channel_id, guild_id, content, tool_name, attachments, session_id)
-      VALUES (@turnId, @messageId, @role, @authorId, @authorName, @isBot, @channelId, @guildId, @content, @toolName, @attachments, @sessionId)
-    `);
-
-    log.info(`[history] SQLite 初始化完成：${dbPath}`);
+    log.info(`[history] NDJSON 初始化完成：${historyPath}（${lineCount} 筆）`);
   } catch (err) {
     log.warn(`[history] 初始化失敗：${err instanceof Error ? err.message : String(err)}`);
-    db = null;
+    historyPath = "";
   }
 }
 
-// ── 寫入 ────────────────────────────────────────────────────────────────
-
-/**
- * 記錄 user 訊息（debounce 合併後的最終文字）
- */
+/** 記錄 user 訊息 */
 export function recordUserMessage(params: UserMessageParams): void {
-  if (!db || !stmtInsert) return;
-  try {
-    stmtInsert.run({
-      turnId: params.turnId,
-      messageId: params.messageId,
-      role: "user",
-      authorId: params.authorId,
-      authorName: params.authorName,
-      isBot: params.isBot ? 1 : 0,
-      channelId: params.channelId,
-      guildId: params.guildId,
-      content: params.content,
-      toolName: null,
-      attachments: params.attachments?.length ? JSON.stringify(params.attachments) : null,
-      sessionId: null,
-    });
-  } catch (err) {
-    log.warn(`[history] user message 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
-  }
+  append({
+    turn_id: params.turnId,
+    message_id: params.messageId,
+    role: "user",
+    author_id: params.authorId,
+    author_name: params.authorName,
+    is_bot: params.isBot ? 1 : 0,
+    channel_id: params.channelId,
+    guild_id: params.guildId,
+    content: params.content,
+    tool_name: null,
+    attachments: params.attachments?.length ? JSON.stringify(params.attachments) : null,
+    created_at: nowIso(),
+    session_id: null,
+  });
 }
 
-/**
- * 記錄 assistant 回覆（一次寫入 text + thinking + tool_calls，用 transaction）
- */
+/** 記錄 assistant 回覆（thinking + tool_calls + text） */
 export function recordAssistantTurn(params: AssistantTurnParams): void {
-  if (!db || !stmtInsert) return;
-  try {
-    const insertMany = db.transaction(() => {
-      // thinking（如果有的話）
-      if (params.thinking.trim()) {
-        stmtInsert!.run({
-          turnId: params.turnId,
-          messageId: null,
-          role: "thinking",
-          authorId: params.botId,
-          authorName: params.botName,
-          isBot: 1,
-          channelId: params.channelId,
-          guildId: params.guildId,
-          content: params.thinking,
-          toolName: null,
-          attachments: null,
-          sessionId: params.sessionId,
-        });
-      }
+  const base = {
+    message_id: null,
+    author_id: params.botId,
+    author_name: params.botName,
+    is_bot: 1 as const,
+    channel_id: params.channelId,
+    guild_id: params.guildId,
+    attachments: null,
+    session_id: params.sessionId,
+  };
 
-      // tool calls
-      for (const toolName of params.toolCalls) {
-        stmtInsert!.run({
-          turnId: params.turnId,
-          messageId: null,
-          role: "tool",
-          authorId: params.botId,
-          authorName: params.botName,
-          isBot: 1,
-          channelId: params.channelId,
-          guildId: params.guildId,
-          content: null,
-          toolName,
-          attachments: null,
-          sessionId: params.sessionId,
-        });
-      }
-
-      // assistant text（最終回覆）
-      if (params.text.trim()) {
-        stmtInsert!.run({
-          turnId: params.turnId,
-          messageId: null,
-          role: "assistant",
-          authorId: params.botId,
-          authorName: params.botName,
-          isBot: 1,
-          channelId: params.channelId,
-          guildId: params.guildId,
-          content: params.text,
-          toolName: null,
-          attachments: null,
-          sessionId: params.sessionId,
-        });
-      }
-    });
-
-    insertMany();
-  } catch (err) {
-    log.warn(`[history] assistant turn 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
+  if (params.thinking.trim()) {
+    append({ turn_id: params.turnId, role: "thinking", content: params.thinking, tool_name: null, created_at: nowIso(), ...base });
+  }
+  for (const toolName of params.toolCalls) {
+    append({ turn_id: params.turnId, role: "tool", content: null, tool_name: toolName, created_at: nowIso(), ...base });
+  }
+  if (params.text.trim()) {
+    append({ turn_id: params.turnId, role: "assistant", content: params.text, tool_name: null, created_at: nowIso(), ...base });
   }
 }
 
-// ── 查詢 ────────────────────────────────────────────────────────────────
+// ── 查詢（全掃描，適合低頻查詢）────────────────────────────────────────────
 
-/**
- * 查詢頻道歷史訊息
- */
+function readAll(): HistoryRow[] {
+  if (!historyPath || !existsSync(historyPath)) return [];
+  try {
+    return readFileSync(historyPath, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as HistoryRow);
+  } catch {
+    return [];
+  }
+}
+
 export function getChannelHistory(channelId: string, limit = 50, before?: string): HistoryRow[] {
-  if (!db) return [];
-  try {
-    if (before) {
-      return db.prepare(
-        `SELECT * FROM messages WHERE channel_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?`
-      ).all(channelId, before, limit) as HistoryRow[];
-    }
-    return db.prepare(
-      `SELECT * FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?`
-    ).all(channelId, limit) as HistoryRow[];
-  } catch (err) {
-    log.warn(`[history] 查詢失敗：${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
+  let rows = readAll().filter((r) => r.channel_id === channelId);
+  if (before) rows = rows.filter((r) => r.created_at < before);
+  return rows.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
 }
 
-/**
- * 查詢完整 turn（user + thinking + tool + assistant）
- */
 export function getTurnDetail(turnId: string): HistoryRow[] {
-  if (!db) return [];
-  try {
-    return db.prepare(
-      `SELECT * FROM messages WHERE turn_id = ? ORDER BY id ASC`
-    ).all(turnId) as HistoryRow[];
-  } catch (err) {
-    log.warn(`[history] turn 查詢失敗：${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
+  return readAll().filter((r) => r.turn_id === turnId).sort((a, b) => a.id - b.id);
 }
 
-/**
- * 查詢特定使用者的歷史
- */
 export function getUserHistory(authorId: string, limit = 50): HistoryRow[] {
-  if (!db) return [];
-  try {
-    return db.prepare(
-      `SELECT * FROM messages WHERE author_id = ? ORDER BY created_at DESC LIMIT ?`
-    ).all(authorId, limit) as HistoryRow[];
-  } catch (err) {
-    log.warn(`[history] user 查詢失敗：${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
+  return readAll()
+    .filter((r) => r.author_id === authorId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, limit);
 }
 
-/**
- * 取得 DB 統計（總筆數 + 各 role 計數）
- */
 export function getHistoryStats(): Record<string, number> {
-  if (!db) return {};
-  try {
-    const rows = db.prepare(
-      `SELECT role, COUNT(*) as count FROM messages GROUP BY role`
-    ).all() as { role: string; count: number }[];
-    const stats: Record<string, number> = {};
-    let total = 0;
-    for (const row of rows) {
-      stats[row.role] = row.count;
-      total += row.count;
-    }
-    stats.total = total;
-    return stats;
-  } catch (err) {
-    log.warn(`[history] stats 查詢失敗：${err instanceof Error ? err.message : String(err)}`);
-    return {};
-  }
+  const rows = readAll();
+  const stats: Record<string, number> = { total: rows.length };
+  for (const r of rows) stats[r.role] = (stats[r.role] ?? 0) + 1;
+  return stats;
 }
