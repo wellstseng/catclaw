@@ -27,11 +27,15 @@ import { buildProviderRegistry, initProviderRegistry } from "../providers/regist
 import { initWorkflow } from "../workflow/bootstrap.js";
 import { initRegistrationManager } from "../accounts/registration.js";
 import { initIdentityLinker } from "../accounts/identity-linker.js";
+import { initProjectManager, type ProjectManager } from "../projects/manager.js";
+import { initMemoryEngine, type MemoryEngine } from "../memory/engine.js";
 
 // ── 子系統實例（module-level singleton） ─────────────────────────────────────
 
 let _accountRegistry: AccountRegistry | null = null;
 let _toolRegistry: ToolRegistry | null = null;
+let _projectManager: ProjectManager | null = null;
+let _memoryEngine: MemoryEngine | null = null;
 let _permissionGate: PermissionGate | null = null;
 let _safetyGuard: SafetyGuard | null = null;
 let _sessionManager: SessionManager | null = null;
@@ -115,7 +119,31 @@ export async function initPlatform(
   initRegistrationManager(catclawDir, _accountRegistry);
   initIdentityLinker(_accountRegistry);
 
-  // ── 8. Workflow Engine ──────────────────────────────────────────────────────
+  // ── 8. Project Manager ─────────────────────────────────────────────────────
+  _projectManager = initProjectManager(join(catclawDir, "workspace", "data"));
+
+  // ── 9. Memory Engine ───────────────────────────────────────────────────────
+  if (config.memory?.enabled !== false) {
+    _memoryEngine = initMemoryEngine(config.memory ?? {
+      enabled: true,
+      globalPath: join(catclawDir, "memory", "global"),
+      vectorDbPath: join(catclawDir, "memory", "_vectordb"),
+      contextBudget: 3000,
+      contextBudgetRatio: { global: 0.3, project: 0.4, account: 0.3 },
+      writeGate: { enabled: true, dedupThreshold: 0.80 },
+      recall: { triggerMatch: true, vectorSearch: false, relatedEdgeSpreading: true, vectorMinScore: 0.65, vectorTopK: 5 },
+      extract: { enabled: false, perTurn: false, onSessionEnd: false, maxItemsPerTurn: 3, maxItemsSessionEnd: 5, minNewChars: 500 },
+      consolidate: { autoPromoteThreshold: 20, suggestPromoteThreshold: 8, decay: { enabled: false, halfLifeDays: 30, archiveThreshold: 0.1 } },
+      episodic: { enabled: false, ttlDays: 24 },
+      rutDetection: { enabled: false, windowSize: 14, minOccurrences: 2 },
+      oscillation: { enabled: false },
+    });
+    try { await _memoryEngine.init(); } catch (err) {
+      log.warn(`[platform] MemoryEngine init 失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // ── 10. Workflow Engine ─────────────────────────────────────────────────────
   const workflowDataDir = join(catclawDir, "workspace", "data", "workflow");
   const memoryDir = join(catclawDir, "memory");
   initWorkflow(
@@ -153,6 +181,16 @@ export function getPlatformPermissionGate(): PermissionGate {
 export function getPlatformSafetyGuard(): SafetyGuard {
   if (!_safetyGuard) throw new Error("[platform] SafetyGuard 尚未初始化");
   return _safetyGuard;
+}
+
+export function getPlatformProjectManager(): ProjectManager {
+  if (!_projectManager) throw new Error("[platform] ProjectManager 尚未初始化");
+  return _projectManager;
+}
+
+/** 記憶引擎（可選，未初始化時回傳 null） */
+export function getPlatformMemoryEngine(): MemoryEngine | null {
+  return _memoryEngine;
 }
 
 export function getPlatformSessionManager(): SessionManager {

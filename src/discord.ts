@@ -40,6 +40,8 @@ import {
   getPlatformPermissionGate,
   getPlatformToolRegistry,
   getPlatformSafetyGuard,
+  getPlatformMemoryEngine,
+  getPlatformProjectManager,
 } from "./core/platform.js";
 import { getProviderRegistry } from "./providers/registry.js";
 import { agentLoop } from "./core/agent-loop.js";
@@ -370,6 +372,28 @@ async function handleMessage(
       const isGroupChannel = !!firstMessage.guild;
       const prompt = combinedText;
 
+      // ── 記憶 Recall（三層：全域+專案+個人） ─────────────────────────────
+      let systemPromptFromMemory = "";
+      const memEngine = getPlatformMemoryEngine();
+      if (memEngine) {
+        try {
+          // 取得帳號當前專案
+          const account = (() => { try { return getPlatformProjectManager() && null; } catch { return null; } })();
+          void account; // 暫不使用，後續 S11 補完整 projectId 解析
+          const recallResult = await memEngine.recall(prompt, {
+            accountId,
+            channelId: firstMessage.channelId,
+          });
+          if (recallResult.fragments.length > 0) {
+            const ctx = memEngine.buildContext(recallResult.fragments, prompt, recallResult.blindSpot);
+            systemPromptFromMemory = ctx.text;
+            log.debug(`[discord] 記憶注入 ${recallResult.fragments.length} 個 atom (${ctx.tokenCount} tokens)`);
+          }
+        } catch (err) {
+          log.debug(`[discord] 記憶 recall 失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       const gen = agentLoop(prompt, {
         channelId: firstMessage.channelId,
         accountId,
@@ -377,6 +401,7 @@ async function handleMessage(
         speakerDisplay: firstMessage.author.displayName,
         speakerRole: isGuest ? "guest" : "member",
         provider,
+        systemPrompt: systemPromptFromMemory || undefined,
         turnTimeoutMs: config.turnTimeoutMs,
         showToolCalls: config.showToolCalls as "all" | "summary" | "none",
       }, {
