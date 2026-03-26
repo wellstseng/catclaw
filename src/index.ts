@@ -12,7 +12,8 @@
  */
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { config, watchConfig } from "./config.js";
 import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
@@ -22,9 +23,17 @@ import { startCron, stopCron } from "./cron.js";
 import { setupSlashCommands, registerSlashCommands } from "./slash.js";
 import { initHistory } from "./history.js";
 import { loadBuiltinSkills, loadPromptSkills } from "./skills/registry.js";
+import { initPlatform } from "./core/platform.js";
+import type { BridgeConfig as CoreBridgeConfig } from "./core/config.js";
+import { homedir } from "node:os";
 
 // 在其他模組開始 log 前設定層級
 setLogLevel(config.logLevel);
+
+// ── 新平台子系統初始化（僅當 config.providers 有設定時啟用）──────────────────
+const catclawDir = resolve(homedir(), ".catclaw");
+const distDir = dirname(fileURLToPath(import.meta.url));
+await initPlatform(config as unknown as CoreBridgeConfig, catclawDir, distDir);
 
 // 從磁碟載入上次的 session 快取（重啟後延續對話上下文）
 loadSessions();

@@ -32,6 +32,19 @@ import { createReplyHandler } from "./reply.js";
 import { matchSkill } from "./skills/registry.js";
 import { recordUserMessage } from "./history.js";
 import { log } from "./logger.js";
+import {
+  isPlatformReady,
+  resolveDiscordIdentity,
+  ensureGuestAccount,
+  getPlatformSessionManager,
+  getPlatformPermissionGate,
+  getPlatformToolRegistry,
+  getPlatformSafetyGuard,
+} from "./core/platform.js";
+import { getProviderRegistry } from "./providers/registry.js";
+import { agentLoop } from "./core/agent-loop.js";
+import { eventBus } from "./core/event-bus.js";
+import { handleAgentLoopReply } from "./core/reply-handler.js";
 
 // ── 訊息去重 ─────────────────────────────────────────────────────────────────
 
@@ -311,16 +324,50 @@ async function handleMessage(
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    const onEvent = createReplyHandler(firstMessage, config, turnId);
+    // ── 路由：新平台路徑 vs 舊 Claude CLI 路徑 ────────────────────────────
+    if (isPlatformReady()) {
+      const { accountId, isGuest } = resolveDiscordIdentity(
+        firstMessage.author.id,
+        config.admin?.allowedUserIds ?? [],
+      );
+      if (isGuest) ensureGuestAccount(accountId);
 
-    // 多人頻道中讓 Claude 知道發言者身份
-    const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
+      const providerRegistry = getProviderRegistry();
+      const provider = providerRegistry.resolve({ channelId: firstMessage.channelId });
 
-    enqueue(firstMessage.channelId, prompt, onEvent, {
-      // cwd 和 claudeCmd 已移除，由 acp.ts 從環境變數取得
-      turnTimeoutMs: config.turnTimeoutMs,
-      turnTimeoutToolCallMs: config.turnTimeoutToolCallMs,
-      sessionTtlMs: config.sessionTtlHours * 3600_000,
-    });
+      const isGroupChannel = !!firstMessage.guild;
+      const prompt = combinedText;
+
+      const gen = agentLoop(prompt, {
+        channelId: firstMessage.channelId,
+        accountId,
+        isGroupChannel,
+        speakerDisplay: firstMessage.author.displayName,
+        speakerRole: isGuest ? "guest" : "member",
+        provider,
+        turnTimeoutMs: config.turnTimeoutMs,
+        showToolCalls: config.showToolCalls as "all" | "summary" | "none",
+      }, {
+        sessionManager: getPlatformSessionManager(),
+        permissionGate: getPlatformPermissionGate(),
+        toolRegistry: getPlatformToolRegistry(),
+        safetyGuard: getPlatformSafetyGuard(),
+        eventBus,
+      });
+
+      void handleAgentLoopReply(gen, firstMessage, config);
+    } else {
+      // 舊 Claude CLI 路徑（向下相容）
+      const onEvent = createReplyHandler(firstMessage, config, turnId);
+
+      // 多人頻道中讓 Claude 知道發言者身份
+      const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
+
+      enqueue(firstMessage.channelId, prompt, onEvent, {
+        turnTimeoutMs: config.turnTimeoutMs,
+        turnTimeoutToolCallMs: config.turnTimeoutToolCallMs,
+        sessionTtlMs: config.sessionTtlHours * 3600_000,
+      });
+    }
   })(); });
 }
