@@ -25,6 +25,8 @@ import { SafetyGuard, initSafetyGuard } from "../safety/guard.js";
 import { SessionManager, initSessionManager } from "./session.js";
 import { buildProviderRegistry, initProviderRegistry } from "../providers/registry.js";
 import { initWorkflow } from "../workflow/bootstrap.js";
+import { initRegistrationManager } from "../accounts/registration.js";
+import { initIdentityLinker } from "../accounts/identity-linker.js";
 
 // ── 子系統實例（module-level singleton） ─────────────────────────────────────
 
@@ -109,7 +111,11 @@ export async function initPlatform(
   _sessionManager = initSessionManager(sessionCfg);
   await _sessionManager.init();
 
-  // ── 7. Workflow Engine ──────────────────────────────────────────────────────
+  // ── 7. Registration + Identity Linker ─────────────────────────────────────
+  initRegistrationManager(catclawDir, _accountRegistry);
+  initIdentityLinker(_accountRegistry);
+
+  // ── 8. Workflow Engine ──────────────────────────────────────────────────────
   const workflowDataDir = join(catclawDir, "workspace", "data", "workflow");
   const memoryDir = join(catclawDir, "memory");
   initWorkflow(

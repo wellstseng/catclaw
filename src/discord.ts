@@ -344,7 +344,25 @@ async function handleMessage(
         firstMessage.author.id,
         config.admin?.allowedUserIds ?? [],
       );
-      if (isGuest) ensureGuestAccount(accountId);
+      if (isGuest) {
+        ensureGuestAccount(accountId);
+
+        // DM 未知使用者 → 提示配對流程（非阻斷）
+        if (!firstMessage.guild) {
+          try {
+            const { getRegistrationManager } = await import("./accounts/registration.js");
+            const pairResult = getRegistrationManager().createPairingCode("discord", firstMessage.author.id);
+            if (pairResult.ok && pairResult.code) {
+              void firstMessage.reply(
+                `👋 你尚未有註冊帳號。配對碼：\`${pairResult.code}\`（5 分鐘內有效）\n` +
+                `請將此碼告知管理員，由管理員執行：\n\`/account approve ${pairResult.code} --name <你的帳號名>\`\n\n` +
+                `已有邀請碼？使用 \`/register <邀請碼> <帳號名>\``
+              );
+              return;
+            }
+          } catch { /* registration not initialized, fall through */ }
+        }
+      }
 
       const providerRegistry = getProviderRegistry();
       const provider = providerRegistry.resolve({ channelId: firstMessage.channelId });
