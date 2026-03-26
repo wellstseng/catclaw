@@ -1,0 +1,282 @@
+/**
+ * @file core/session.ts
+ * @description Session 管理 + Turn Queue
+ *
+ * Session = 一個頻道/帳號的對話上下文（messages history + provider binding）
+ * Turn Queue = per-session FIFO 佇列，序列化多並發訊息
+ *
+ * 設計要點：
+ * - Session key：`ch:{channelId}` 或 `dm:{accountId}:{channelId}`
+ * - 持久化：atomic write（先寫 .tmp 再 rename）
+ * - TTL 清理：啟動時掃描，刪除過期 session
+ * - Turn Queue 規則：max depth 5，排隊超時 60s，自動移出
+ */
+
+import { writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync, mkdirSync, renameSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { log } from "../logger.js";
+import type { Message } from "../providers/base.js";
+import type { SessionConfig } from "./config.js";
+
+// ── 型別 ─────────────────────────────────────────────────────────────────────
+
+export interface Session {
+  sessionKey: string;
+  accountId: string;
+  channelId: string;
+  providerId: string;
+  messages: Message[];
+  createdAt: number;        // timestamp ms
+  lastActiveAt: number;
+  turnCount: number;
+}
+
+export interface TurnRequest {
+  sessionKey: string;
+  accountId: string;
+  prompt: string;
+  signal?: AbortSignal;
+  enqueuedAt: number;
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
+// ── SessionManager ────────────────────────────────────────────────────────────
+
+const TURN_QUEUE_MAX_DEPTH  = 5;
+const TURN_QUEUE_TIMEOUT_MS = 60_000;
+const MAX_HISTORY_TURNS_DEFAULT = 50;
+
+export class SessionManager {
+  private sessions = new Map<string, Session>();
+  private queues   = new Map<string, TurnRequest[]>();
+  private cfg: SessionConfig;
+  private persistDir: string;
+
+  constructor(cfg: SessionConfig) {
+    this.cfg = cfg;
+    this.persistDir = resolvePath(cfg.persistPath);
+  }
+
+  // ── 初始化 ───────────────────────────────────────────────────────────────────
+
+  async init(): Promise<void> {
+    mkdirSync(this.persistDir, { recursive: true });
+    this.cleanExpired();
+    this.loadAll();
+    log.info(`[session] 初始化完成，已載入 ${this.sessions.size} 個 session`);
+  }
+
+  // ── Session CRUD ──────────────────────────────────────────────────────────────
+
+  getOrCreate(sessionKey: string, accountId: string, channelId: string, providerId: string): Session {
+    let session = this.sessions.get(sessionKey);
+    if (!session) {
+      session = {
+        sessionKey, accountId, channelId, providerId,
+        messages: [],
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+        turnCount: 0,
+      };
+      this.sessions.set(sessionKey, session);
+      log.debug(`[session] 建立 ${sessionKey}`);
+    }
+    return session;
+  }
+
+  get(sessionKey: string): Session | undefined {
+    return this.sessions.get(sessionKey);
+  }
+
+  /** 新增訊息（user + assistant），並觸發 compact / persist */
+  addMessages(sessionKey: string, messages: Message[]): void {
+    const session = this.sessions.get(sessionKey);
+    if (!session) return;
+    session.messages.push(...messages);
+    session.lastActiveAt = Date.now();
+    session.turnCount++;
+
+    // compact：保留最近 N 輪（不含 system messages）
+    const maxTurns = this.cfg.maxHistoryTurns ?? MAX_HISTORY_TURNS_DEFAULT;
+    if (session.messages.length > maxTurns * 2) {
+      session.messages = session.messages.slice(-maxTurns * 2);
+    }
+
+    this.persist(session);
+  }
+
+  getHistory(sessionKey: string): Message[] {
+    return this.sessions.get(sessionKey)?.messages ?? [];
+  }
+
+  delete(sessionKey: string): void {
+    this.sessions.delete(sessionKey);
+    const filePath = this.sessionPath(sessionKey);
+    try { if (existsSync(filePath)) unlinkSync(filePath); } catch { /* 靜默 */ }
+    log.debug(`[session] 刪除 ${sessionKey}`);
+  }
+
+  list(): Session[] {
+    return Array.from(this.sessions.values());
+  }
+
+  // ── Turn Queue ────────────────────────────────────────────────────────────────
+
+  /**
+   * 排入 turn queue，回傳 Promise（當前 turn 可開始執行時 resolve）
+   * 超過 max depth → reject（忙碌中）
+   * 排隊超過 60s → reject（超時）
+   */
+  enqueueTurn(request: Omit<TurnRequest, "enqueuedAt" | "resolve" | "reject">): Promise<void> {
+    const { sessionKey } = request;
+    const queue = this.queues.get(sessionKey) ?? [];
+
+    if (queue.length >= TURN_QUEUE_MAX_DEPTH) {
+      return Promise.reject(new Error("BUSY: turn queue 已滿（depth=5），請稍後再試"));
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const entry: TurnRequest = {
+        ...request,
+        enqueuedAt: Date.now(),
+        resolve,
+        reject,
+      };
+      queue.push(entry);
+      this.queues.set(sessionKey, queue);
+
+      // 超時自動移出
+      const timeoutId = setTimeout(() => {
+        const q = this.queues.get(sessionKey);
+        if (q) {
+          const idx = q.indexOf(entry);
+          if (idx >= 0) {
+            q.splice(idx, 1);
+            reject(new Error("TIMEOUT: 排隊超過 60s，自動移出"));
+          }
+        }
+      }, TURN_QUEUE_TIMEOUT_MS);
+
+      // 若是第一個 → 立即 resolve（不等待）
+      if (queue.length === 1) {
+        clearTimeout(timeoutId);
+        resolve();
+      } else {
+        // 等待前一個 dequeue
+        (entry as unknown as Record<string, unknown>)["_timeoutId"] = timeoutId;
+      }
+    });
+  }
+
+  /** 前一個 turn 完成，讓下一個開始 */
+  dequeueTurn(sessionKey: string): void {
+    const queue = this.queues.get(sessionKey);
+    if (!queue || queue.length === 0) return;
+
+    queue.shift();  // 移除剛完成的
+
+    if (queue.length > 0) {
+      const next = queue[0];
+      // 清理超時計時器
+      const timeoutId = (next as unknown as Record<string, unknown>)["_timeoutId"];
+      if (timeoutId) clearTimeout(timeoutId as ReturnType<typeof setTimeout>);
+      next.resolve();  // 讓下一個 turn 開始
+    } else {
+      this.queues.delete(sessionKey);
+    }
+  }
+
+  getQueueDepth(sessionKey: string): number {
+    return this.queues.get(sessionKey)?.length ?? 0;
+  }
+
+  // ── 持久化 ────────────────────────────────────────────────────────────────────
+
+  private sessionPath(sessionKey: string): string {
+    // sessionKey 可能含 : 等字元，轉底線安全存檔
+    const safe = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+    return join(this.persistDir, `${safe}.json`);
+  }
+
+  private persist(session: Session): void {
+    try {
+      const filePath = this.sessionPath(session.sessionKey);
+      const tmpPath  = filePath + ".tmp";
+      writeFileSync(tmpPath, JSON.stringify(session, null, 2), "utf-8");
+      renameSync(tmpPath, filePath);  // atomic write
+    } catch (err) {
+      log.warn(`[session] persist 失敗 ${session.sessionKey}：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private loadAll(): void {
+    try {
+      const files = readdirSync(this.persistDir).filter(f => f.endsWith(".json"));
+      for (const f of files) {
+        try {
+          const raw = readFileSync(join(this.persistDir, f), "utf-8");
+          const session = JSON.parse(raw) as Session;
+          this.sessions.set(session.sessionKey, session);
+        } catch { /* 損壞的 session 檔，跳過 */ }
+      }
+    } catch { /* 目錄不存在 */ }
+  }
+
+  private cleanExpired(): void {
+    const ttlMs = (this.cfg.ttlHours ?? 168) * 3600_000;
+    const cutoff = Date.now() - ttlMs;
+    try {
+      const files = readdirSync(this.persistDir).filter(f => f.endsWith(".json"));
+      for (const f of files) {
+        const filePath = join(this.persistDir, f);
+        try {
+          const raw = readFileSync(filePath, "utf-8");
+          const { lastActiveAt } = JSON.parse(raw) as Session;
+          if (lastActiveAt < cutoff) {
+            unlinkSync(filePath);
+            log.debug(`[session] 清除過期 ${f}`);
+          }
+        } catch { /* 損壞，刪除 */
+          try { unlinkSync(filePath); } catch { /* 靜默 */ }
+        }
+      }
+    } catch { /* 靜默 */ }
+  }
+}
+
+// ── Session Key 工具函式 ──────────────────────────────────────────────────────
+
+/**
+ * 產生 session key
+ * - 群組頻道（isDm=false）：`ch:{channelId}`（per-channel，所有人共用同一 session）
+ * - DM（isDm=true）：`dm:{accountId}:{channelId}`（per-account）
+ */
+export function makeSessionKey(channelId: string, accountId: string, isDm: boolean): string {
+  return isDm ? `dm:${accountId}:${channelId}` : `ch:${channelId}`;
+}
+
+// ── 路徑解析 ──────────────────────────────────────────────────────────────────
+
+function resolvePath(p: string): string {
+  return p.startsWith("~") ? p.replace("~", homedir()) : resolve(p);
+}
+
+// ── 全域單例 ──────────────────────────────────────────────────────────────────
+
+let _manager: SessionManager | null = null;
+
+export function initSessionManager(cfg: SessionConfig): SessionManager {
+  _manager = new SessionManager(cfg);
+  return _manager;
+}
+
+export function getSessionManager(): SessionManager {
+  if (!_manager) throw new Error("[session] SessionManager 尚未初始化，請先呼叫 initSessionManager()");
+  return _manager;
+}
+
+export function resetSessionManager(): void {
+  _manager = null;
+}
