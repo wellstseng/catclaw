@@ -1,0 +1,128 @@
+/**
+ * @file tools/registry.ts
+ * @description Tool 註冊表 — 自動掃描目錄、register/execute、hot-reload
+ *
+ * 啟動時掃描目錄，找到 export `tool` 的檔案自動註冊。
+ * fs.watch 監聽目錄，檔案新增/修改後重新載入（hot-reload）。
+ */
+
+import { readdirSync, watch } from "node:fs";
+import { join, resolve } from "node:path";
+import { log } from "../logger.js";
+import type { Tool, ToolDefinition, ToolContext, ToolResult } from "./types.js";
+import { toDefinition } from "./types.js";
+
+// ── ToolRegistry ──────────────────────────────────────────────────────────────
+
+export class ToolRegistry {
+  private tools = new Map<string, Tool>();
+  private watchers: ReturnType<typeof watch>[] = [];
+
+  // ── 註冊 ────────────────────────────────────────────────────────────────────
+
+  register(tool: Tool): void {
+    this.tools.set(tool.name, tool);
+    log.debug(`[tool-registry] 已註冊 ${tool.name} (tier=${tool.tier})`);
+  }
+
+  get(name: string): Tool | undefined {
+    return this.tools.get(name);
+  }
+
+  all(): Tool[] {
+    return Array.from(this.tools.values());
+  }
+
+  // ── 自動掃描目錄 ──────────────────────────────────────────────────────────
+
+  /**
+   * 掃描目錄下所有 .js 檔，載入 export `tool` 的模組
+   * （dist/ 目錄，tsc 已編譯）
+   */
+  async loadFromDirectory(dir: string): Promise<void> {
+    const absDir = resolve(dir);
+    let files: string[];
+    try {
+      files = readdirSync(absDir).filter(f => f.endsWith(".js"));
+    } catch {
+      log.debug(`[tool-registry] 目錄不存在，跳過：${absDir}`);
+      return;
+    }
+
+    for (const file of files) {
+      await this.loadFile(join(absDir, file));
+    }
+    log.info(`[tool-registry] 從 ${absDir} 載入 ${files.length} 個 tool`);
+  }
+
+  private async loadFile(filePath: string): Promise<void> {
+    try {
+      // ESM dynamic import（dist/*.js）；加 ?t= 強制重新載入（hot-reload 用）
+      const mod = await import(`${filePath}?t=${Date.now()}`);
+      if (mod.tool && typeof mod.tool.execute === "function") {
+        this.register(mod.tool as Tool);
+      }
+    } catch (err) {
+      log.warn(`[tool-registry] 載入 ${filePath} 失敗：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // ── Hot-reload ─────────────────────────────────────────────────────────────
+
+  watchDirectory(dir: string): void {
+    const absDir = resolve(dir);
+    try {
+      const watcher = watch(absDir, async (eventType, filename) => {
+        if (!filename?.endsWith(".js")) return;
+        log.debug(`[tool-registry] 偵測到變更：${filename}，重新載入`);
+        await this.loadFile(join(absDir, filename));
+      });
+      this.watchers.push(watcher);
+    } catch {
+      log.debug(`[tool-registry] 無法監聽 ${absDir}`);
+    }
+  }
+
+  stopWatching(): void {
+    for (const w of this.watchers) w.close();
+    this.watchers = [];
+  }
+
+  // ── 執行 ────────────────────────────────────────────────────────────────────
+
+  async execute(toolName: string, params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+    const tool = this.tools.get(toolName);
+    if (!tool) return { error: `找不到 tool: ${toolName}` };
+
+    try {
+      return await tool.execute(params, ctx);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  // ── ToolDefinition 清單（傳給 LLM）────────────────────────────────────────
+
+  definitions(): ToolDefinition[] {
+    return Array.from(this.tools.values()).map(toDefinition);
+  }
+}
+
+// ── 全域單例 ──────────────────────────────────────────────────────────────────
+
+let _registry: ToolRegistry | null = null;
+
+export function initToolRegistry(): ToolRegistry {
+  _registry = new ToolRegistry();
+  return _registry;
+}
+
+export function getToolRegistry(): ToolRegistry {
+  if (!_registry) throw new Error("[tool-registry] 尚未初始化，請先呼叫 initToolRegistry()");
+  return _registry;
+}
+
+export function resetToolRegistry(): void {
+  _registry?.stopWatching();
+  _registry = null;
+}
