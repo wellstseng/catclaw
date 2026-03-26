@@ -125,21 +125,32 @@ export async function initPlatform(
   _projectManager = initProjectManager(join(catclawDir, "workspace", "data"));
 
   // ── 9. Memory Engine ───────────────────────────────────────────────────────
-  if (config.memory?.enabled !== false) {
-    _memoryEngine = initMemoryEngine(config.memory ?? {
-      enabled: true,
-      globalPath: join(catclawDir, "memory", "global"),
-      vectorDbPath: join(catclawDir, "memory", "_vectordb"),
-      contextBudget: 3000,
-      contextBudgetRatio: { global: 0.3, project: 0.4, account: 0.3 },
-      writeGate: { enabled: true, dedupThreshold: 0.80 },
-      recall: { triggerMatch: true, vectorSearch: false, relatedEdgeSpreading: true, vectorMinScore: 0.65, vectorTopK: 5 },
-      extract: { enabled: false, perTurn: false, onSessionEnd: false, maxItemsPerTurn: 3, maxItemsSessionEnd: 5, minNewChars: 500 },
-      consolidate: { autoPromoteThreshold: 20, suggestPromoteThreshold: 8, decay: { enabled: false, halfLifeDays: 30, archiveThreshold: 0.1 } },
-      episodic: { enabled: false, ttlDays: 24 },
-      rutDetection: { enabled: false, windowSize: 14, minOccurrences: 2 },
-      oscillation: { enabled: false },
-    });
+  // HomeClaudeCode：若啟用，globalPath 改指向 ~/.claude/memory/global
+  const memoryConfig = { ...(config.memory ?? {}) };
+  if (config.homeClaudeCode?.enabled) {
+    const claudePath = config.homeClaudeCode.path ?? join(homedir(), ".claude", "memory", "global");
+    memoryConfig.globalPath = claudePath;
+    log.info(`[platform] HomeClaudeCode 模式：globalPath=${claudePath}`);
+  }
+
+  const defaultMemoryCfg = {
+    enabled: true,
+    globalPath: join(catclawDir, "memory", "global"),
+    vectorDbPath: join(catclawDir, "memory", "_vectordb"),
+    contextBudget: 3000,
+    contextBudgetRatio: { global: 0.3, project: 0.4, account: 0.3 },
+    writeGate: { enabled: true, dedupThreshold: 0.80 },
+    recall: { triggerMatch: true, vectorSearch: false, relatedEdgeSpreading: true, vectorMinScore: 0.65, vectorTopK: 5 },
+    extract: { enabled: false, perTurn: false, onSessionEnd: false, maxItemsPerTurn: 3, maxItemsSessionEnd: 5, minNewChars: 500 },
+    consolidate: { autoPromoteThreshold: 20, suggestPromoteThreshold: 8, decay: { enabled: false, halfLifeDays: 30, archiveThreshold: 0.1 } },
+    episodic: { enabled: false, ttlDays: 24 },
+    rutDetection: { enabled: false, windowSize: 14, minOccurrences: 2 },
+    oscillation: { enabled: false },
+  };
+  const resolvedMemoryCfg = { ...defaultMemoryCfg, ...memoryConfig };
+
+  if (resolvedMemoryCfg.enabled !== false) {
+    _memoryEngine = initMemoryEngine(resolvedMemoryCfg);
     try { await _memoryEngine.init(); } catch (err) {
       log.warn(`[platform] MemoryEngine init 失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
     }

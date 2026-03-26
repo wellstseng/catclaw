@@ -25,15 +25,24 @@ import { initHistory } from "./history.js";
 import { loadBuiltinSkills, loadPromptSkills } from "./skills/registry.js";
 import { initPlatform } from "./core/platform.js";
 import type { BridgeConfig as CoreBridgeConfig } from "./core/config.js";
+import { parseAgentArg, loadAgentConfig } from "./core/agent-loader.js";
 import { homedir } from "node:os";
 
 // 在其他模組開始 log 前設定層級
 setLogLevel(config.logLevel);
 
-// ── 新平台子系統初始化（僅當 config.providers 有設定時啟用）──────────────────
+// ── --agent 模式：若有指定 agent，載入合併後設定 ─────────────────────────────
 const catclawDir = resolve(homedir(), ".catclaw");
 const distDir = dirname(fileURLToPath(import.meta.url));
-await initPlatform(config as unknown as CoreBridgeConfig, catclawDir, distDir);
+const agentId = parseAgentArg();
+const platformConfig = agentId
+  ? loadAgentConfig(config as unknown as CoreBridgeConfig, agentId)
+  : config as unknown as CoreBridgeConfig;
+
+if (agentId) log.info(`[bridge] Agent 模式：${agentId}`);
+
+// ── 新平台子系統初始化（僅當 config.providers 有設定時啟用）──────────────────
+await initPlatform(platformConfig, catclawDir, distDir);
 
 // 從磁碟載入上次的 session 快取（重啟後延續對話上下文）
 loadSessions();

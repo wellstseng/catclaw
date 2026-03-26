@@ -27,6 +27,11 @@ const skills = new Map<string, Skill>();
 
 // ── 公開 API ─────────────────────────────────────────────────────────────────
 
+/** 列出所有已載入的 skill */
+export function listSkills(): Skill[] {
+  return Array.from(skills.values());
+}
+
 /** 手動註冊一個 skill */
 export function registerSkill(skill: Skill): void {
   skills.set(skill.name, skill);

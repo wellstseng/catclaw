@@ -1,0 +1,139 @@
+/**
+ * @file skills/builtin/migrate.ts
+ * @description /migrate 記憶遷移管理 skill（tier=admin）
+ *
+ * 子命令：
+ *   /migrate import [--force] [--dry-run]  — 從 ~/.claude 匯入記憶
+ *   /migrate rebuild [<memoryDir>]          — 重建 MEMORY.md 索引
+ *   /migrate status                         — 顯示遷移狀態
+ */
+
+import type { Skill, SkillContext, SkillResult } from "../types.js";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { existsSync, readdirSync } from "node:fs";
+import { log } from "../../logger.js";
+
+// ── 子命令 ────────────────────────────────────────────────────────────────────
+
+async function handleImport(args: string): Promise<SkillResult> {
+  const force = args.includes("--force");
+  const dryRun = args.includes("--dry-run");
+
+  const sourcePath = join(homedir(), ".claude", "memory");
+  const destPath = join(homedir(), ".catclaw", "memory", "global");
+
+  if (!existsSync(sourcePath)) {
+    return { text: `❌ 來源路徑不存在：\`${sourcePath}\``, isError: true };
+  }
+
+  try {
+    const { importFromClaude } = await import("../../migration/import-claude.js");
+    const result = await importFromClaude({ sourcePath, destPath, force, dryRun });
+
+    return {
+      text: [
+        dryRun ? "**[Dry Run] 遷移預覽**" : "**記憶遷移完成**",
+        `• 複製：${result.copied.length} 個 atom`,
+        `• 跳過：${result.skipped.length} 個（已存在）`,
+        `• 合併索引：${result.mergedIndexEntries} 條`,
+        result.errors.length > 0 ? `• ❌ 錯誤：${result.errors.length} 個` : null,
+        `\n來源：\`${sourcePath}\`\n目標：\`${destPath}\``,
+        !force && !dryRun ? "\n提示：加 `--force` 覆寫已存在的 atom" : null,
+      ].filter(Boolean).join("\n"),
+    };
+  } catch (err) {
+    return { text: `❌ ${err instanceof Error ? err.message : String(err)}`, isError: true };
+  }
+}
+
+async function handleRebuild(args: string): Promise<SkillResult> {
+  const dryRun = args.includes("--dry-run");
+  const customDir = args.trim().replace("--dry-run", "").trim();
+
+  const memoryDir = customDir || join(homedir(), ".catclaw", "memory", "global");
+
+  try {
+    const { rebuildIndex } = await import("../../migration/rebuild-index.js");
+    const result = rebuildIndex({ memoryDir, dryRun });
+
+    return {
+      text: [
+        dryRun ? "**[Dry Run] 索引重建預覽**" : "**MEMORY.md 重建完成**",
+        `• 找到 ${result.atomCount} 個 atom`,
+        `• 索引路徑：\`${result.indexPath}\``,
+      ].join("\n"),
+    };
+  } catch (err) {
+    return { text: `❌ ${err instanceof Error ? err.message : String(err)}`, isError: true };
+  }
+}
+
+function handleStatus(): SkillResult {
+  const claudeMemory = join(homedir(), ".claude", "memory");
+  const catclawMemory = join(homedir(), ".catclaw", "memory", "global");
+
+  const countMd = (dir: string): number => {
+    if (!existsSync(dir)) return 0;
+    let n = 0;
+    try {
+      const scan = (d: string) => {
+        for (const entry of readdirSync(d)) {
+          if (entry.startsWith("_")) continue;
+          const full = join(d, entry);
+          try {
+            const stat = require("node:fs").statSync(full);
+            if (stat.isDirectory()) scan(full);
+            else if (entry.endsWith(".md") && entry !== "MEMORY.md") n++;
+          } catch { /* skip */ }
+        }
+      };
+      scan(dir);
+    } catch { /* skip */ }
+    return n;
+  };
+
+  const src = countMd(claudeMemory);
+  const dst = countMd(catclawMemory);
+
+  return {
+    text: [
+      "**遷移狀態**",
+      `• \`~/.claude/memory/\` → ${src} 個 atom${existsSync(claudeMemory) ? "" : "（路徑不存在）"}`,
+      `• \`~/.catclaw/memory/global/\` → ${dst} 個 atom${existsSync(catclawMemory) ? "" : "（路徑不存在）"}`,
+      src > dst ? `\n提示：執行 \`/migrate import\` 遷移 ~${src - dst} 個尚未複製的 atom` : null,
+    ].filter(Boolean).join("\n"),
+  };
+}
+
+// ── Skill 定義 ────────────────────────────────────────────────────────────────
+
+export const skill: Skill = {
+  name: "migrate",
+  description: "記憶遷移管理：從 ~/.claude 匯入、重建索引、查看狀態",
+  tier: "admin",
+  trigger: ["/migrate"],
+
+  async execute(ctx: SkillContext): Promise<SkillResult> {
+    const tokens = ctx.args.trim().split(/\s+/);
+    const sub = (tokens[0] ?? "").toLowerCase();
+    const rest = tokens.slice(1).join(" ");
+
+    log.debug(`[skill:migrate] sub=${sub}`);
+
+    switch (sub) {
+      case "import":  return handleImport(rest);
+      case "rebuild": return handleRebuild(rest);
+      case "status":  return handleStatus();
+      default:
+        return {
+          text: [
+            "**`/migrate` 子命令**",
+            "• `import [--force] [--dry-run]` — 從 `~/.claude/memory/` 匯入記憶",
+            "• `rebuild [<memoryDir>] [--dry-run]` — 重建 `MEMORY.md` 索引",
+            "• `status` — 查看遷移狀態",
+          ].join("\n"),
+        };
+    }
+  },
+};

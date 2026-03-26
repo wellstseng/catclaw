@@ -188,6 +188,22 @@ export interface AccountsConfig {
 /** 速率限制（per-role） */
 export type RateLimitConfig = Record<string, { requestsPerMinute: number }>;
 
+/** HomeClaudeCode 共用記憶策略 */
+export interface HomeClaudeCodeConfig {
+  /**
+   * 是否啟用 HomeClaudeCode 模式。
+   * 啟用後，CatClaw 記憶引擎的 globalPath 指向
+   * ~/.claude/memory/global（與 Claude Code 共用同一份全域記憶）。
+   */
+  enabled: boolean;
+  /** 自訂 Claude Code 記憶路徑（預設 ~/.claude/memory/global） */
+  path?: string;
+}
+
+/** 多 Agent 單一 bot 入口設定 */
+export type AgentsConfig = Record<string, Partial<Omit<BridgeConfig, "agents">>>;
+
+
 // ── 完整設定型別 ──────────────────────────────────────────────────────────────
 
 /** 全域設定物件型別（含平台擴充區塊） */
@@ -227,6 +243,10 @@ export interface BridgeConfig {
   accounts: AccountsConfig;
   /** 速率限制 */
   rateLimit: RateLimitConfig;
+  /** HomeClaudeCode 共用記憶策略 */
+  homeClaudeCode?: HomeClaudeCodeConfig;
+  /** 多 Agent 設定（用於 --agent <id> 啟動） */
+  agents?: AgentsConfig;
 }
 
 // ── 環境變數展開 ──────────────────────────────────────────────────────────────
@@ -308,6 +328,8 @@ interface RawConfig {
   workflow?: Partial<WorkflowConfig>;
   accounts?: Partial<AccountsConfig>;
   rateLimit?: RateLimitConfig;
+  homeClaudeCode?: Partial<HomeClaudeCodeConfig>;
+  agents?: AgentsConfig;
 }
 
 // ── 路徑解析 ──────────────────────────────────────────────────────────────────
@@ -516,6 +538,11 @@ function loadConfig(): BridgeConfig {
       developer: { requestsPerMinute: 60 },
       admin:     { requestsPerMinute: 120 },
     },
+    homeClaudeCode: raw.homeClaudeCode ? {
+      enabled: raw.homeClaudeCode.enabled ?? false,
+      path: raw.homeClaudeCode.path,
+    } : undefined,
+    agents: raw.agents,
   };
 }
 
