@@ -19,6 +19,7 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 | [08-CLAUDE-CLI.md](08-CLAUDE-CLI.md) | Claude CLI 指令格式 + stream-json event 規格 | 2026-03-19 |
 | [09-PITFALLS.md](09-PITFALLS.md) | 17 項陷阱速查 + 錯誤訊息對照表 | 2026-03-22 |
 | [PLAN.md](PLAN.md) | 初始實作計畫（已完成） | 2026-03-18 |
+| [PLAN-V3.md](PLAN-V3.md) | V3 計畫書：Subagent 編排（spawn/registry/管理 skill） | 2026-03-27 |
 | [_CHANGELOG.md](_CHANGELOG.md) | 知識庫變更紀錄 | 2026-03-22 |
 
 ### modules/ — 模組詳細說明
