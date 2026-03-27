@@ -22,6 +22,8 @@ export interface ContextBreakdown {
   strategiesApplied: string[];
   tokensBeforeCE?: number;
   tokensAfterCE?: number;
+  /** 三段 failover 的第三段觸發：截斷後仍超硬上限，需要停止執行 */
+  overflowSignaled?: boolean;
 }
 
 export interface ContextBuildContext {
@@ -226,6 +228,46 @@ export class SlidingWindowStrategy implements ContextStrategy {
   }
 }
 
+// ── OverflowHardStopStrategy（第三段 failover）────────────────────────────────
+
+export interface OverflowHardStopConfig {
+  enabled: boolean;
+  /** 超過此比例 context window → 觸發（預設 0.95） */
+  hardLimitUtilization: number;
+  contextWindowTokens: number;
+}
+
+export class OverflowHardStopStrategy implements ContextStrategy {
+  name = "overflow-hard-stop";
+  enabled: boolean;
+  private cfg: OverflowHardStopConfig;
+  /** 最後一次 apply 是否觸發了 hard stop */
+  lastOverflowSignaled = false;
+
+  constructor(cfg: Partial<OverflowHardStopConfig> = {}) {
+    this.cfg = {
+      enabled: cfg.enabled ?? true,
+      hardLimitUtilization: cfg.hardLimitUtilization ?? 0.95,
+      contextWindowTokens: cfg.contextWindowTokens ?? 100_000,
+    };
+    this.enabled = this.cfg.enabled;
+  }
+
+  shouldApply(ctx: ContextBuildContext): boolean {
+    if (!this.enabled) return false;
+    const hard = this.cfg.contextWindowTokens * this.cfg.hardLimitUtilization;
+    return ctx.estimatedTokens > hard;
+  }
+
+  async apply(ctx: ContextBuildContext): Promise<ContextBuildContext> {
+    // 緊急截斷：只保留最後 4 條 messages（system + 最近 2 輪）
+    const minMessages = ctx.messages.slice(-4);
+    this.lastOverflowSignaled = true;
+    log.warn(`[context-engine:overflow-hard-stop] context 超硬上限 ${ctx.estimatedTokens} tokens，截斷至 ${minMessages.length} messages`);
+    return { ...ctx, messages: minMessages, estimatedTokens: estimateTokens(minMessages) };
+  }
+}
+
 // ── ContextEngine ─────────────────────────────────────────────────────────────
 
 export class ContextEngine {
@@ -247,6 +289,7 @@ export class ContextEngine {
     this.register(new SlidingWindowStrategy());
     this.register(new BudgetGuardStrategy());
     this.register(new CompactionStrategy());
+    this.register(new OverflowHardStopStrategy());
   }
 
   register(strategy: ContextStrategy): void {
@@ -268,8 +311,8 @@ export class ContextEngine {
 
     const applied: string[] = [];
 
-    // 依照 compaction → budget-guard → sliding-window 順序套用
-    const order = ["compaction", "budget-guard", "sliding-window"];
+    // 依照 compaction → budget-guard → sliding-window → overflow-hard-stop 順序套用
+    const order = ["compaction", "budget-guard", "sliding-window", "overflow-hard-stop"];
     for (const name of order) {
       const strategy = this.strategies.get(name);
       if (!strategy?.enabled) continue;
@@ -280,13 +323,16 @@ export class ContextEngine {
       }
     }
 
+    const overflowStrategy = this.strategies.get("overflow-hard-stop") as OverflowHardStopStrategy | undefined;
     this.lastBuildBreakdown = {
       totalMessages: ctx.messages.length,
       estimatedTokens: ctx.estimatedTokens,
       strategiesApplied: applied,
       tokensBeforeCE,
       tokensAfterCE: applied.length > 0 ? ctx.estimatedTokens : undefined,
+      overflowSignaled: overflowStrategy?.lastOverflowSignaled ?? false,
     };
+    if (overflowStrategy) overflowStrategy.lastOverflowSignaled = false; // reset for next build
     this.lastAppliedStrategy = applied.at(-1);
 
     return ctx.messages;

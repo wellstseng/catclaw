@@ -276,6 +276,12 @@ export async function* agentLoop(
     processedHistory = rawHistory;
   }
 
+  // Context overflow 三段 failover 第三段：CE 偵測到超硬上限 → 終止
+  if (contextEngine?.lastBuildBreakdown.overflowSignaled) {
+    yield { type: "error", message: "context_overflow: Context 已達上限，建議輸入 /rollback 或開新對話" };
+    return;
+  }
+
   const messages: Message[] = [
     ...processedHistory,
     { role: "user", content: prompt },
