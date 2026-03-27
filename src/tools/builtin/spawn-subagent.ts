@@ -1,0 +1,314 @@
+/**
+ * @file tools/builtin/spawn-subagent.ts
+ * @description spawn_subagent — 產生隔離子 agent 執行任務
+ *
+ * 模式：
+ * - async:false（預設）：同步等待完成，結果直接回傳。
+ * - async:true：立即回傳 runId，子 agent 背景執行，完成時通知 Discord（SUB-4）。
+ *
+ * 並行執行：多個 spawn_subagent 在同一輪 LLM response 中可以並行（由 agent-loop 的 Promise.all 負責）。
+ * 增生限制：子 agent 執行時 allowSpawn:false，子 agent 看不到此 tool。
+ */
+
+import { join } from "node:path";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import type { Tool, ToolContext } from "../types.js";
+import { getSubagentRegistry } from "../../core/subagent-registry.js";
+import type { SpawnResult } from "../../core/subagent-registry.js";
+import { log } from "../../logger.js";
+
+// 延遲 import（防止循環依賴）— 由 runChildAgentLoop 動態取得
+async function getAgentLoopDeps() {
+  const [
+    { agentLoop },
+    { getPlatformSessionManager },
+    { getPlatformPermissionGate },
+    { getPlatformToolRegistry },
+    { getPlatformSafetyGuard },
+    { eventBus },
+    { getProviderRegistry },
+  ] = await Promise.all([
+    import("../../core/agent-loop.js"),
+    import("../../core/platform.js"),
+    import("../../core/platform.js"),
+    import("../../core/platform.js"),
+    import("../../core/platform.js"),
+    import("../../core/event-bus.js"),
+    import("../../providers/registry.js"),
+  ]);
+  return {
+    agentLoop,
+    getPlatformSessionManager,
+    getPlatformPermissionGate,
+    getPlatformToolRegistry,
+    getPlatformSafetyGuard,
+    eventBus,
+    getProviderRegistry,
+  };
+}
+
+// ── 子 agent 執行 ─────────────────────────────────────────────────────────────
+
+interface ChildRunOpts {
+  task: string;
+  childSessionKey: string;
+  accountId: string;
+  providerId?: string;
+  runtime: "default" | "coding" | "acp";
+  maxTurns: number;
+  timeoutMs: number;
+  signal: AbortSignal;
+  workspaceDir?: string;
+  attachmentsDir?: string;
+}
+
+async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; turns: number }> {
+  const {
+    agentLoop,
+    getPlatformSessionManager,
+    getPlatformPermissionGate,
+    getPlatformToolRegistry,
+    getPlatformSafetyGuard,
+    eventBus,
+    getProviderRegistry,
+  } = await getAgentLoopDeps();
+
+  const sessionManager = getPlatformSessionManager();
+  const permissionGate = getPlatformPermissionGate();
+  const toolRegistry = getPlatformToolRegistry();
+  const safetyGuard = getPlatformSafetyGuard();
+  const providerRegistry = getProviderRegistry();
+
+  // 取得 provider（無 providerId 則用 resolve() 取預設）
+  const provider = opts.providerId
+    ? providerRegistry.get(opts.providerId)
+    : providerRegistry.resolve();
+  if (!provider) throw new Error("找不到可用的 provider");
+
+  // system prompt
+  let systemPrompt = `你是一個專門執行子任務的 agent。完成以下任務後請直接回傳結果。\n你沒有 spawn_subagent 工具。`;
+  if (opts.attachmentsDir) {
+    systemPrompt += `\n\n可用附件目錄：${opts.attachmentsDir}`;
+  }
+
+  if (opts.runtime === "coding") {
+    systemPrompt = `你是一個程式碼執行 agent。只使用 read_file / write_file / bash 工具。\n不要做社交互動，只做技術任務。`;
+  }
+
+  // 根據 runtime 篩選工具（coding 只用三種）
+  const codingToolNames = new Set(["read_file", "write_file", "run_command"]);
+  const filteredToolRegistry = opts.runtime === "coding"
+    ? {
+        ...toolRegistry,
+        all: () => toolRegistry.all().filter(t => codingToolNames.has(t.name)),
+        get: (name: string) => codingToolNames.has(name) ? toolRegistry.get(name) : undefined,
+        execute: toolRegistry.execute.bind(toolRegistry),
+        register: toolRegistry.register.bind(toolRegistry),
+        loadFromDirectory: toolRegistry.loadFromDirectory.bind(toolRegistry),
+      }
+    : toolRegistry;
+
+  let fullText = "";
+  let turnCount = 0;
+
+  const loopGen = agentLoop(opts.task, {
+    platform: "subagent",
+    channelId: opts.childSessionKey,
+    accountId: opts.accountId,
+    provider,
+    systemPrompt,
+    signal: opts.signal,
+    turnTimeoutMs: opts.timeoutMs,
+    allowSpawn: false,  // 子 agent 不能再 spawn
+    workspaceDir: opts.workspaceDir,
+    _sessionKeyOverride: opts.childSessionKey,
+  }, {
+    sessionManager,
+    permissionGate,
+    toolRegistry: filteredToolRegistry as typeof toolRegistry,
+    safetyGuard,
+    eventBus,
+  });
+
+  for await (const event of loopGen) {
+    if (event.type === "text_delta") fullText += event.text;
+    if (event.type === "done") { turnCount = event.turnCount; break; }
+    if (event.type === "error") throw new Error(event.message);
+  }
+
+  return { text: fullText, turns: turnCount };
+}
+
+// ── Tool 定義 ─────────────────────────────────────────────────────────────────
+
+export const tool: Tool = {
+  name: "spawn_subagent",
+  description: `產生隔離子 agent 執行任務。
+- async:false（預設）：同步等待完成，結果直接回傳。
+- async:true：立即回傳 runId，子 agent 背景執行，完成時推送 Discord 通知。
+多個任務可同時呼叫（同一輪並行執行，時間 = max(A,B)）。`,
+  tier: "standard",
+  parameters: {
+    type: "object",
+    properties: {
+      task:       { type: "string",  description: "子 agent 要執行的任務描述" },
+      label:      { type: "string",  description: "任務標籤（用於顯示和通知，可選）" },
+      provider:   { type: "string",  description: "指定 provider ID（預設繼承父）" },
+      runtime:    { type: "string",  description: "default | coding（精簡工具：read/write/bash）| acp（Claude CLI）" },
+      maxTurns:   { type: "number",  description: "最大 turn 數（預設 10）" },
+      timeoutMs:  { type: "number",  description: "逾時毫秒（預設 120000）" },
+      async:      { type: "boolean", description: "true = 立即回傳 runId，背景執行（預設 false）" },
+      keepSession:{ type: "boolean", description: "完成後保留 session（debug 用，預設 false）" },
+      mode:       { type: "string",  description: "run（預設，one-shot）| session（持久，需搭配 keepSession:true）" },
+      attachments: {
+        type: "array",
+        description: "spawn 時帶入的附件",
+        items: {
+          type: "object",
+          properties: {
+            name:     { type: "string" },
+            content:  { type: "string" },
+            encoding: { type: "string", description: "utf8 | base64" },
+          },
+        },
+      },
+    },
+    required: ["task"],
+  },
+
+  async execute(params, ctx: ToolContext): Promise<{ result?: SpawnResult; error?: string }> {
+    const registry = getSubagentRegistry();
+    if (!registry) return { error: "SubagentRegistry 尚未初始化" };
+
+    const task       = String(params["task"] ?? "").trim();
+    const label      = params["label"] ? String(params["label"]) : undefined;
+    const providerId = params["provider"] ? String(params["provider"]) : undefined;
+    const runtime    = (params["runtime"] as "default" | "coding" | "acp") ?? "default";
+    const maxTurns   = typeof params["maxTurns"] === "number" ? params["maxTurns"] : 10;
+    const timeoutMs  = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : 120_000;
+    const isAsync    = params["async"] === true;
+    const keepSession= params["keepSession"] === true;
+    const mode       = (params["mode"] as "run" | "session") ?? "run";
+    const attachments = Array.isArray(params["attachments"]) ? params["attachments"] : [];
+
+    if (!task) return { result: { status: "error", error: "task 不能為空" } };
+
+    // 1. allowSpawn 檢查（由 agent-loop opts 注入到 toolContext 未來版，現在透過 registry 無 record 判定）
+    // 2. concurrent 上限
+    if (registry.isOverConcurrentLimit(ctx.sessionId)) {
+      return { result: { status: "forbidden", reason: "max_concurrent" } };
+    }
+
+    // 3. 處理附件
+    let attachmentsDir: string | undefined;
+    const attachmentUuid = randomUUID();
+    if (attachments.length > 0) {
+      const catclawDir = process.env["CATCLAW_WORKSPACE"] ?? "";
+      attachmentsDir = join(catclawDir, "attachments", attachmentUuid);
+      try {
+        mkdirSync(attachmentsDir, { recursive: true });
+        for (const att of attachments) {
+          const name = String(att["name"] ?? "file");
+          const content = String(att["content"] ?? "");
+          const encoding = String(att["encoding"] ?? "utf8") as BufferEncoding;
+          writeFileSync(join(attachmentsDir, name), Buffer.from(content, encoding));
+        }
+      } catch (err) {
+        log.warn(`[spawn-subagent] 附件寫入失敗：${err instanceof Error ? err.message : String(err)}`);
+        attachmentsDir = undefined;
+      }
+    }
+
+    // 4. 建立 registry record
+    const record = registry.create({
+      parentSessionKey: ctx.sessionId,
+      task,
+      label,
+      mode,
+      runtime,
+      async: isAsync,
+      keepSession: keepSession || mode === "session",
+      discordChannelId: ctx.channelId,
+      accountId: ctx.accountId,
+    });
+
+    const runChildFn = async () => {
+      try {
+        const { text, turns } = await Promise.race([
+          runChildAgentLoop({
+            task,
+            childSessionKey: record.childSessionKey,
+            accountId: record.accountId,
+            providerId,
+            runtime,
+            maxTurns,
+            timeoutMs,
+            signal: record.abortController.signal,
+            attachmentsDir,
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("__TIMEOUT__")), timeoutMs + 1000);
+          }),
+        ]);
+
+        registry.complete(record.runId, text, turns);
+        log.info(`[spawn-subagent] completed runId=${record.runId} turns=${turns}`);
+
+        // 清除附件（非持久 session）
+        if (attachmentsDir && !record.keepSession) {
+          try { rmSync(attachmentsDir, { recursive: true }); } catch { /* ignore */ }
+        }
+
+        return { text, turns };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === "__TIMEOUT__") {
+          registry.timeout(record.runId);
+          log.warn(`[spawn-subagent] timeout runId=${record.runId}`);
+          throw new Error("__TIMEOUT__");
+        } else {
+          registry.fail(record.runId, msg);
+          log.warn(`[spawn-subagent] failed runId=${record.runId} err=${msg}`);
+          throw err;
+        }
+      }
+    };
+
+    // 5. Sync vs Async
+    if (!isAsync) {
+      // 同步：等待完成
+      try {
+        const { text, turns } = await runChildFn();
+        return {
+          result: {
+            status: "completed",
+            result: text,
+            sessionKey: record.childSessionKey,
+            turns,
+          } satisfies SpawnResult,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === "__TIMEOUT__") {
+          return { result: { status: "timeout", result: null } };
+        }
+        return { result: { status: "error", error: msg } };
+      }
+    } else {
+      // 非同步：背景執行，立即回傳 runId
+      runChildFn().catch(err => {
+        log.warn(`[spawn-subagent] async background error runId=${record.runId}: ${err instanceof Error ? err.message : String(err)}`);
+        // SUB-4 補完 Discord 通知
+      });
+
+      return {
+        result: {
+          status: "spawned",
+          runId: record.runId,
+          sessionKey: record.childSessionKey,
+        } satisfies SpawnResult,
+      };
+    }
+  },
+};

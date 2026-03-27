@@ -61,6 +61,18 @@ export interface AgentLoopOpts {
   showToolCalls?: "all" | "summary" | "none";
   /** 當前專案 ID */
   projectId?: string;
+  /**
+   * 是否允許呼叫 spawn_subagent（預設 true）。
+   * 子 agent 傳入 false — 邏輯面過濾，tool list 不含此工具。
+   */
+  allowSpawn?: boolean;
+  /** 子 agent 工作目錄（spawn 時繼承父設定） */
+  workspaceDir?: string;
+  /**
+   * 覆寫 session key（子 agent 用，繞過 platform:ch:channelId 格式）。
+   * 正常流程不使用此欄位。
+   */
+  _sessionKeyOverride?: string;
 }
 
 /** AgentLoop yield 出的事件 */
@@ -170,6 +182,7 @@ export async function* agentLoop(
   const { sessionManager, permissionGate, toolRegistry, safetyGuard, eventBus } = deps;
   const { channelId, accountId, provider, projectId } = opts;
   const platform = opts.platform ?? "discord";
+  const allowSpawn = opts.allowSpawn !== false;  // 預設 true
 
   // ── 1. 進門權限檢查 ────────────────────────────────────────────────────────
   const accessResult = permissionGate.checkAccess(accountId);
@@ -179,7 +192,7 @@ export async function* agentLoop(
   }
 
   // ── 2. Session + messages ──────────────────────────────────────────────────
-  const sessionKey = `${platform}:ch:${channelId}`;
+  const sessionKey = opts._sessionKeyOverride ?? `${platform}:ch:${channelId}`;
   const session = sessionManager.getOrCreate(sessionKey, accountId, channelId, opts.provider.id);
 
   // Session Snapshot（turn 開始前快照）
@@ -207,7 +220,11 @@ export async function* agentLoop(
   ];
 
   // ── 3. Tool list（物理過濾）─────────────────────────────────────────────────
-  const toolDefs = permissionGate.listAvailable(accountId);
+  let toolDefs = permissionGate.listAvailable(accountId);
+  // allowSpawn:false → 邏輯面過濾，子 agent 看不到 spawn_subagent
+  if (!allowSpawn) {
+    toolDefs = toolDefs.filter(d => d.name !== "spawn_subagent");
+  }
 
   // ── 4. System prompt + 群組多人聲明 ────────────────────────────────────────
   let systemPrompt = opts.systemPrompt ?? "";
@@ -282,7 +299,62 @@ export async function* agentLoop(
         })),
       });
 
-      for (const call of streamResult.toolCalls) {
+      // spawn_subagent 並行：同一輪多個 spawn_subagent → Promise.all（其他 tool 維持串行）
+      const spawnCalls = streamResult.toolCalls.filter(tc => tc.name === "spawn_subagent");
+      const otherCalls = streamResult.toolCalls.filter(tc => tc.name !== "spawn_subagent");
+
+      if (spawnCalls.length > 1) {
+        // 並行執行（不在 callback 裡 yield，收集後統一 yield）
+        type SpawnEvent = AgentLoopEvent;
+        type SpawnBatchResult = {
+          toolResult: { tool_use_id: string; content: string; is_error: boolean };
+          events: SpawnEvent[];
+          toolRecord: { name: string; params: unknown; result: unknown; error?: string; durationMs: number };
+        };
+
+        const batchResults = await Promise.all(spawnCalls.map(async (call): Promise<SpawnBatchResult> => {
+          const params = call.params as Record<string, unknown>;
+          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus };
+          const events: SpawnEvent[] = [];
+          const hookResult = runBeforeToolCall(
+            { id: call.id, name: call.name, params },
+            { accountId, recentCalls: tracker.toolCalls },
+            permissionGate, safetyGuard,
+          );
+          if (hookResult.blocked) {
+            events.push({ type: "tool_blocked", name: call.name, reason: hookResult.reason });
+            return {
+              toolResult: { tool_use_id: call.id, content: `錯誤：${hookResult.reason}`, is_error: true },
+              events,
+              toolRecord: { name: call.name, params, result: null, error: hookResult.reason, durationMs: 0 },
+            };
+          }
+          if (opts.showToolCalls !== "none") {
+            events.push({ type: "tool_start", name: call.name, id: call.id, params: hookResult.params });
+          }
+          const t0 = Date.now();
+          const toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
+          const durationMs = Date.now() - t0;
+          const resultText = toolResult.error ? `錯誤：${toolResult.error}` : JSON.stringify(toolResult.result ?? null);
+          events.push({ type: "tool_result", name: call.name, id: call.id, result: toolResult.result, error: toolResult.error });
+          return {
+            toolResult: { tool_use_id: call.id, content: resultText, is_error: Boolean(toolResult.error) },
+            events,
+            toolRecord: { name: call.name, params: hookResult.params, result: toolResult.result, error: toolResult.error, durationMs },
+          };
+        }));
+
+        // 按序 yield 收集到的事件
+        for (const batch of batchResults) {
+          for (const evt of batch.events) yield evt;
+          toolResults.push(batch.toolResult);
+          tracker.recordToolCall(batch.toolRecord.name, batch.toolRecord.params, batch.toolRecord.result, batch.toolRecord.error, batch.toolRecord.durationMs);
+        }
+      }
+
+      const serialCalls = spawnCalls.length > 1 ? otherCalls : streamResult.toolCalls;
+
+      for (const call of serialCalls) {
         const params = call.params as Record<string, unknown>;
         const toolCtx: ToolContext = {
           accountId,

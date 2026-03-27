@@ -239,6 +239,16 @@ export interface HomeClaudeCodeConfig {
 /** 多 Agent 單一 bot 入口設定 */
 export type AgentsConfig = Record<string, Partial<Omit<BridgeConfig, "agents">>>;
 
+/** Subagent 設定 */
+export interface SubagentsConfig {
+  /** 同一 parent session 最多同時執行幾個子 agent（預設 3） */
+  maxConcurrent: number;
+  /** 預設逾時毫秒（預設 120000） */
+  defaultTimeoutMs: number;
+  /** 完成後是否預設保留 session（預設 false） */
+  defaultKeepSession: boolean;
+}
+
 
 // ── 完整設定型別 ──────────────────────────────────────────────────────────────
 
@@ -287,6 +297,8 @@ export interface BridgeConfig {
   homeClaudeCode?: HomeClaudeCodeConfig;
   /** 多 Agent 設定（用於 --agent <id> 啟動） */
   agents?: AgentsConfig;
+  /** Subagent 設定 */
+  subagents?: SubagentsConfig;
 }
 
 // ── 環境變數展開 ──────────────────────────────────────────────────────────────

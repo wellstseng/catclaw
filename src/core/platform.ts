@@ -33,6 +33,7 @@ import { initRateLimiter, getRateLimiter, type RateLimiter } from "./rate-limite
 import { renameSessions } from "../migration/rename-sessions.js";
 import { initTurnAuditLog } from "./turn-audit-log.js";
 import { initContextEngine } from "./context-engine.js";
+import { initSubagentRegistry } from "./subagent-registry.js";
 import { initToolLogStore } from "./tool-log-store.js";
 import { initInboundHistoryStore } from "../discord/inbound-history.js";
 import { initSessionSnapshotStore } from "./session-snapshot.js";
@@ -189,6 +190,10 @@ export async function initPlatform(
     }
     log.info("[platform] ContextEngine 初始化完成");
   }
+
+  // ── 9.65 Subagent Registry ─────────────────────────────────────────────────
+  initSubagentRegistry(config.subagents?.maxConcurrent ?? 3);
+  log.info("[platform] SubagentRegistry 初始化完成");
 
   // ── 9.7 Turn Audit Log + Tool Log Store ────────────────────────────────────
   const auditDataDir = join(catclawDir, "workspace", "data");
