@@ -12,12 +12,12 @@ import { log } from "../../logger.js";
 
 export const tool: Tool = {
   name: "subagents",
-  description: "管理子 agent：list（列出）/ kill（終止）/ steer（轉向）/ wait（等待完成）",
+  description: "管理子 agent：list（列出）/ kill（終止）/ steer（轉向）/ wait（等待完成）/ status（查詢狀態）",
   tier: "standard",
   parameters: {
     type: "object",
     properties: {
-      action:       { type: "string",  description: "list | kill | steer | wait" },
+      action:       { type: "string",  description: "list | kill | steer | wait | status" },
       runId:        { type: "string",  description: "目標 runId（kill/steer/wait 用；kill 省略 = kill all）" },
       message:      { type: "string",  description: "steer 時注入的訊息" },
       timeoutMs:    { type: "number",  description: "wait 最長等待毫秒（預設 60000）" },
@@ -100,8 +100,31 @@ export const tool: Tool = {
         return { result: { status: "timeout", result: null } };
       }
 
+      case "status": {
+        if (!runId) return { error: "status 需要指定 runId" };
+        const record = registry.get(runId);
+        if (!record) return { error: `找不到 runId：${runId}` };
+        const durationMs = record.endedAt
+          ? record.endedAt - record.createdAt
+          : Date.now() - record.createdAt;
+        return {
+          result: {
+            runId: record.runId,
+            status: record.status,
+            label: record.label,
+            task: record.task,
+            runtime: record.runtime,
+            turns: record.turns,
+            createdAt: record.createdAt,
+            endedAt: record.endedAt,
+            durationMs,
+            childSessionKey: record.childSessionKey,
+          },
+        };
+      }
+
       default:
-        return { error: `未知 action：${action}。可用：list / kill / steer / wait` };
+        return { error: `未知 action：${action}。可用：list / kill / steer / wait / status` };
     }
   },
 };
