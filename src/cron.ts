@@ -5,7 +5,7 @@
  * 核心機制：
  * 1. setTimeout loop 輪詢到期 job（2-60s 間隔）
  * 2. croner 解析 cron 表達式、計算下次執行時間
- * 3. 兩種 action：message（直接發訊息）/ claude（spawn Claude turn）
+ * 3. 三種 action：message（直接發訊息）/ claude（spawn Claude turn）/ subagent（新平台 agentLoop）
  * 4. Job 定義 + 狀態統一持久化到 data/cron-jobs.json
  * 5. fs.watch() 監聽 cron-jobs.json 變更，自動 hot-reload
  * 6. 重試 + 指數退避
@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync, watch, existsSync }
 import { join, dirname } from "node:path";
 import { execFile } from "node:child_process";
 import { platform } from "node:os";
+import { randomUUID } from "node:crypto";
 import { Cron } from "croner";
 import type { Client, SendableChannels } from "discord.js";
 import { config, resolveWorkspaceDir } from "./config.js";
@@ -420,6 +421,96 @@ async function execCommand(command: string, channelId?: string, silent?: boolean
 }
 
 /**
+ * 執行 subagent action：透過新平台 agentLoop 執行任務，完成後通知頻道
+ */
+async function execSubagent(action: {
+  task: string;
+  provider?: string;
+  timeoutMs?: number;
+  notify?: string;
+}): Promise<void> {
+  const {
+    isPlatformReady,
+    getPlatformSessionManager,
+    getPlatformPermissionGate,
+    getPlatformToolRegistry,
+    getPlatformSafetyGuard,
+    getAccountRegistry,
+  } = await import("./core/platform.js");
+  const { agentLoop } = await import("./core/agent-loop.js");
+  const { getProviderRegistry } = await import("./providers/registry.js");
+  const { eventBus } = await import("./core/event-bus.js");
+
+  if (!isPlatformReady()) {
+    throw new Error("Platform 未就緒，無法執行 subagent");
+  }
+
+  // 解析 provider
+  const providerRegistry = getProviderRegistry();
+  const providerId = action.provider ?? config.cron.defaultProvider;
+  const provider = providerId
+    ? (providerRegistry.get(providerId) ?? providerRegistry.resolve())
+    : providerRegistry.resolve();
+
+  // 確保 cron 系統帳號存在（admin 角色）
+  const accountId = config.cron.defaultAccountId ?? "_cron";
+  const accountRegistry = getAccountRegistry();
+  if (!accountRegistry.get(accountId)) {
+    accountRegistry.create({
+      accountId,
+      displayName: "Cron 系統",
+      role: "admin",
+      identities: [],
+    });
+    log.info(`[cron] 自動建立 cron 帳號：${accountId}`);
+  }
+
+  // 獨立 session（每次 cron 執行不共享歷史）
+  const sessionKey = `cron:${randomUUID()}`;
+  let fullText = "";
+
+  const gen = agentLoop(action.task, {
+    platform: "cron",
+    channelId: sessionKey,
+    accountId,
+    provider,
+    turnTimeoutMs: action.timeoutMs ?? 300_000,
+    allowSpawn: false,
+    _sessionKeyOverride: sessionKey,
+  }, {
+    sessionManager: getPlatformSessionManager(),
+    permissionGate: getPlatformPermissionGate(),
+    toolRegistry: getPlatformToolRegistry(),
+    safetyGuard: getPlatformSafetyGuard(),
+    eventBus,
+  });
+
+  for await (const event of gen) {
+    if (event.type === "text_delta") fullText += event.text;
+    if (event.type === "done") break;
+    if (event.type === "error") throw new Error(event.message);
+  }
+
+  // 通知頻道
+  if (action.notify && discordClient) {
+    const match = action.notify.match(/^discord:ch:(.+)$/);
+    if (match) {
+      try {
+        const ch = await discordClient.channels.fetch(match[1]);
+        if (ch && "send" in ch) {
+          const text = (fullText.trim() || "(無輸出)").slice(0, 2000);
+          await (ch as SendableChannels).send(text);
+        }
+      } catch (err) {
+        log.warn(`[cron] subagent 通知失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  log.info(`[cron/subagent] 完成（${fullText.length} 字）`);
+}
+
+/**
  * 執行單一 job
  */
 async function runJob(job: CronJobRuntime): Promise<void> {
@@ -431,6 +522,8 @@ async function runJob(job: CronJobRuntime): Promise<void> {
       await execMessage(entry.action.channelId, entry.action.text);
     } else if (entry.action.type === "exec") {
       await execCommand(entry.action.command, entry.action.channelId, entry.action.silent, entry.action.timeoutSec, entry.action.shell, entry.action.background);
+    } else if (entry.action.type === "subagent") {
+      await execSubagent(entry.action);
     } else {
       await execClaude(entry.action.channelId, entry.action.prompt);
     }
@@ -463,7 +556,10 @@ async function runJob(job: CronJobRuntime): Promise<void> {
 
     // 只在最後一次重試失敗時才回報頻道（避免重試期間連續洗版）
     if (isLastAttempt) {
-      const actionChannelId = "channelId" in entry.action ? (entry.action as { channelId?: string }).channelId : undefined;
+      // subagent action 透過 notify 欄位取頻道 ID
+      const actionChannelId = entry.action.type === "subagent"
+        ? entry.action.notify?.match(/^discord:ch:(.+)$/)?.[1]
+        : ("channelId" in entry.action ? (entry.action as { channelId?: string }).channelId : undefined);
       if (actionChannelId && !(entry.action as { silent?: boolean }).silent && discordClient) {
         try {
           const ch = await discordClient.channels.fetch(actionChannelId);

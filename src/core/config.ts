@@ -61,7 +61,18 @@ export type CronSchedule =
 export type CronAction =
   | { type: "message"; channelId: string; text: string }
   | { type: "claude"; channelId: string; prompt: string }
-  | { type: "exec"; command: string; channelId?: string; silent?: boolean; timeoutSec?: number; shell?: string; background?: boolean };
+  | { type: "exec"; command: string; channelId?: string; silent?: boolean; timeoutSec?: number; shell?: string; background?: boolean }
+  | {
+      type: "subagent";
+      /** 子 agent 執行的任務描述 */
+      task: string;
+      /** 指定 provider ID（省略則依序: action.provider → cron.defaultProvider → 全域預設） */
+      provider?: string;
+      /** 逾時毫秒，預設 300000（5 分鐘） */
+      timeoutMs?: number;
+      /** 完成後通知頻道，格式："discord:ch:{channelId}" */
+      notify?: string;
+    };
 
 export interface CronConfig {
   enabled: boolean;

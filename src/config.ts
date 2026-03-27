@@ -82,13 +82,28 @@ export type CronSchedule =
 export type CronAction =
   | { type: "message"; channelId: string; text: string }     // 直接發訊息
   | { type: "claude"; channelId: string; prompt: string }    // 跑 Claude turn，結果送到頻道
-  | { type: "exec"; command: string; channelId?: string; silent?: boolean; timeoutSec?: number; shell?: string; background?: boolean };  // background 預設 true（隱藏視窗），設 false 可顯示終端機
+  | { type: "exec"; command: string; channelId?: string; silent?: boolean; timeoutSec?: number; shell?: string; background?: boolean }  // background 預設 true（隱藏視窗），設 false 可顯示終端機
+  | {
+      type: "subagent";
+      /** 子 agent 執行的任務描述 */
+      task: string;
+      /** 指定 provider ID（省略則依序: cron.defaultProvider → 全域預設） */
+      provider?: string;
+      /** 逾時毫秒，預設 300000（5 分鐘） */
+      timeoutMs?: number;
+      /** 完成後通知頻道，格式："discord:ch:{channelId}" */
+      notify?: string;
+    };
 
 /** Cron 全域設定（job 定義在 data/cron-jobs.json） */
 export interface CronConfig {
   enabled: boolean;
   /** 同時執行的 job 上限，預設 1 */
   maxConcurrentRuns: number;
+  /** Cron 預設執行帳號（省略則自動建立 _cron 系統帳號） */
+  defaultAccountId?: string;
+  /** Cron 預設 provider ID（省略則用平台全域預設） */
+  defaultProvider?: string;
 }
 
 /** 訊息歷史記錄設定 */
