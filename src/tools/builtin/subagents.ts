@@ -7,17 +7,17 @@
 
 import type { Tool, ToolContext } from "../types.js";
 import { getSubagentRegistry } from "../../core/subagent-registry.js";
-import { getPlatformSessionManager } from "../../core/platform.js";
+import { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRegistry, getPlatformSafetyGuard } from "../../core/platform.js";
 import { log } from "../../logger.js";
 
 export const tool: Tool = {
   name: "subagents",
-  description: "管理子 agent：list（列出）/ kill（終止）/ steer（轉向）/ wait（等待完成）/ status（查詢狀態）",
+  description: "管理子 agent：list（列出）/ kill（終止）/ steer（轉向）/ wait（等待完成）/ status（查詢狀態）/ resume（喚醒已結束的持久 session）",
   tier: "standard",
   parameters: {
     type: "object",
     properties: {
-      action:       { type: "string",  description: "list | kill | steer | wait | status" },
+      action:       { type: "string",  description: "list | kill | steer | wait | status | resume" },
       runId:        { type: "string",  description: "目標 runId（kill/steer/wait 用；kill 省略 = kill all）" },
       message:      { type: "string",  description: "steer 時注入的訊息" },
       timeoutMs:    { type: "number",  description: "wait 最長等待毫秒（預設 60000）" },
@@ -98,6 +98,77 @@ export const tool: Tool = {
         }
 
         return { result: { status: "timeout", result: null } };
+      }
+
+      case "resume": {
+        // 喚醒 keepSession:true 的已完成子 agent
+        if (!runId) return { error: "resume 需要指定 runId" };
+        const message = params["message"] ? String(params["message"]) : undefined;
+        if (!message) return { error: "resume 需要指定 message（注入訊息）" };
+
+        const record = registry.get(runId);
+        if (!record) return { error: `找不到 runId：${runId}` };
+        if (!record.keepSession) return { error: `該子 agent 未啟用 keepSession，無法喚醒` };
+        if (record.status === "running") return { error: `子 agent 仍在執行中，請用 steer` };
+        if (record.status === "killed") return { error: `子 agent 已 killed，無法喚醒` };
+
+        // 注入喚醒訊息到子 session
+        const sessionManager = getPlatformSessionManager();
+        sessionManager.addMessages(record.childSessionKey, [
+          { role: "user", content: `[喚醒]\n${message}` },
+        ]);
+
+        // 重置 registry 狀態
+        record.status = "running";
+        record.endedAt = undefined;
+        record.result = undefined;
+        record.error = undefined;
+        record.abortController = new AbortController();
+
+        log.info(`[subagents:resume] 喚醒 runId=${runId} childSession=${record.childSessionKey}`);
+
+        // 背景重跑 agentLoop（動態 import 避免循環依賴）
+        import("../../core/agent-loop.js").then(async ({ agentLoop }) => {
+          const permissionGate = getPlatformPermissionGate();
+          const toolRegistry = getPlatformToolRegistry();
+          const safetyGuard = getPlatformSafetyGuard();
+          const { getProviderRegistry } = await import("../../providers/registry.js");
+          const { eventBus } = await import("../../core/event-bus.js");
+          const provider = getProviderRegistry()?.resolve();
+          if (!provider) { registry.fail(runId!, "找不到 provider"); return; }
+
+          let fullText = ""; let turns = 0;
+          const loopGen = agentLoop(message, {
+            platform: "subagent",
+            channelId: record!.childSessionKey,
+            accountId: record!.accountId,
+            provider,
+            allowSpawn: false,
+            _sessionKeyOverride: record!.childSessionKey,
+            signal: record!.abortController.signal,
+          }, { sessionManager, permissionGate, toolRegistry, safetyGuard, eventBus });
+
+          try {
+            for await (const evt of loopGen) {
+              if (evt.type === "text_delta") fullText += evt.text;
+              if (evt.type === "done") { turns = evt.turnCount; break; }
+              if (evt.type === "error") throw new Error(evt.message);
+            }
+            registry.complete(runId!, fullText, turns);
+            log.info(`[subagents:resume] 完成 runId=${runId}`);
+            const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
+            await sendSubagentNotification(record!);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            registry.fail(runId!, msg);
+            log.warn(`[subagents:resume] 失敗 runId=${runId} err=${msg}`);
+          }
+        }).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(`[subagents:resume] 動態 import 失敗：${msg}`);
+        });
+
+        return { result: { status: "resuming", runId: record.runId, childSessionKey: record.childSessionKey } };
       }
 
       case "status": {
