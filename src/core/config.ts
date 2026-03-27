@@ -105,6 +105,8 @@ export interface ProviderEntry {
   wsUrl?: string;
   /** OpenClaw agent ID */
   agentId?: string;
+  /** 啟用 extended thinking（僅 claude-api 支援，不支援的 provider 自動忽略） */
+  thinking?: boolean;
 }
 
 /** Provider 路由設定 */

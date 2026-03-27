@@ -33,12 +33,14 @@ export class ClaudeApiProvider implements LLMProvider {
 
   private apiKey?: string;
   private model: string;
+  private thinkingEnabled: boolean;
 
   constructor(id: string, entry: ProviderEntry) {
     this.id = id;
     this.name = `Claude API (${id})`;
     this.apiKey = entry.apiKey;
     this.model = entry.model ?? DEFAULT_MODEL;
+    this.thinkingEnabled = entry.thinking ?? false;
 
     if (!this.apiKey) {
       log.warn(`[claude-api:${id}] 未設定 apiKey，請設定環境變數 ANTHROPIC_API_KEY`);
@@ -74,16 +76,44 @@ export class ClaudeApiProvider implements LLMProvider {
     if (opts.tools?.length)  body["tools"] = opts.tools;
     if (opts.temperature !== undefined) body["temperature"] = opts.temperature;
 
-    log.debug(`[claude-api:${this.id}] POST /v1/messages model=${this.model} msgs=${messages.length}`);
+    // Extended thinking（需要 interstitial-1 beta header）
+    let useThinking = this.thinkingEnabled;
+    if (useThinking) {
+      headers["anthropic-beta"] = "interstitial-1";
+      body["thinking"] = { type: "enabled", budget_tokens: 10000 };
+    }
 
-    const response = await fetch(`${API_BASE}/v1/messages`, {
+    log.debug(`[claude-api:${this.id}] POST /v1/messages model=${this.model} msgs=${messages.length} thinking=${useThinking}`);
+
+    let response = await fetch(`${API_BASE}/v1/messages`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });
 
-    if (!response.ok) {
+    // Thinking level failover：400 且錯誤訊息提到 thinking → 降級重試
+    if (!response.ok && response.status === 400) {
+      const errText = await response.text().catch(() => "");
+      if (useThinking && errText.toLowerCase().includes("thinking")) {
+        log.warn(`[claude-api:${this.id}] thinking not supported，降級重試（無 thinking）`);
+        useThinking = false;
+        delete headers["anthropic-beta"];
+        delete body["thinking"];
+        response = await fetch(`${API_BASE}/v1/messages`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const errText2 = await response.text().catch(() => "");
+          throw new Error(`[claude-api:${this.id}] HTTP ${response.status}: ${errText2.slice(0, 200)}`);
+        }
+      } else {
+        throw new Error(`[claude-api:${this.id}] HTTP ${response.status}: ${errText.slice(0, 200)}`);
+      }
+    } else if (!response.ok) {
       const errText = await response.text().catch(() => "");
       throw new Error(`[claude-api:${this.id}] HTTP ${response.status}: ${errText.slice(0, 200)}`);
     }
