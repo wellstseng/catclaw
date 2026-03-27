@@ -257,7 +257,9 @@ export const tool: Tool = {
       keepSession:{ type: "boolean", description: "完成後保留 session（debug 用，預設 false）" },
       mode:       { type: "string",  description: "run（預設，one-shot）| session（持久，需搭配 keepSession:true）" },
       allowNestedSpawn: { type: "boolean", description: "opt-in 允許子 agent 再 spawn（最多 3 層，預設 false）" },
-      inputFrom:  { type: "string",  description: "等待指定 runId 的子 agent 完成，以其 result 作為本次 task 的前置輸入（pipeline 模式）" },
+      inputFrom:    { type: "string",  description: "等待指定 runId 的子 agent 完成，以其 result 作為本次 task 的前置輸入（pipeline 模式）" },
+      saveToMemory: { type: "boolean", description: "完成後將結果存入記憶系統（預設 false）" },
+      memoryTag:    { type: "string",  description: "記憶標籤（saveToMemory:true 時使用，方便後續搜尋）" },
       attachments: {
         type: "array",
         description: "spawn 時帶入的附件",
@@ -289,6 +291,8 @@ export const tool: Tool = {
     const mode             = (params["mode"] as "run" | "session") ?? "run";
     const allowNestedSpawn = params["allowNestedSpawn"] === true;
     const inputFrom        = params["inputFrom"] ? String(params["inputFrom"]) : undefined;
+    const saveToMemory     = params["saveToMemory"] === true;
+    const memoryTag        = params["memoryTag"] ? String(params["memoryTag"]) : undefined;
     const attachments = Array.isArray(params["attachments"]) ? params["attachments"] : [];
 
     if (!task) return { result: { status: "error", error: "task 不能為空" } };
@@ -393,6 +397,28 @@ export const tool: Tool = {
 
         registry.complete(record.runId, text, turns);
         log.info(`[spawn-subagent] completed runId=${record.runId} turns=${turns}`);
+
+        // saveToMemory：將結果寫入記憶系統
+        if (saveToMemory && text) {
+          try {
+            const { writeAtom } = await import("../../memory/atom.js");
+            const { resolveWorkspaceDir } = await import("../../config.js");
+            const { join } = await import("node:path");
+            const memDir = join(resolveWorkspaceDir(), "memory");
+            const atomName = `subagent-result-${record.runId.slice(0, 8)}`;
+            const triggers = memoryTag ? [memoryTag, "subagent-result"] : ["subagent-result"];
+            writeAtom(memDir, atomName, {
+              description: `子 agent 結果：${record.label ?? record.task.slice(0, 50)}`,
+              triggers,
+              confidence: "[臨]",
+              scope: "project",
+              content: `## 任務\n${record.task}\n\n## 結果\n${text.slice(0, 2000)}`,
+            });
+            log.info(`[spawn-subagent] memory saved atomName=${atomName}`);
+          } catch (memErr) {
+            log.warn(`[spawn-subagent] memory save failed: ${memErr instanceof Error ? memErr.message : String(memErr)}`);
+          }
+        }
 
         // 清除附件（非持久 session）
         if (attachmentsDir && !record.keepSession) {
