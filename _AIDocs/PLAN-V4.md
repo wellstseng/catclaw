@@ -14,14 +14,14 @@ V4 目標：在 V3 子 agent 編排基礎上，強化執行可靠性（重試、
 
 ## Sprint 總覽
 
-| Sprint | 主題 | 功能 | 前置 |
-|--------|------|------|------|
-| V4-1 | 重試可靠性 | 重試 + backoff、Thinking level failover | - |
-| V4-2 | Context 防護 | Tool result context guard、Context overflow 三段 failover | V4-1 |
-| V4-3 | 工具能力 | llm-task tool、session_status、sessions_send 喚醒 | V4-1 |
-| V4-4 | 編排進階 | allowNestedSpawn、Subagent 間通訊（pipeline） | V4-1 |
-| V4-5 | 記憶整合 | Subagent 結果寫入記憶、Vector search 啟用 | V4-3 |
-| V4-6 | 排程整合 | Cron + subagent | V4-4 |
+| Sprint | 主題 | 功能 | 前置 | 狀態 |
+|--------|------|------|------|------|
+| V4-1 | 重試可靠性 | 重試 + backoff、Thinking level failover | - | ✅ |
+| V4-2 | Context 防護 | Tool result context guard、Context overflow 三段 failover | V4-1 | ✅ |
+| V4-3 | 工具能力 | llm-task tool、session_status、sessions_send 喚醒 | V4-1 | ✅ |
+| V4-4 | 編排進階 | allowNestedSpawn、Subagent 間通訊（pipeline） | V4-1 | ✅ |
+| V4-5 | 記憶整合 | Subagent 結果寫入記憶、Vector search 啟用 | V4-3 | ✅ |
+| V4-6 | 排程整合 | Cron + subagent | V4-4 | ✅ |
 
 依賴關係：V4-1 → V4-2, V4-3, V4-4 → V4-5 → V4-6
 
