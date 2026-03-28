@@ -221,7 +221,12 @@ export class ClaudeApiProvider implements LLMProvider {
       tools: toPiTools(opts.tools),
     };
 
-    log.debug(`[claude-api:${this.id}] POST model=${this.modelId} msgs=${messages.length} tools=${context.tools?.length ?? 0} profile=${activeProfileId ?? "token"}`);
+    // 粗估 input tokens：(所有訊息字元 + system prompt 字元) / 4 + tool 定義 ~300 tokens 各
+    const estInputTokens = Math.round(
+      (JSON.stringify(context.messages).length + (opts.systemPrompt?.length ?? 0)) / 4
+      + (context.tools?.length ?? 0) * 300
+    );
+    log.debug(`[claude-api:${this.id}] POST model=${this.modelId} msgs=${messages.length} tools=${context.tools?.length ?? 0} profile=${activeProfileId ?? "token"} ~inputTokens=${estInputTokens}`);
 
     // ── 事件收集 ──────────────────────────────────────────────────────────────
     const events: ProviderEvent[] = [];
@@ -262,7 +267,8 @@ export class ClaudeApiProvider implements LLMProvider {
       throw new Error(`[claude-api:${this.id}] ${msg}`);
     }
 
-    log.debug(`[claude-api:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字`);
+    const estOutputTokens = Math.round(finalText.length / 4);
+    log.debug(`[claude-api:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 ~outputTokens=${estOutputTokens}`);
 
     async function* makeIterable(): AsyncIterable<ProviderEvent> {
       yield* events;

@@ -380,11 +380,12 @@ export async function* agentLoop(
 
   eventBus.emit("turn:before", { accountId, channelId, sessionKey, prompt, projectId });
 
-  log.debug(`[agent-loop] turn start sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
+  log.debug(`[agent-loop] ── turn 開始 ── sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
 
   try {
     while (loopCount++ < MAX_LOOPS) {
       // ── 5a. LLM 呼叫（帶重試）────────────────────────────────────────────
+      log.debug(`[agent-loop] [loop=${loopCount}] 呼叫 LLM msgs=${messages.length}`);
       let streamResult;
       try {
         streamResult = await callWithRetry(
@@ -432,6 +433,7 @@ export async function* agentLoop(
       if (streamResult.toolCalls.length === 0) break;
 
       // ── 5c. Tool 執行 ──────────────────────────────────────────────────────
+      log.debug(`[agent-loop] [loop=${loopCount}] 執行 ${streamResult.toolCalls.length} 個 tool: ${streamResult.toolCalls.map(t => t.name).join(", ")}`);
       const toolResults: Array<{ tool_use_id: string; content: string; is_error: boolean }> = [];
 
       // 先把 assistant 的 tool_use 加入 messages
@@ -684,5 +686,5 @@ export async function* agentLoop(
   }
 
   yield { type: "done", text: fullResponse, turnCount: loopCount };
-  log.debug(`[agent-loop] done accountId=${accountId} channelId=${channelId} loops=${loopCount} tools=${tracker.toolCalls.length}`);
+  log.debug(`[agent-loop] ── turn 完成 ── accountId=${accountId} channelId=${channelId} loops=${loopCount} tools=${tracker.toolCalls.length}`);
 }

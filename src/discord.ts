@@ -215,13 +215,13 @@ async function handleMessage(
   message: Message,
   config: BridgeConfig
 ): Promise<void> {
-  log.debug(`[discord] 收到訊息 from=${message.author.tag} channel=${message.channelId} guild=${message.guild?.id ?? "DM"} content="${message.content.slice(0, 50)}"`);
-
   // NOTE: bot 自身訊息永遠忽略（不論 allowBot 設定），避免自我迴圈
   if (message.author.id === message.client.user?.id) {
-    log.debug("[discord] 忽略：bot 自身訊息");
     return;
   }
+
+  log.debug(`[discord] 收到訊息 from=${message.author.tag} channel=${message.channelId} guild=${message.guild?.id ?? "DM"} content="${message.content}"`);
+
 
   // 去重：防止同一訊息被處理兩次（DM partial channel 已知問題）
   if (processedMessages.has(message.id)) {
