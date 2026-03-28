@@ -21,7 +21,7 @@ import {
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { config } from "./config.js";
+import { config } from "./core/config.js";
 import { log } from "./logger.js";
 import { clearSession, clearAllSessions, getSessionCount } from "./session.js";
 

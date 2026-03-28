@@ -93,7 +93,8 @@ export class MemoryEngine {
 
   async recall(
     prompt: string,
-    ctx: import("./recall.js").RecallContext
+    ctx: import("./recall.js").RecallContext,
+    overrides?: { vectorSearch?: boolean; vectorTopK?: number }
   ): Promise<import("./recall.js").RecallResult> {
     const { recall } = await import("./recall.js");
     const globalPath = resolvePath(this.cfg.globalPath);
@@ -102,7 +103,8 @@ export class MemoryEngine {
       projectDir: ctx.projectId ? projectDir(this.cfg.globalPath, ctx.projectId) : undefined,
       accountDir: ctx.accountId ? accountDir(this.cfg.globalPath, ctx.accountId) : undefined,
     };
-    return recall(prompt, ctx, paths, this.cfg.recall);
+    const opts = overrides ? { ...this.cfg.recall, ...overrides } : this.cfg.recall;
+    return recall(prompt, ctx, paths, opts);
   }
 
   // ── Context Build ─────────────────────────────────────────────────────────────

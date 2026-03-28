@@ -10,7 +10,7 @@ import { AttachmentBuilder, type Message, type SendableChannels } from "discord.
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { AgentLoopEvent } from "./agent-loop.js";
-import type { BridgeConfig } from "../config.js";
+import type { BridgeConfig } from "./config.js";
 import { log } from "../logger.js";
 
 // Discord 字數上限

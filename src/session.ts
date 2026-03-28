@@ -17,7 +17,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, readdirSync, existsSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { runClaudeTurn, type AcpEvent } from "./acp.js";
-import { resolveWorkspaceDir } from "./config.js";
+import { resolveWorkspaceDir } from "./core/config.js";
 import { log } from "./logger.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────

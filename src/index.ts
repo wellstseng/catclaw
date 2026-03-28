@@ -14,7 +14,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { config, watchConfig } from "./config.js";
+import { config, watchConfig } from "./core/config.js";
 import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
 import { createDiscordClient } from "./discord.js";
@@ -30,6 +30,7 @@ import { homedir } from "node:os";
 
 // 在其他模組開始 log 前設定層級
 setLogLevel(config.logLevel);
+log.info(`[catclaw] 啟動`)
 
 // ── --agent 模式：若有指定 agent，載入合併後設定 ─────────────────────────────
 const catclawDir = resolve(homedir(), ".catclaw");

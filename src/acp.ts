@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
-import { resolveWorkspaceDir, resolveClaudeBin, config } from "./config.js";
+import { resolveWorkspaceDir, resolveClaudeBin, config } from "./core/config.js";
 import { buildSkillsPrompt } from "./skills/registry.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

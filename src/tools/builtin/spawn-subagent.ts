@@ -71,7 +71,7 @@ interface ChildRunOpts {
 // ── ACP Runtime（SUB-6）──────────────────────────────────────────────────────
 
 async function runAcpSubagent(opts: ChildRunOpts): Promise<{ text: string; turns: number }> {
-  const { resolveClaudeBin, resolveWorkspaceDir } = await import("../../config.js");
+  const { resolveClaudeBin, resolveWorkspaceDir } = await import("../../core/config.js");
   const claudeCmd = resolveClaudeBin();
   const cwd = opts.workspaceDir ?? resolveWorkspaceDir();
 
@@ -402,7 +402,7 @@ export const tool: Tool = {
         if (saveToMemory && text) {
           try {
             const { writeAtom } = await import("../../memory/atom.js");
-            const { resolveWorkspaceDir } = await import("../../config.js");
+            const { resolveWorkspaceDir } = await import("../../core/config.js");
             const { join } = await import("node:path");
             const memDir = join(resolveWorkspaceDir(), "memory");
             const atomName = `subagent-result-${record.runId.slice(0, 8)}`;

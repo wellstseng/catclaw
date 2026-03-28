@@ -21,8 +21,8 @@ import { platform } from "node:os";
 import { randomUUID } from "node:crypto";
 import { Cron } from "croner";
 import type { Client, SendableChannels } from "discord.js";
-import { config, resolveWorkspaceDir } from "./config.js";
-import type { CronSchedule, CronAction } from "./config.js";
+import { config, resolveWorkspaceDir } from "./core/config.js";
+import type { CronSchedule, CronAction } from "./core/config.js";
 import { runClaudeTurn } from "./acp.js";
 import { log } from "./logger.js";
 

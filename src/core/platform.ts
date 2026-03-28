@@ -65,11 +65,6 @@ export async function initPlatform(
   catclawDir: string,
   distDir: string,
 ): Promise<void> {
-  if (!config.providers || Object.keys(config.providers).length === 0) {
-    log.info("[platform] 未設定 providers，保持舊 Claude CLI 模式");
-    return;
-  }
-
   log.info("[platform] 初始化新平台子系統...");
 
   // ── 1. AccountRegistry ─────────────────────────────────────────────────────

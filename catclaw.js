@@ -112,8 +112,8 @@ function ensureInitialized() {
         console.warn(`⚠️  ${catclawJsonPath} 中 discord.token 尚未設定`);
         needsToken = true;
       }
-    } catch {
-      console.warn(`⚠️  無法讀取 ${catclawJsonPath}，請確認格式正確`);
+    } catch(err) {
+      console.warn(`⚠️  無法讀取 ${catclawJsonPath}，請確認格式正確:\n錯誤訊息:${err instanceof Error ? err.message : String(err)}`);
       needsToken = true;
     }
   }
@@ -208,7 +208,10 @@ switch (cmd) {
 
     run("npx tsc");
     mkdirSync(resolve(__dirname, "signal"), { recursive: true });
-    run("npx pm2 start ecosystem.config.cjs");
+    // --update-env：確保 ecosystem.config.cjs 的 env 覆蓋舊 PM2 進程環境（-f 必填）
+    run(forceFlag
+      ? "npx pm2 start ecosystem.config.cjs --update-env"
+      : "npx pm2 start ecosystem.config.cjs");
     console.log("✅ catclaw 已啟動（背景執行，監聽 signal/RESTART）");
     break;
   }

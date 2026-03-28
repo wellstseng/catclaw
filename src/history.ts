@@ -13,7 +13,7 @@
 
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { resolveWorkspaceDir, config } from "./config.js";
+import { resolveWorkspaceDir, config } from "./core/config.js";
 import { log } from "./logger.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ import { AttachmentBuilder, type Message, type SendableChannels } from "discord.
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { AcpEvent } from "./acp.js";
-import type { BridgeConfig } from "./config.js";
+import type { BridgeConfig } from "./core/config.js";
 import { getSessionIdForChannel } from "./session.js";
 import { recordAssistantTurn } from "./history.js";
 import { log } from "./logger.js";

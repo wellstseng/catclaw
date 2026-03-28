@@ -568,13 +568,18 @@ function loadConfig(): BridgeConfig {
     history: { enabled: raw.history?.enabled ?? true },
 
     // ── 平台擴充欄位 ──
-    provider: raw.provider ?? "claude-api",
+    // 預設 provider 為 ollama-local（本地，不需要 token）
+    provider: raw.provider ?? "ollama-local",
     providers: raw.providers ?? {
-      "claude-api": { model: "claude-sonnet-4-6" },
+      "ollama-local": {
+        type: "ollama",
+        host: "http://localhost:11434",
+        model: "qwen3:1.7b",
+      },
     },
     providerRouting: {
       channels: raw.providerRouting?.channels ?? {},
-      roles: raw.providerRouting?.roles ?? { default: "claude-api" },
+      roles: raw.providerRouting?.roles ?? { default: "ollama-local" },
       projects: raw.providerRouting?.projects ?? {},
     },
     session: {

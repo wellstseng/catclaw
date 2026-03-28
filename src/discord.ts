@@ -25,8 +25,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { BridgeConfig } from "./config.js";
-import { config, getChannelAccess } from "./config.js";
+import type { BridgeConfig } from "./core/config.js";
+import { config, getChannelAccess } from "./core/config.js";
 import { enqueue } from "./session.js";
 import { createReplyHandler } from "./reply.js";
 import { matchSkill } from "./skills/registry.js";
@@ -570,18 +570,6 @@ async function handleMessage(
       }
 
       void handleAgentLoopReply(withAckReactions(gen), firstMessage, config);
-    } else {
-      // 舊 Claude CLI 路徑（向下相容）
-      const onEvent = createReplyHandler(firstMessage, config, turnId);
-
-      // 多人頻道中讓 Claude 知道發言者身份
-      const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
-
-      enqueue(firstMessage.channelId, prompt, onEvent, {
-        turnTimeoutMs: config.turnTimeoutMs,
-        turnTimeoutToolCallMs: config.turnTimeoutToolCallMs,
-        sessionTtlMs: config.sessionTtlHours * 3600_000,
-      });
     }
   })(); });
 }

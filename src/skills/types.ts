@@ -7,7 +7,7 @@
  */
 
 import type { Message } from "discord.js";
-import type { BridgeConfig } from "../config.js";
+import type { BridgeConfig } from "../core/config.js";
 
 // ── Tier 定義（先定義好，S5 啟用 Permission Gate 時用） ──────────────────────
 
