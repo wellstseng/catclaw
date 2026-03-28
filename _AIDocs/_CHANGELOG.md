@@ -3,6 +3,7 @@
 > 知識庫變更紀錄（最新在上，超過 8 筆觸發滾動淘汰）
 
 | 日期 | 變更 | 影響文件 |
+| 2026-03-28 | **feat: pi-ai OAuth provider + /configure skill** — claude-api.ts 全面改用 @mariozechner/pi-ai streamSimpleAnthropic（OAuth token 自動處理）；新增 auth-profile-store.ts（credentials/state 分離，路徑 agents/default/auth-profile.json）；移除 ProviderEntry.profiles[]；新增 /configure skill（model/provider 切換 hot-reload） | claude-api.ts, auth-profile-store.ts, config.ts, discord.ts, skills/configure.ts, modules/providers.md, modules/skills.md |
 |------|------|---------|
 | 2026-03-27 | **feat(v4-6): cron subagent action** — CronAction 新增 subagent type（task/provider/timeoutMs/notify），CronConfig 新增 defaultAccountId/defaultProvider，cron.ts 新增 execSubagent() | cron.ts, config.ts, core/config.ts |
 | 2026-03-27 | **feat(v4-5): agentLoop memoryRecall opt** — AgentLoopOpts 新增 memoryRecall，deps 新增 optional memoryEngine，步驟 3b 在 LLM call 前注入 vector search 結果到 systemPrompt | core/agent-loop.ts |
