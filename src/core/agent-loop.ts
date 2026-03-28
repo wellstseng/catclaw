@@ -579,7 +579,11 @@ export async function* agentLoop(
         }
 
         tracker.recordToolCall(call.name, hookResult.params, toolResult.result, toolResult.error, durationMs);
-        log.debug(`[agent-loop] tool ${call.name} ${toolResult.error ? "error" : "ok"} ${durationMs}ms`);
+        if (toolResult.error) {
+          log.debug(`[agent-loop] [使用工具] (${call.name}) :: error ${durationMs}ms — ${toolResult.error}`);
+        } else {
+          log.debug(`[agent-loop] [使用工具] (${call.name}) :: ok ${durationMs}ms`);
+        }
 
         const rawResultText = toolResult.error
           ? `錯誤：${toolResult.error}`
@@ -587,7 +591,7 @@ export async function* agentLoop(
         const cap = toolRegistry.get(call.name)?.resultTokenCap ?? DEFAULT_RESULT_TOKEN_CAP;
         const resultText = truncateToolResult(rawResultText, cap);
         if (resultText.length < rawResultText.length) {
-          log.debug(`[agent-loop] tool ${call.name} result truncated ${rawResultText.length} → ${resultText.length} chars`);
+          log.debug(`[agent-loop] [使用工具] (${call.name}) :: result truncated ${rawResultText.length} → ${resultText.length} chars`);
         }
 
         toolResults.push({

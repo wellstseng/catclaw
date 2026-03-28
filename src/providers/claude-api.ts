@@ -170,11 +170,11 @@ export class ClaudeApiProvider implements LLMProvider {
     this._store.load();
 
     if (this._store.getAvailableCount() > 0) {
-      log.info(`[claude-api:${id}] 多憑證模式，${this._store.getAvailableCount()} 組可用`);
+      log.info(`[claude:${id}] 多憑證模式，${this._store.getAvailableCount()} 組可用`);
     } else {
       this.token = entry.token;
       if (!this.token) {
-        log.warn(`[claude-api:${id}] 憑證檔 ${credentialsFilePath} 為空且未設定 token`);
+        log.warn(`[claude:${id}] 憑證檔 ${credentialsFilePath} 為空且未設定 token`);
       }
     }
   }
@@ -205,11 +205,11 @@ export class ClaudeApiProvider implements LLMProvider {
       const waitMsg = availAt
         ? `最快 ${Math.ceil((availAt - Date.now()) / 60000)} 分鐘後可用`
         : "所有憑證已永久停用，請聯絡管理員";
-      throw new Error(`[claude-api:${this.id}] 所有 API 憑證都在 cooldown 中（${waitMsg}）`);
+      throw new Error(`[claude:${this.id}] 所有 API 憑證都在 cooldown 中（${waitMsg}）`);
     } else if (this.token) {
       credential = this.token;
     } else {
-      throw new Error(`[claude-api:${this.id}] 無認證資訊`);
+      throw new Error(`[claude:${this.id}] 無認證資訊`);
     }
 
     // ── pi-ai 呼叫 ────────────────────────────────────────────────────────────
@@ -226,7 +226,14 @@ export class ClaudeApiProvider implements LLMProvider {
       (JSON.stringify(context.messages).length + (opts.systemPrompt?.length ?? 0)) / 4
       + (context.tools?.length ?? 0) * 300
     );
-    log.debug(`[claude-api:${this.id}] POST model=${this.modelId} msgs=${messages.length} tools=${context.tools?.length ?? 0} profile=${activeProfileId ?? "token"} ~inputTokens=${estInputTokens}`);
+    // 擷取最後一條 user 訊息做摘要
+    const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+    const lastUserText = typeof lastUserMsg?.content === "string"
+      ? lastUserMsg.content
+      : Array.isArray(lastUserMsg?.content)
+        ? (lastUserMsg.content as Array<{type:string;text?:string}>).filter(b => b.type === "text").map(b => b.text ?? "").join(" ")
+        : "";
+    log.debug(`[claude:${this.id}] POST model=${this.modelId} msgs=${messages.length} tools=${context.tools?.length ?? 0} profile=${activeProfileId ?? "token"} ~inputTokens=${estInputTokens} lastUser="${lastUserText}"`);
 
     // ── 事件收集 ──────────────────────────────────────────────────────────────
     const events: ProviderEvent[] = [];
@@ -256,7 +263,7 @@ export class ClaudeApiProvider implements LLMProvider {
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`[claude-api:${this.id}] 呼叫失敗 profile=${activeProfileId ?? "token"}: ${msg}`);
+      log.warn(`[claude:${this.id}] 呼叫失敗 profile=${activeProfileId ?? "token"}: ${msg}`);
 
       // Cooldown 判斷
       if (activeProfileId && this._store) {
@@ -264,11 +271,11 @@ export class ClaudeApiProvider implements LLMProvider {
         if (reason) this._store.setCooldown(activeProfileId, reason);
       }
 
-      throw new Error(`[claude-api:${this.id}] ${msg}`);
+      throw new Error(`[claude:${this.id}] ${msg}`);
     }
 
     const estOutputTokens = Math.round(finalText.length / 4);
-    log.debug(`[claude-api:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 ~outputTokens=${estOutputTokens}`);
+    log.debug(`[claude:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 ~outputTokens=${estOutputTokens}`);
 
     async function* makeIterable(): AsyncIterable<ProviderEvent> {
       yield* events;
