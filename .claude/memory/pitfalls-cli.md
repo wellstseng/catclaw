@@ -1,0 +1,121 @@
+---
+name: pitfalls-cli
+description: catclaw 開發陷阱速查（21 項）+ Claude CLI 指令參考（stdio/stream-json/event 格式）
+type: project
+code-version: 2026-03-28
+---
+
+## Claude CLI 指令格式
+
+```bash
+claude -p \
+  --output-format stream-json \
+  --verbose \
+  --include-partial-messages \
+  --dangerously-skip-permissions \
+  [--resume <session_id>] \
+  "<prompt>"
+```
+
+stdio: `["ignore", "pipe", "pipe"]`
+
+## stream-json Event 格式（NDJSON）
+
+### system（init）
+```json
+{ "type": "system", "subtype": "init", "session_id": "abc-123-..." }
+```
+
+### assistant（累積文字，需 diff）
+```json
+{ "type": "assistant", "message": { "content": [
+  { "type": "thinking", "thinking": "累積推理..." },
+  { "type": "text", "text": "累積文字..." },
+  { "type": "tool_use", "name": "Read", "id": "tu_xxx" }
+] } }
+```
+
+### result（Turn 結束）
+```json
+{ "type": "result", "result": "最終文字", "is_error": false, "session_id": "..." }
+```
+
+其他：hook_started / hook_response / rate_limit_event → 靜默忽略
+
+---
+
+## 陷阱速查
+
+### 1. stdin 必須 "ignore"
+spawn claude 後無輸出 → stdin 設 pipe 未關閉 → 改 `["ignore", "pipe", "pipe"]`
+
+### 2. stream-json 必須搭配 --verbose
+否則 CLI 直接報錯
+
+### 3. DM 必須加 Partials.Channel
+DM 收不到 messageCreate → `partials: [Partials.Channel]`
+
+### 4. dotenv 載入順序
+`import "dotenv/config"` 必須在 `import { config }` 之前
+
+### 5. Channel ID ≠ Guild ID
+ALLOWED_CHANNEL_IDS 填的是頻道 ID
+
+### 6. TextBasedChannel TS 陷阱
+聯集包含 PartialGroupDMChannel 無 send() → 用 `SendableChannels`
+
+### 7. assistant text 是累積非 delta
+diff `lastTextLength` → `fullText.slice(lastTextLength)`
+
+### 8. Discord 2000 字上限
+buffer flush 在 2000 字切割 + code fence 平衡
+
+### 9. bot 訊息最先過濾
+`message.author.bot` 檢查必須在 debounce 之前
+
+### 10. createDiscordClient 不可捕獲 config closure
+handler 讀全域 config 支援 hot-reload
+
+### 11. thinking 送出時不停 typing
+flushThinking() 不呼叫 stopTyping()，typing 持續到正式 text
+
+### 12. showToolCalls boolean 向下相容
+`parseShowToolCalls()`: true→all, false→none
+
+### 13. Promise chain 錯誤不可傳播
+每 turn .catch() 攔截轉 error event
+
+### 14. signal 檔需要 CATCLAW_CHANNEL_ID
+signal/RESTART JSON 必須包含 channelId，否則重啟通知無法送達
+
+### 15. cron-jobs.json selfWriting flag
+cron 寫入狀態時設 selfWriting=true，防止 fs.watch 觸發自我重載迴圈
+
+### 16. ACTIVE_TURNS_DIR 路徑一致性（已修正 2026-03-22）
+必須用 `resolveWorkspaceDir()` 統一路徑，否則 cleanup 找不到殘留檔
+
+### 17. config.json 遺留 claude.cwd / claude.command（2026-03-22 移除）
+已改用環境變數 CATCLAW_CONFIG_DIR / CATCLAW_WORKSPACE / CATCLAW_CLAUDE_BIN
+
+### 18. ch.send() 未回傳 Promise 給 .catch()（2026-03-25 修正）
+`.then(ch => { ch.send(...); })` 中 send() 的 rejection 不會被外層 `.catch()` 捕獲
+→ 造成 unhandledRejection → PM2 crash loop（Missing Access 403）
+修正：`.then(async ch => { await ch.send(...); })`
+
+### 19. Prompt-type SKILL.md 注入 vs Claude Code 內建 skill 混淆（2026-03-25）
+CatClaw 內跑的 Claude CLI 本身也有 MCP plugin skill（discord:access/configure 等）
+注入 builtin-prompt/discord/SKILL.md 後，Claude 可能把 OpenClaw skill 格式和自身 MCP tools 混答
+→ Phase 0 只做注入，S4/S8 HTTP API 完成後才接實際執行；AGENTS.md 應說明哪些是真實可用能力
+
+### 20. tsc 不複製非 .ts 檔案（2026-03-25）
+builtin-prompt/**/*.SKILL.md 不會出現在 dist/，loadPromptSkills() 找不到
+修正：package.json build script 加 `cp -r src/skills/builtin-prompt dist/skills/builtin-prompt`
+
+### 21. Ollama think 參數必須顯式送出（2026-03-28）
+`if (this.think) body["think"] = true` → qwen3 對複雜問題自動進入 thinking mode，content 空字串
+修正：`body["think"] = this.think`（顯式送 false 阻止自動 thinking）
+
+### 22. ecosystem.config.cjs 讀 process.env 時 .env 尚未載入（2026-03-28）
+PM2 啟動時 `process.env.CATCLAW_CONFIG_DIR` 為 undefined → fallback `~/.catclaw`
+另：.env 中的 `~` 不自動展開，需手動 `replace(/^~/, homedir())`
+修正：在 ecosystem.config.cjs 開頭手動解析 .env + expandHome()
