@@ -164,7 +164,7 @@ async function downloadAttachments(message: Message): Promise<string[]> {
  *       這樣 hot-reload config 後，新訊息就會用新設定
  * @returns 已設定好的 Discord Client（尚未 login）
  */
-export function createDiscordClient(): Client {
+export function createBot(): Client {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,

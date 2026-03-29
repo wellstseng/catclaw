@@ -1,11 +1,11 @@
 /**
  * @file index.ts
- * @description 進入點：載入設定、建立 Discord client、啟動 bot
+ * @description 進入點：載入設定、建立 Discord bot、啟動 bot
  *
  * 流程：
  * 1. 從 config.ts 載入 config.json 設定
  * 2. 設定 log level
- * 3. 從 discord.ts 建立 Discord client
+ * 3. 從 discord.ts 建立 Discord bot
  * 4. 用 token 登入
  * 5. 監聽 ready 事件，確認上線後印出 bot tag
  * 6. 監聽 process 結束信號，優雅關閉
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { config, watchConfig, resolveCatclawDir, resolveWorkspaceDirSafe } from "./core/config.js";
 import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
-import { createDiscordClient } from "./discord.js";
+import { createBot } from "./discord.js";
 import { loadSessions, scanAndCleanActiveTurns } from "./session.js";
 import { startCron, stopCron } from "./cron.js";
 import { setupSlashCommands, registerSlashCommands } from "./slash.js";
@@ -59,15 +59,15 @@ loadPromptSkills();
 
 // ── 啟動 ─────────────────────────────────────────────────────────────────────
 
-const client = createDiscordClient();
+const bot = createBot();
 
 // 啟動 config.json 監聽，變動時自動 hot-reload
 watchConfig();
 
 // Slash command 事件綁定（在 login 前綁，確保 ready 前就 listening）
-setupSlashCommands(client);
+setupSlashCommands(bot);
 
-client.once("ready", (c) => {
+bot.once("ready", (c) => {
   log.info(`[bridge] Bot 上線：${c.user.tag}`);
   log.info(`  DM：${config.discord.dm.enabled ? "啟用" : "停用"}`);
   const guildCount = Object.keys(config.discord.guilds).length;
@@ -77,10 +77,10 @@ client.once("ready", (c) => {
   log.info(`  管理員白名單：${config.admin.allowedUserIds.length > 0 ? config.admin.allowedUserIds.join(", ") : "（未設定，slash commands 無人可用）"}`);
 
   // Slash commands 部署到所有 guild（guild command 立即生效）
-  void registerSlashCommands(client);
+  void registerSlashCommands(bot);
 
-  // Bot 上線後啟動排程服務（需要 client 來發送訊息）
-  startCron(client);
+  // Bot 上線後啟動排程服務（需要 bot 來發送訊息）
+  startCron(bot);
 
   // ── 重啟通知 + Crash recovery ──
   // 有意重啟（signal/RESTART）的 channelId 要排除在 crash recovery 之外，
@@ -107,7 +107,7 @@ client.once("ready", (c) => {
       if (channelId) {
         intentionalChannelIds.add(channelId);
         // NOTE: cache 在 ready 時可能尚未填充，用 fetch 確保取得頻道
-        client.channels.fetch(channelId).then(async (ch) => {
+        bot.channels.fetch(channelId).then(async (ch) => {
           if (ch?.isTextBased() && "send" in ch) {
             await ch.send(`[CatClaw] 已重啟（${restartTime}）`);
             log.info(`[bridge] 重啟通知已送出 channel=${channelId}`);
@@ -132,7 +132,7 @@ client.once("ready", (c) => {
       continue;
     }
 
-    client.channels.fetch(chId).then(async (ch) => {
+    bot.channels.fetch(chId).then(async (ch) => {
       if (ch?.isTextBased() && "send" in ch) {
         const promptPreview = record.prompt.length > 100
           ? record.prompt.slice(0, 100) + "…"
@@ -148,11 +148,11 @@ client.once("ready", (c) => {
   }
 });
 
-// 優雅關閉：收到 SIGINT / SIGTERM 時先 destroy client 再退出
+// 優雅關閉：收到 SIGINT / SIGTERM 時先 destroy bot 再退出
 function shutdown(signal: string): void {
   log.info(`\n[bridge] 收到 ${signal}，關閉中...`);
   stopCron();
-  client.destroy();
+  bot.destroy();
   process.exit(0);
 }
 
@@ -165,4 +165,4 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // 登入 Discord
-await client.login(config.discord.token);
+await bot.login(config.discord.token);
