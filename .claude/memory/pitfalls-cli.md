@@ -1,6 +1,6 @@
 ---
 name: pitfalls-cli
-description: catclaw 開發陷阱速查（24 項）+ Claude CLI 指令參考（stdio/stream-json/event 格式）
+description: catclaw 開發陷阱速查（25 項）+ Claude CLI 指令參考（stdio/stream-json/event 格式）
 type: project
 code-version: 2026-03-31
 ---
@@ -130,3 +130,9 @@ LanceDB upsert 檢查到空向量就 `skip — embedding not available`，但 se
 catclaw.json 只設 globalPath/vectorDbPath 時，recall 區段不會被覆寫，vectorSearch 維持 false
 症狀：seed 成功、embedding 有資料，但 recall 仍走 keyword-only
 修正：catclaw.json 的 memory 段需明確加 `"recall": { "vectorSearch": true, ... }`
+
+### 25. OllamaClient embed timeout 在單 GPU（4GB）環境 model swap 超時（2026-03-31 修正）
+GTX 1050 Ti 4GB 同時只能載一個模型；qwen3:14b 在記憶體時，embed 需 unload → load qwen3-embedding:8b
+60s 預設 timeout 不足，觸發 AbortController → `This operation was aborted` → embedding 失敗
+症狀：`/migrate seed` 全部 skip，vectorDB 仍空；`/api/embed` 有回應但被 abort
+修正：catclaw.json `ollama.timeout`: 300000（5 分鐘）；OllamaClient `embed()` 使用 `cfg.timeout` 作為預設
