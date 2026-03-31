@@ -33,7 +33,7 @@ function memRoot(cfg: MemoryConfig): string {
 }
 
 function globalDir(cfg: MemoryConfig): string {
-  return join(memRoot(cfg), "global");
+  return memRoot(cfg);
 }
 
 function projectDir(cfg: MemoryConfig, projectId: string): string {

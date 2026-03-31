@@ -541,8 +541,8 @@ function parseShowToolCalls(value: string | boolean | undefined): "all" | "summa
 
 function defaultMemoryConfig(raw: Partial<MemoryConfig> | undefined, workspaceDir: string): MemoryConfig {
   const r = raw ?? {};
-  // backward compat：舊 globalPath 是 root/global，自動推導 root
-  const root = r.root ?? (r.globalPath ? r.globalPath.replace(/\/global\/?$/, "") : "~/.catclaw/memory");
+  // backward compat：舊 globalPath 直接當 root 使用
+  const root = r.root ?? r.globalPath ?? "~/.catclaw/memory";
   return {
     enabled:        r.enabled ?? true,
     root,
