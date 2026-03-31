@@ -46,6 +46,50 @@ export interface BuildOpts {
   ceProvider?: LLMProvider;  // CE 用 LLM（壓縮/摘要）
 }
 
+// ── Tool Pairing Repair ───────────────────────────────────────────────────────
+
+/**
+ * 修補截斷後的 tool_use / tool_result 孤立問題
+ * - 移除沒有對應 tool_use 的 tool_result block
+ * - 移除沒有對應 tool_result 的 tool_use block
+ * - 移除因此變空的 user/assistant messages
+ */
+export function repairToolPairing(messages: Message[]): Message[] {
+  // 1. 收集所有 tool_use id
+  const toolUseIds = new Set<string>();
+  for (const m of messages) {
+    if (typeof m.content !== "string") {
+      for (const b of m.content) {
+        if (b.type === "tool_use") toolUseIds.add(b.id);
+      }
+    }
+  }
+
+  // 2. 收集有 tool_result 的 tool_use_id
+  const toolResultIds = new Set<string>();
+  for (const m of messages) {
+    if (typeof m.content !== "string") {
+      for (const b of m.content) {
+        if (b.type === "tool_result") toolResultIds.add(b.tool_use_id);
+      }
+    }
+  }
+
+  // 3. 移除孤立 blocks，過濾空 messages
+  return messages
+    .map(m => {
+      if (typeof m.content === "string") return m;
+      const cleaned = m.content.filter(b => {
+        if (b.type === "tool_use") return toolResultIds.has(b.id);    // 有對應 result 才保留
+        if (b.type === "tool_result") return toolUseIds.has(b.tool_use_id);  // 有對應 use 才保留
+        return true;
+      });
+      if (cleaned.length === 0) return null;
+      return { ...m, content: cleaned };
+    })
+    .filter((m): m is Message => m !== null);
+}
+
 // ── Token 估算（~4 chars/token 粗估） ────────────────────────────────────────
 
 export function estimateTokens(messages: Message[]): number {
@@ -69,7 +113,8 @@ export function estimateTokens(messages: Message[]): number {
 export interface CompactionConfig {
   enabled: boolean;
   model?: string;              // CE 壓縮用 LLM model（不填則用 platform 傳入的 ceProvider）
-  triggerTurns: number;        // 超過此 turn 數才觸發（預設 20）
+  /** 超過此 token 數才觸發（預設 4000）。取代舊的 triggerTurns。 */
+  triggerTokens: number;
   preserveRecentTurns: number; // 保留最近 N 輪不壓縮（預設 5）
 }
 
@@ -78,17 +123,17 @@ export class CompactionStrategy implements ContextStrategy {
   enabled: boolean;
   private cfg: CompactionConfig;
 
-  constructor(cfg: Partial<CompactionConfig> = {}) {
+  constructor(cfg: Partial<CompactionConfig> & { triggerTurns?: number } = {}) {
     this.cfg = {
       enabled: cfg.enabled ?? true,
-      triggerTurns: cfg.triggerTurns ?? 20,
+      triggerTokens: cfg.triggerTokens ?? 4000,
       preserveRecentTurns: cfg.preserveRecentTurns ?? 5,
     };
     this.enabled = this.cfg.enabled;
   }
 
   shouldApply(ctx: ContextBuildContext): boolean {
-    return this.enabled && ctx.turnIndex >= this.cfg.triggerTurns;
+    return this.enabled && ctx.estimatedTokens > this.cfg.triggerTokens;
   }
 
   async apply(ctx: ContextBuildContext, ceProvider?: LLMProvider): Promise<ContextBuildContext> {
@@ -149,7 +194,7 @@ export class CompactionStrategy implements ContextStrategy {
 
   private _fallbackSlide(ctx: ContextBuildContext): ContextBuildContext {
     const preserve = this.cfg.preserveRecentTurns * 2;
-    const sliced = ctx.messages.slice(-preserve);
+    const sliced = repairToolPairing(ctx.messages.slice(-preserve));
     return { ...ctx, messages: sliced, estimatedTokens: estimateTokens(sliced) };
   }
 }
@@ -193,6 +238,7 @@ export class BudgetGuardStrategy implements ContextStrategy {
       messages.splice(firstNonSystem, 1);
     }
 
+    messages = repairToolPairing(messages);
     log.info(`[context-engine:budget-guard] 修剪 ${ctx.messages.length} → ${messages.length} messages`);
     return { ...ctx, messages, estimatedTokens: estimateTokens(messages) };
   }
@@ -223,7 +269,7 @@ export class SlidingWindowStrategy implements ContextStrategy {
   }
 
   async apply(ctx: ContextBuildContext): Promise<ContextBuildContext> {
-    const sliced = ctx.messages.slice(-this.cfg.maxTurns * 2);
+    const sliced = repairToolPairing(ctx.messages.slice(-this.cfg.maxTurns * 2));
     return { ...ctx, messages: sliced, estimatedTokens: estimateTokens(sliced) };
   }
 }
