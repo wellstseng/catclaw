@@ -475,6 +475,9 @@ export async function* agentLoop(
 
   try {
     while (loopCount++ < MAX_LOOPS) {
+      // ── abort 快速出口（/stop 或 timeout 觸發後，下一輪不再呼叫 LLM）────
+      if (controller.signal.aborted) break;
+
       // ── 5a. LLM 呼叫（帶重試）────────────────────────────────────────────
       log.debug(`[agent-loop] [loop=${loopCount}] 呼叫 LLM msgs=${messages.length}`);
       let streamResult;
@@ -498,6 +501,11 @@ export async function* agentLoop(
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // 使用者主動中止（/stop 或外部 signal）→ 靜默退出，不送 Discord 錯誤訊息
+        if (controller.signal.aborted) {
+          log.debug(`[agent-loop] turn 已中止（abort signal），靜默退出`);
+          return;
+        }
         log.warn(`[agent-loop] LLM 呼叫失敗 provider=${provider.id} loop=${loopCount}: ${msg}`);
         // 辨識「所有憑證耗盡」→ 不重試，直接回報
         if (msg.includes("所有 API 憑證都在 cooldown")) {
@@ -522,6 +530,7 @@ export async function* agentLoop(
       totalInputTokens += streamResult.usage.input;
       totalOutputTokens += streamResult.usage.output;
 
+      if (controller.signal.aborted) break;
       if (streamResult.stopReason === "end_turn") break;
       if (streamResult.stopReason !== "tool_use") break;
       if (streamResult.toolCalls.length === 0) break;

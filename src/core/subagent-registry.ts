@@ -130,10 +130,10 @@ export class SubagentRegistry {
     return true;
   }
 
-  /** 級聯中止：將所有 parentId===runId 且 running/pending 的子 agent 標記為 killed */
+  /** 級聯中止：將所有 parentId===runId 且 running 的子 agent 標記為 killed */
   private cascadeAbortChildren(parentRunId: string, parentStatus: string): void {
     for (const child of this.records.values()) {
-      if (child.parentId === parentRunId && (child.status === "running" || child.status === "pending" as SubagentStatus)) {
+      if (child.parentId === parentRunId && child.status === "running") {
         child.abortController.abort();
         child.status = "killed";
         child.error = `cascade abort: parent ${parentRunId} ${parentStatus}`;

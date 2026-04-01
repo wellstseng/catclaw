@@ -55,18 +55,22 @@ export const stopSkill: Skill = {
       return { text: "⚠️ 目前沒有進行中的 turn，不需要中斷。" };
     }
 
+    // 清空排隊等待的 turn（避免下一個排隊 turn 自動繼續執行）
+    const queuedCount = sessionManager.clearQueue(sessionKey);
+
     // 回退 session
     const snapshotStore = getSessionSnapshotStore();
     const snapshot = snapshotStore?.get(sessionKey, turnCount);
+    const queueNote = queuedCount > 0 ? `，已取消 ${queuedCount} 條排隊` : "";
 
     if (snapshot) {
       session.messages = snapshot.messages;
       session.turnCount = Math.max(0, turnCount - 1);
       snapshotStore!.delete(sessionKey, turnCount);
-      return { text: `🛑 已中斷，session 還原至 turn #${turnCount} 前。` };
+      return { text: `🛑 已中斷，session 還原至 turn #${turnCount} 前${queueNote}。` };
     }
 
-    return { text: "🛑 已中斷，但找不到快照，session 未還原。" };
+    return { text: `🛑 已中斷，但找不到快照，session 未還原${queueNote}。` };
   },
 };
 
