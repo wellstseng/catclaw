@@ -30,7 +30,7 @@ import { getToolLogStore, ToolLogStore } from "./tool-log-store.js";
 import { getSessionSnapshotStore } from "./session-snapshot.js";
 import { registerTurnAbort, clearTurnAbort } from "../skills/builtin/stop.js";
 import type { MemoryEngine } from "../memory/engine.js";
-import { createApproval } from "./exec-approval.js";
+import { createApproval, sendApprovalDm, isCommandAllowed } from "./exec-approval.js";
 import { getSessionNote, checkAndSaveNote } from "../memory/session-memory.js";
 import { config } from "./config.js";
 
@@ -173,10 +173,16 @@ export interface AgentLoopOpts {
    */
   execApproval?: {
     enabled: boolean;
-    /** 送出 DM 的非同步函式，呼叫端負責整合 discord client */
+    /** 送出純文字 DM 的非同步函式（fallback，sendApprovalDm 優先） */
     sendDm: (dmUserId: string, content: string) => Promise<void>;
     dmUserId: string;
     timeoutMs?: number;
+    /**
+     * 指令白名單 pattern（substring match）。
+     * 指令包含任一 pattern → 自動允許，跳過 DM 確認。
+     * 例：["/tmp/", "echo ", "cat "]
+     */
+    allowedPatterns?: string[];
   };
 
   /**
@@ -639,30 +645,37 @@ export async function* agentLoop(
         if (call.name === "run_command" && opts.execApproval?.enabled) {
           const command = String((hookResult.params as Record<string, unknown>)["command"] ?? "");
           const timeoutMs = opts.execApproval.timeoutMs ?? 60_000;
-          const [approvalId, approvalPromise] = createApproval(command, channelId, timeoutMs);
-          const dmContent = [
-            `🔐 **CatClaw 執行確認**`,
-            `頻道：<#${channelId}>`,
-            `指令：\`\`\`\n${command}\n\`\`\``,
-            `回覆 \`✅ ${approvalId}\` 允許，\`❌ ${approvalId}\` 拒絕（${Math.round(timeoutMs / 1000)}s 後自動拒絕）`,
-          ].join("\n");
-          try {
-            await opts.execApproval.sendDm(opts.execApproval.dmUserId, dmContent);
-            log.info(`[agent-loop] exec-approval 等待確認 approvalId=${approvalId} command="${command.slice(0, 60)}"`);
-          } catch (err) {
-            log.warn(`[agent-loop] exec-approval 送 DM 失敗，自動拒絕：${err instanceof Error ? err.message : String(err)}`);
-            toolResults.push({ tool_use_id: call.id, content: "錯誤：DM 確認失敗，指令未執行", is_error: true });
-            yield { type: "tool_blocked", name: call.name, reason: "DM 確認失敗" };
-            continue;
+
+          // 白名單檢查：符合 pattern → 自動允許，跳過 DM
+          if (isCommandAllowed(command, opts.execApproval.allowedPatterns ?? [])) {
+            log.debug(`[agent-loop] exec-approval 白名單通過，自動允許 command="${command.slice(0, 80)}"`);
+          } else {
+            const [approvalId, approvalPromise] = createApproval(command, channelId, timeoutMs);
+            try {
+              await sendApprovalDm({
+                dmUserId: opts.execApproval.dmUserId,
+                command,
+                channelId,
+                approvalId,
+                timeoutMs,
+                sendTextFallback: opts.execApproval.sendDm,
+              });
+              log.info(`[agent-loop] exec-approval 等待確認 approvalId=${approvalId} command="${command.slice(0, 80)}"`);
+            } catch (err) {
+              log.warn(`[agent-loop] exec-approval 送 DM 失敗，自動拒絕：${err instanceof Error ? err.message : String(err)}`);
+              toolResults.push({ tool_use_id: call.id, content: "錯誤：DM 確認失敗，指令未執行", is_error: true });
+              yield { type: "tool_blocked", name: call.name, reason: "DM 確認失敗" };
+              continue;
+            }
+            const approved = await approvalPromise;
+            if (!approved) {
+              log.info(`[agent-loop] exec-approval 拒絕 approvalId=${approvalId}`);
+              toolResults.push({ tool_use_id: call.id, content: "錯誤：使用者拒絕執行（或確認逾時）", is_error: true });
+              yield { type: "tool_blocked", name: call.name, reason: "使用者拒絕執行指令" };
+              continue;
+            }
+            log.info(`[agent-loop] exec-approval 允許 approvalId=${approvalId}`);
           }
-          const approved = await approvalPromise;
-          if (!approved) {
-            log.info(`[agent-loop] exec-approval 拒絕 approvalId=${approvalId}`);
-            toolResults.push({ tool_use_id: call.id, content: "錯誤：使用者拒絕執行（或確認逾時）", is_error: true });
-            yield { type: "tool_blocked", name: call.name, reason: "使用者拒絕執行指令" };
-            continue;
-          }
-          log.info(`[agent-loop] exec-approval 允許 approvalId=${approvalId}`);
         }
 
         if (opts.showToolCalls !== "none") {

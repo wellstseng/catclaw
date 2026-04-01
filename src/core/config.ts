@@ -32,6 +32,12 @@ export interface ChannelConfig {
   provider?: string;
   /** 封鎖 @here / @everyone 群組廣播觸發（預設由 guild 層級繼承） */
   blockGroupMentions?: boolean;
+  /**
+   * 新訊息自動中斷正在執行的 turn（插隊模式）。
+   * true：新訊息到來時，若有正在執行的 turn，立即 abort 並讓新訊息接續執行。
+   * 預設 false（FIFO 佇列行為）。
+   */
+  interruptOnNewMessage?: boolean;
 }
 
 export interface GuildConfig {
@@ -250,6 +256,8 @@ export interface SafetyConfig {
     dmUserId: string;
     /** 等待回覆超時毫秒（預設 60000） */
     timeoutMs?: number;
+    /** 白名單 patterns（substring match）— 符合者自動允許，不送 DM */
+    allowedPatterns?: string[];
   };
   /** 細粒度工具權限規則（per-role / per-account） */
   toolPermissions?: {
@@ -793,6 +801,8 @@ export interface ChannelAccess {
   provider?: string;
   /** 頻道綁定的專案（undefined = 無限制） */
   boundProject?: string;
+  /** 新訊息自動中斷正在執行的 turn（插隊模式，預設 false） */
+  interruptOnNewMessage: boolean;
 }
 
 /**
@@ -815,16 +825,17 @@ export function getChannelAccess(
       allowBot: false,
       allowFrom: [],
       blockGroupMentions: false,
+      interruptOnNewMessage: false,
     };
   }
 
   if (Object.keys(config.discord.guilds).length === 0) {
-    return { allowed: true, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true };
+    return { allowed: true, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true, interruptOnNewMessage: false };
   }
 
   const guild = config.discord.guilds[guildId];
   if (!guild) {
-    return { allowed: false, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true };
+    return { allowed: false, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true, interruptOnNewMessage: false };
   }
 
   const guildDefaults: Required<Omit<ChannelConfig, "boundProject" | "provider">> = {
@@ -833,6 +844,7 @@ export function getChannelAccess(
     allowBot: guild.allowBot ?? false,
     allowFrom: guild.allowFrom ?? [],
     blockGroupMentions: guild.blockGroupMentions ?? true,
+    interruptOnNewMessage: false,
   };
 
   const channels = guild.channels ?? {};
@@ -840,13 +852,14 @@ export function getChannelAccess(
   const parentCfg = parentId ? channels[parentId] : undefined;
 
   return {
-    allowed:            channelCfg?.allow               ?? parentCfg?.allow               ?? guildDefaults.allow,
-    requireMention:     channelCfg?.requireMention      ?? parentCfg?.requireMention      ?? guildDefaults.requireMention,
-    allowBot:           channelCfg?.allowBot             ?? parentCfg?.allowBot             ?? guildDefaults.allowBot,
-    allowFrom:          channelCfg?.allowFrom            ?? parentCfg?.allowFrom            ?? guildDefaults.allowFrom,
-    blockGroupMentions: channelCfg?.blockGroupMentions   ?? parentCfg?.blockGroupMentions   ?? guildDefaults.blockGroupMentions,
-    provider:           channelCfg?.provider             ?? parentCfg?.provider,
-    boundProject:       channelCfg?.boundProject         ?? parentCfg?.boundProject,
+    allowed:                channelCfg?.allow                    ?? parentCfg?.allow                    ?? guildDefaults.allow,
+    requireMention:         channelCfg?.requireMention           ?? parentCfg?.requireMention           ?? guildDefaults.requireMention,
+    allowBot:               channelCfg?.allowBot                 ?? parentCfg?.allowBot                 ?? guildDefaults.allowBot,
+    allowFrom:              channelCfg?.allowFrom                ?? parentCfg?.allowFrom                ?? guildDefaults.allowFrom,
+    blockGroupMentions:     channelCfg?.blockGroupMentions       ?? parentCfg?.blockGroupMentions       ?? guildDefaults.blockGroupMentions,
+    interruptOnNewMessage:  channelCfg?.interruptOnNewMessage    ?? parentCfg?.interruptOnNewMessage    ?? guildDefaults.interruptOnNewMessage,
+    provider:               channelCfg?.provider                 ?? parentCfg?.provider,
+    boundProject:           channelCfg?.boundProject             ?? parentCfg?.boundProject,
   };
 }
 

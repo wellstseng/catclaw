@@ -53,7 +53,8 @@ import { agentLoop } from "./core/agent-loop.js";
 import { eventBus } from "./core/event-bus.js";
 import { handleAgentLoopReply } from "./core/reply-handler.js";
 import { setDiscordClient, getSubagentThreadBinding } from "./core/subagent-discord-bridge.js";
-import { parseApprovalReply, resolveApproval } from "./core/exec-approval.js";
+import { parseApprovalReply, parseApprovalButtonId, resolveApproval, setApprovalDiscordClient } from "./core/exec-approval.js";
+import { abortRunningTurn } from "./skills/builtin/stop.js";
 
 // ── 訊息去重 ─────────────────────────────────────────────────────────────────
 
@@ -185,6 +186,23 @@ export function createBot(): Client {
   // SUB-5：持久子 agent Discord 通知 + thread 建立用
   client.once("ready", () => {
     setDiscordClient(client);
+    setApprovalDiscordClient(client);
+  });
+
+  // Exec-approval 按鈕互動處理
+  client.on("interactionCreate", (interaction) => {
+    if (!interaction.isButton()) return;
+    const parsed = parseApprovalButtonId(interaction.customId);
+    if (!parsed) return;
+    const found = resolveApproval(parsed.approvalId, parsed.approved);
+    if (found) {
+      void interaction.update({
+        content: parsed.approved
+          ? `✅ 已允許執行（approvalId: ${parsed.approvalId}）`
+          : `❌ 已拒絕執行（approvalId: ${parsed.approvalId}）`,
+        components: [],
+      }).catch(() => {});
+    }
   });
 
   return client;
@@ -548,6 +566,16 @@ async function handleMessage(
         }
       }
 
+      // ── 中途插隊（interruptOnNewMessage）───────────────────────────────
+      // 若此頻道設定了 interruptOnNewMessage=true，新訊息到來時自動 abort 正在執行的 turn
+      if (access.interruptOnNewMessage) {
+        const sessionKey = `discord:ch:${firstMessage.channelId}`;
+        if (abortRunningTurn(sessionKey)) {
+          getPlatformSessionManager().clearQueue(sessionKey);
+          log.debug(`[discord] interruptOnNewMessage：已中斷 turn sessionKey=${sessionKey}`);
+        }
+      }
+
       // ── Ack Reaction：⏳ queued ──────────────────────────────────────────
       void firstMessage.react("⏳").catch(() => { /* 無 permission 時靜默 */ });
 
@@ -576,6 +604,7 @@ async function handleMessage(
             enabled: true,
             dmUserId: config.safety.execApproval.dmUserId,
             timeoutMs: config.safety.execApproval.timeoutMs,
+            allowedPatterns: config.safety.execApproval.allowedPatterns ?? [],
             sendDm: async (dmUserId: string, content: string) => {
               const dmUser = await message.client.users.fetch(dmUserId);
               await dmUser.send(content);

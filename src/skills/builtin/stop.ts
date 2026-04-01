@@ -26,6 +26,23 @@ export function clearTurnAbort(sessionKey: string): void {
   _turnAbortMap.delete(sessionKey);
 }
 
+/** 是否有正在執行的 turn（用於中途插隊判斷） */
+export function hasTurnRunning(sessionKey: string): boolean {
+  return _turnAbortMap.has(sessionKey);
+}
+
+/**
+ * 中途中斷正在執行的 turn（不做 session rollback）。
+ * 用於 interruptOnNewMessage 場景，讓新訊息插隊立刻執行。
+ */
+export function abortRunningTurn(sessionKey: string): boolean {
+  const controller = _turnAbortMap.get(sessionKey);
+  if (!controller) return false;
+  controller.abort();
+  _turnAbortMap.delete(sessionKey);
+  return true;
+}
+
 // ── /stop ────────────────────────────────────────────────────────────────────
 
 export const stopSkill: Skill = {
