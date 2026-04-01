@@ -272,6 +272,12 @@ async function handleMessage(
     return;
   }
 
+  // @here / @everyone 群組廣播過濾
+  if (access.blockGroupMentions && message.mentions.everyone) {
+    log.debug(`[discord] 忽略：群組 mention（@here/@everyone），blockGroupMentions=true`);
+    return;
+  }
+
   // 觸發模式判斷
   let text: string;
 

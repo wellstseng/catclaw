@@ -30,6 +30,8 @@ export interface ChannelConfig {
   boundProject?: string;
   /** 頻道層級 provider 覆寫 */
   provider?: string;
+  /** 封鎖 @here / @everyone 群組廣播觸發（預設由 guild 層級繼承） */
+  blockGroupMentions?: boolean;
 }
 
 export interface GuildConfig {
@@ -38,6 +40,8 @@ export interface GuildConfig {
   allowBot?: boolean;
   allowFrom?: string[];
   channels?: Record<string, ChannelConfig>;
+  /** 封鎖 @here / @everyone 群組廣播觸發（預設 true） */
+  blockGroupMentions?: boolean;
 }
 
 export interface DmConfig {
@@ -504,7 +508,7 @@ function stripJsoncComments(text: string): string {
   return result;
 }
 
-function resolveConfigPath(): string {
+export function resolveConfigPath(): string {
   const dir = process.env.CATCLAW_CONFIG_DIR;
   if (!dir) throw new Error("環境變數 CATCLAW_CONFIG_DIR 未設定，無法定位 catclaw.json");
   return resolve(dir, "catclaw.json");
@@ -781,6 +785,8 @@ export interface ChannelAccess {
   requireMention: boolean;
   allowBot: boolean;
   allowFrom: string[];
+  /** 封鎖 @here / @everyone 群組廣播觸發 */
+  blockGroupMentions: boolean;
   /** 頻道綁定的 provider（undefined = 使用預設） */
   provider?: string;
   /** 頻道綁定的專案（undefined = 無限制） */
@@ -806,16 +812,17 @@ export function getChannelAccess(
       requireMention: false,
       allowBot: false,
       allowFrom: [],
+      blockGroupMentions: false,
     };
   }
 
   if (Object.keys(config.discord.guilds).length === 0) {
-    return { allowed: true, requireMention: true, allowBot: false, allowFrom: [] };
+    return { allowed: true, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true };
   }
 
   const guild = config.discord.guilds[guildId];
   if (!guild) {
-    return { allowed: false, requireMention: true, allowBot: false, allowFrom: [] };
+    return { allowed: false, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true };
   }
 
   const guildDefaults: Required<Omit<ChannelConfig, "boundProject" | "provider">> = {
@@ -823,6 +830,7 @@ export function getChannelAccess(
     requireMention: guild.requireMention ?? true,
     allowBot: guild.allowBot ?? false,
     allowFrom: guild.allowFrom ?? [],
+    blockGroupMentions: guild.blockGroupMentions ?? true,
   };
 
   const channels = guild.channels ?? {};
@@ -830,12 +838,13 @@ export function getChannelAccess(
   const parentCfg = parentId ? channels[parentId] : undefined;
 
   return {
-    allowed:       channelCfg?.allow          ?? parentCfg?.allow          ?? guildDefaults.allow,
-    requireMention: channelCfg?.requireMention ?? parentCfg?.requireMention ?? guildDefaults.requireMention,
-    allowBot:      channelCfg?.allowBot        ?? parentCfg?.allowBot        ?? guildDefaults.allowBot,
-    allowFrom:     channelCfg?.allowFrom       ?? parentCfg?.allowFrom       ?? guildDefaults.allowFrom,
-    provider:      channelCfg?.provider        ?? parentCfg?.provider,
-    boundProject:  channelCfg?.boundProject    ?? parentCfg?.boundProject,
+    allowed:            channelCfg?.allow               ?? parentCfg?.allow               ?? guildDefaults.allow,
+    requireMention:     channelCfg?.requireMention      ?? parentCfg?.requireMention      ?? guildDefaults.requireMention,
+    allowBot:           channelCfg?.allowBot             ?? parentCfg?.allowBot             ?? guildDefaults.allowBot,
+    allowFrom:          channelCfg?.allowFrom            ?? parentCfg?.allowFrom            ?? guildDefaults.allowFrom,
+    blockGroupMentions: channelCfg?.blockGroupMentions   ?? parentCfg?.blockGroupMentions   ?? guildDefaults.blockGroupMentions,
+    provider:           channelCfg?.provider             ?? parentCfg?.provider,
+    boundProject:       channelCfg?.boundProject         ?? parentCfg?.boundProject,
   };
 }
 

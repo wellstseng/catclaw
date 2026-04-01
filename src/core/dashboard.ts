@@ -10,8 +10,38 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync, writeFileSync, readdirSync, unlinkSync, renameSync } from "node:fs";
+import { dirname, basename, join as pathJoin } from "node:path";
 import { log } from "../logger.js";
 import { getTurnAuditLog, type TurnAuditEntry } from "./turn-audit-log.js";
+
+// ── Config 備份 ──────────────────────────────────────────────────────────────
+const BACKUP_KEEP = 5;
+
+function backupConfig(configPath: string): void {
+  const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+  const backupPath = `${configPath}.bak.${ts}`;
+  writeFileSync(backupPath, readFileSync(configPath, "utf-8"), "utf-8");
+  const dir = dirname(configPath);
+  const base = basename(configPath);
+  const old = readdirSync(dir).filter(f => f.startsWith(`${base}.bak.`)).sort().reverse();
+  for (const f of old.slice(BACKUP_KEEP)) {
+    try { unlinkSync(pathJoin(dir, f)); } catch { /* 忽略 */ }
+  }
+}
+
+// ── Config 敏感欄位遮罩 ───────────────────────────────────────────────────────
+const SENSITIVE_KEYS = new Set(["token", "apiKey", "api_key"]);
+function maskConfig(obj: unknown): unknown {
+  if (Array.isArray(obj)) return obj.map(maskConfig);
+  if (obj && typeof obj === "object") {
+    const r: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>))
+      r[k] = SENSITIVE_KEYS.has(k) ? "***" : maskConfig(v);
+    return r;
+  }
+  return obj;
+}
 
 // ── Dashboard HTML ────────────────────────────────────────────────────────────
 
@@ -45,6 +75,10 @@ const HTML = `<!DOCTYPE html>
 <body>
 <h1>🐱 CatClaw Token Dashboard <button class="refresh-btn" onclick="load()">↻ 刷新</button></h1>
 <div class="stats" id="stats"></div>
+<div class="card" id="status-card" style="margin-bottom:16px">
+  <h2>Bot 狀態</h2>
+  <div id="status-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:8px"></div>
+</div>
 <div class="grid">
   <div class="card">
     <h2>每日 Token 用量</h2>
@@ -59,8 +93,68 @@ const HTML = `<!DOCTYPE html>
   <h2>最近 Turns</h2>
   <div id="turns"></div>
 </div>
+<div class="card" style="margin-top:16px">
+  <h2>Config 編輯器
+    <button class="refresh-btn" onclick="loadCfg()" style="float:none;margin-left:8px">↻ 讀取</button>
+    <button class="refresh-btn" onclick="saveCfg()" style="float:none;margin-left:4px;background:#065f46">備份後儲存</button>
+  </h2>
+  <p style="font-size:0.75rem;color:#f59e0b;margin:6px 0">⚠ token 等敏感欄位顯示 ***，儲存前請手動還原實際值</p>
+  <div id="cfg-msg" style="font-size:0.8rem;margin:4px 0"></div>
+  <textarea id="cfg-editor" style="width:100%;height:300px;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:6px;padding:8px;font-family:monospace;font-size:0.8rem;resize:vertical"></textarea>
+</div>
 <script>
 let tokenChart, ceChart;
+
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    document.getElementById('status-grid').innerHTML = [
+      ['Uptime', d.uptimeStr],
+      ['Memory', d.memoryMB + ' MB'],
+      ['Heap', d.heapUsedMB + ' MB'],
+      ['Node', d.nodeVersion],
+      ['PID', d.pid],
+    ].map(([lbl, val]) =>
+      \`<div class="stat"><div class="stat-val" style="font-size:1rem">\${val}</div><div class="stat-lbl">\${lbl}</div></div>\`
+    ).join('');
+  } catch(e) { /* 忽略 */ }
+}
+
+async function loadCfg() {
+  try {
+    const r = await fetch('/api/config');
+    const text = await r.text();
+    document.getElementById('cfg-editor').value = text;
+    document.getElementById('cfg-msg').textContent = '';
+  } catch(e) {
+    document.getElementById('cfg-msg').textContent = '讀取失敗：' + e;
+  }
+}
+
+async function saveCfg() {
+  const body = document.getElementById('cfg-editor').value;
+  try {
+    JSON.parse(body); // 客端先驗
+  } catch(e) {
+    document.getElementById('cfg-msg').textContent = 'JSON 格式錯誤：' + e;
+    return;
+  }
+  try {
+    const r = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body });
+    const d = await r.json();
+    if (d.success) {
+      document.getElementById('cfg-msg').style.color = '#34d399';
+      document.getElementById('cfg-msg').textContent = '✓ 已備份並儲存';
+    } else {
+      document.getElementById('cfg-msg').style.color = '#f87171';
+      document.getElementById('cfg-msg').textContent = '錯誤：' + d.error;
+    }
+  } catch(e) {
+    document.getElementById('cfg-msg').style.color = '#f87171';
+    document.getElementById('cfg-msg').textContent = '儲存失敗：' + e;
+  }
+}
 
 async function load() {
   const r = await fetch('/api/usage');
@@ -124,6 +218,7 @@ async function load() {
 }
 
 load();
+loadStatus();
 </script>
 </body>
 </html>`;
@@ -201,6 +296,66 @@ export class DashboardServer {
         const data = buildApiData(days);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(data));
+        return;
+      }
+
+      const method = req.method ?? "GET";
+
+      // GET /api/status
+      if (url === "/api/status") {
+        const uptime = Math.floor(process.uptime());
+        const mem = process.memoryUsage();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          uptimeSec: uptime,
+          uptimeStr: `${Math.floor(uptime/3600)}h ${Math.floor(uptime%3600/60)}m`,
+          memoryMB: Math.round(mem.rss/1024/1024),
+          heapUsedMB: Math.round(mem.heapUsed/1024/1024),
+          nodeVersion: process.version,
+          pid: process.pid,
+        }));
+        return;
+      }
+
+      // GET /api/config
+      if (url === "/api/config" && method === "GET") {
+        void (async () => {
+          try {
+            const { resolveConfigPath } = await import("./config.js");
+            const raw = JSON.parse(readFileSync(resolveConfigPath(), "utf-8")) as unknown;
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(maskConfig(raw), null, 2));
+          } catch (err) {
+            res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // POST /api/config
+      if (url === "/api/config" && method === "POST") {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        req.on("data", (c: Buffer) => { size += c.length; if (size < 131072) chunks.push(c); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const body = Buffer.concat(chunks).toString("utf-8");
+              const parsed = JSON.parse(body) as Record<string, unknown>;
+              const discord = parsed?.discord as Record<string, unknown> | undefined;
+              if (!discord?.token) throw new Error("缺少必要欄位 discord.token");
+              const { resolveConfigPath } = await import("./config.js");
+              const cp = resolveConfigPath();
+              backupConfig(cp);
+              const tmp = cp + ".tmp";
+              writeFileSync(tmp, JSON.stringify(parsed, null, 2), "utf-8");
+              renameSync(tmp, cp);
+              res.writeHead(200); res.end(JSON.stringify({ success: true }));
+            } catch (err) {
+              res.writeHead(400); res.end(JSON.stringify({ error: String(err) }));
+            }
+          })();
+        });
         return;
       }
 
