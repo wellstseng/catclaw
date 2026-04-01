@@ -375,6 +375,13 @@ export interface BridgeConfig {
   subagents?: SubagentsConfig;
   /** Token Usage Dashboard 設定 */
   dashboard?: { enabled: boolean; port: number };
+  /** Tool 呼叫 token Budget */
+  toolBudget?: {
+    /** 單一工具結果 token 上限（預設 8000，0 = 無限制） */
+    resultTokenCap?: number;
+    /** 每個 turn 所有工具結果合計 token 上限（預設 0 = 無限制） */
+    perTurnTotalCap?: number;
+  };
 }
 
 // ── 環境變數展開 ──────────────────────────────────────────────────────────────
@@ -461,6 +468,7 @@ interface RawConfig {
   homeClaudeCode?: Partial<HomeClaudeCodeConfig>;
   agents?: AgentsConfig;
   dashboard?: { enabled?: boolean; port?: number };
+  toolBudget?: { resultTokenCap?: number; perTurnTotalCap?: number };
 }
 
 // ── 路徑解析 ──────────────────────────────────────────────────────────────────
@@ -762,6 +770,7 @@ function loadConfig(): BridgeConfig {
       enabled: true,
       port: raw.dashboard.port ?? 8088,
     } : undefined,
+    toolBudget: raw.toolBudget,
   };
 }
 

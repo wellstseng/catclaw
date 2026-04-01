@@ -32,6 +32,7 @@ import { registerTurnAbort, clearTurnAbort } from "../skills/builtin/stop.js";
 import type { MemoryEngine } from "../memory/engine.js";
 import { createApproval } from "./exec-approval.js";
 import { getSessionNote, checkAndSaveNote } from "../memory/session-memory.js";
+import { config } from "./config.js";
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,23 @@ function truncateToolResult(text: string, tokenCap: number): string {
   const tail = lines.slice(-20).join("\n");
   const notice = `\n[結果過長已截斷。原始共 ${totalLines} 行 / ${text.length} 字元，顯示前 50 行 + 末 20 行]\n`;
   return head + notice + tail;
+}
+
+/**
+ * 計算工具結果的有效 token cap。
+ * 優先序：per-tool override > per-turn remaining budget > global default
+ */
+function resolveResultTokenCap(
+  perToolCap: number | undefined,
+  turnTokensUsed: number,
+): number {
+  if (perToolCap !== undefined) return perToolCap;
+  const globalDefault = config.toolBudget?.resultTokenCap ?? DEFAULT_RESULT_TOKEN_CAP;
+  const perTurnCap = config.toolBudget?.perTurnTotalCap ?? 0;
+  if (perTurnCap === 0) return globalDefault;
+  const remaining = perTurnCap - turnTokensUsed;
+  if (remaining <= 0) return 50; // budget 耗盡，幾乎截空
+  return Math.min(globalDefault, remaining);
 }
 
 // ── LLM 呼叫重試 + backoff ────────────────────────────────────────────────────
@@ -423,6 +441,7 @@ export async function* agentLoop(
   const turnStartMs = Date.now();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  let turnToolResultTokens = 0; // per-turn 工具結果 token 累計（省 token 用）
 
   eventBus.emit("turn:before", { accountId, channelId, sessionKey, prompt, projectId });
 
@@ -534,7 +553,7 @@ export async function* agentLoop(
           const toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
           const durationMs = Date.now() - t0;
           const rawText = toolResult.error ? `錯誤：${toolResult.error}` : JSON.stringify(toolResult.result ?? null);
-          const tokenCap = toolRegistry.get(call.name)?.resultTokenCap ?? DEFAULT_RESULT_TOKEN_CAP;
+          const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens);
           const resultText = truncateToolResult(rawText, tokenCap);
           events.push({ type: "tool_result", name: call.name, id: call.id, result: toolResult.result, error: toolResult.error });
           return {
@@ -548,6 +567,7 @@ export async function* agentLoop(
         for (const batch of batchResults) {
           for (const evt of batch.events) yield evt;
           toolResults.push(batch.toolResult);
+          turnToolResultTokens += Math.ceil(batch.toolResult.content.length / 4);
           tracker.recordToolCall(batch.toolRecord.name, batch.toolRecord.params, batch.toolRecord.result, batch.toolRecord.error, batch.toolRecord.durationMs);
         }
       }
@@ -638,11 +658,12 @@ export async function* agentLoop(
         const rawResultText = toolResult.error
           ? `錯誤：${toolResult.error}`
           : JSON.stringify(toolResult.result ?? null);
-        const cap = toolRegistry.get(call.name)?.resultTokenCap ?? DEFAULT_RESULT_TOKEN_CAP;
+        const cap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens);
         const resultText = truncateToolResult(rawResultText, cap);
         if (resultText.length < rawResultText.length) {
           log.debug(`[agent-loop] [使用工具] (${call.name}) :: result truncated ${rawResultText.length} → ${resultText.length} chars`);
         }
+        turnToolResultTokens += Math.ceil(resultText.length / 4);
 
         toolResults.push({
           tool_use_id: call.id,
