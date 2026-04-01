@@ -343,10 +343,11 @@ export async function recall(
   }
   const fragments = Array.from(best.values());
 
-  // ── LLM 選擇（fragments > llmSelectMax 時啟用） ──
-  const finalFragments = (opts.llmSelect !== false && fragments.length > (opts.llmSelectMax ?? 5))
+  // ── LLM 選擇（僅 opts.llmSelect === true 時啟用，預設 OFF） ──
+  // fallback ACT-R 排序精度不亞於小模型選擇，且無 LLM 呼叫成本
+  const finalFragments = (opts.llmSelect === true && fragments.length > (opts.llmSelectMax ?? 5))
     ? await llmSelectAtoms(prompt, fragments, opts.llmSelectMax ?? 5)
-    : fragments;
+    : fragments.sort((a, b) => (computeActivation(b.atom) * 0.3 + b.score * 0.7) - (computeActivation(a.atom) * 0.3 + a.score * 0.7)).slice(0, opts.llmSelectMax ?? 10);
 
   // ── C1: touchAtom（recall 命中 → confirmations +1） ──
   for (const f of finalFragments) {

@@ -145,10 +145,15 @@ export function buildContext(
   // ── R8 + R13: Diet + Section-Level 注入，按層填充 ──
   const parts: string[] = [];
   let totalTokens = 0;
+  let unusedBudget = 0;             // 各層未用完的預算，累積後再分配
+  const includedIds = new Set<string>();
 
   for (const layer of ["global", "project", "account"] as MemoryLayer[]) {
     const layerFrags = byLayer[layer];
-    if (!layerFrags.length) continue;
+    if (!layerFrags.length) {
+      unusedBudget += layerBudgets[layer];  // 空層：整層預算流入 overflow
+      continue;
+    }
 
     const layerBudget = layerBudgets[layer];
     let layerTokens = 0;
@@ -177,11 +182,43 @@ export function buildContext(
         layerParts.push(block);
         layerTokens += blockTokens;
       }
+      includedIds.add(frag.id);
     }
+
+    unusedBudget += layerBudgets[layer] - layerTokens;  // 未用完的 → overflow
 
     if (layerParts.length > 0) {
       parts.push(`### ${layer.charAt(0).toUpperCase() + layer.slice(1)} Memory\n${layerParts.join("\n\n")}`);
       totalTokens += layerTokens;
+    }
+  }
+
+  // ── Overflow 填充：空層 / 未填滿的剩餘預算 → 全局最高分未包含 fragment ──
+  if (unusedBudget >= 100) {
+    const overflowParts: string[] = [];
+    let overflowTokens = 0;
+
+    for (const frag of sorted) {
+      if (includedIds.has(frag.id)) continue;
+      if (overflowTokens >= unusedBudget) break;
+
+      const dieted = tokenDiet(frag.atom.content);
+      const remaining = unusedBudget - overflowTokens;
+      const selected = selectSections(dieted, prompt, remaining);
+      const header = `[${frag.id}]`;
+      const block = `${header}\n${selected}`;
+      const blockTokens = estimateTokens(block);
+
+      if (overflowTokens + blockTokens > unusedBudget) break;
+      overflowParts.push(block);
+      overflowTokens += blockTokens;
+      includedIds.add(frag.id);
+    }
+
+    if (overflowParts.length > 0) {
+      parts.push(`### Extended Memory\n${overflowParts.join("\n\n")}`);
+      totalTokens += overflowTokens;
+      log.debug(`[context-builder] overflow: ${overflowParts.length} frags, ${overflowTokens} tokens`);
     }
   }
 
