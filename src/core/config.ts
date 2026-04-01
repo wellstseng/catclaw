@@ -607,7 +607,7 @@ function defaultMemoryConfig(raw: Partial<MemoryConfig> | undefined, workspaceDi
       relatedEdgeSpreading: r.recall?.relatedEdgeSpreading ?? true,
       vectorMinScore: r.recall?.vectorMinScore ?? 0.65,
       vectorTopK: r.recall?.vectorTopK ?? 10,
-      llmSelect: r.recall?.llmSelect ?? true,
+      llmSelect: r.recall?.llmSelect ?? false,
       llmSelectMax: r.recall?.llmSelectMax ?? 5,
     },
     extract: r.extract ?? {
