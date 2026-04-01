@@ -72,6 +72,9 @@ const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** debounce key → 累積中的訊息行 */
 const debounceBuffers = new Map<string, string[]>();
 
+/** debounce key → 累積中的圖片附件 */
+const debounceImages = new Map<string, Array<{ data: string; mimeType: string; name: string }>>();
+
 /** debounce key → 觸發 debounce 的第一則訊息（用於 reply） */
 const debounceMessages = new Map<string, Message>();
 
@@ -82,14 +85,16 @@ const debounceMessages = new Map<string, Message>();
  *
  * @param message Discord 訊息物件
  * @param text strip 後的訊息文字
+ * @param images 此訊息的圖片附件
  * @param config 全域設定
- * @param onFire 合併完成後的回呼，接收合併後文字 + 第一則訊息
+ * @param onFire 合併完成後的回呼，接收合併後文字 + 圖片 + 第一則訊息
  */
 function debounce(
   message: Message,
   text: string,
+  images: Array<{ data: string; mimeType: string; name: string }>,
   config: BridgeConfig,
-  onFire: (combinedText: string, firstMessage: Message) => void
+  onFire: (combinedText: string, firstMessage: Message, allImages: typeof images) => void
 ): void {
   // key 以 channelId:authorId 區分，避免不同人的訊息互相干擾
   const key = `${message.channelId}:${message.author.id}`;
@@ -103,6 +108,11 @@ function debounce(
   lines.push(text);
   debounceBuffers.set(key, lines);
 
+  // 累積圖片附件
+  const imgs = debounceImages.get(key) ?? [];
+  imgs.push(...images);
+  debounceImages.set(key, imgs);
+
   // 記錄第一則訊息（用於 reply）
   if (!debounceMessages.has(key)) {
     debounceMessages.set(key, message);
@@ -112,13 +122,15 @@ function debounce(
   const timer = setTimeout(() => {
     const combinedText = (debounceBuffers.get(key) ?? []).join("\n");
     const firstMessage = debounceMessages.get(key) ?? message;
+    const allImages = debounceImages.get(key) ?? [];
 
     // 清理狀態
     debounceTimers.delete(key);
     debounceBuffers.delete(key);
+    debounceImages.delete(key);
     debounceMessages.delete(key);
 
-    onFire(combinedText, firstMessage);
+    onFire(combinedText, firstMessage, allImages);
   }, config.debounceMs);
 
   debounceTimers.set(key, timer);
@@ -129,33 +141,60 @@ function debounce(
 /** 附件暫存根目錄 */
 const UPLOAD_DIR = join(tmpdir(), "claude-discord-uploads");
 
-/**
- * 下載 Discord 訊息中的附件到暫存目錄
- * @param message Discord 訊息物件
- * @returns 已下載檔案的本地路徑陣列（空陣列 = 無附件）
- */
-async function downloadAttachments(message: Message): Promise<string[]> {
-  if (message.attachments.size === 0) return [];
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
-  // 每則訊息一個子目錄，避免檔名衝突
+function guessImageMime(name: string): string | null {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  const map: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
+  return map[ext] ?? null;
+}
+
+interface AttachmentResult {
+  /** 非圖片附件的本地路徑 */
+  filePaths: string[];
+  /** 圖片附件（base64 + mimeType）*/
+  images: Array<{ data: string; mimeType: string; name: string }>;
+}
+
+/**
+ * 下載 Discord 訊息中的附件到暫存目錄；圖片以 base64 形式返回供直接傳入 LLM。
+ */
+async function downloadAttachments(message: Message): Promise<AttachmentResult> {
+  if (message.attachments.size === 0) return { filePaths: [], images: [] };
+
   const dir = join(UPLOAD_DIR, message.id);
   await mkdir(dir, { recursive: true });
 
-  const paths: string[] = [];
+  const filePaths: string[] = [];
+  const images: AttachmentResult["images"] = [];
+
   for (const [, att] of message.attachments) {
     try {
       const res = await fetch(att.url);
       const buffer = Buffer.from(await res.arrayBuffer());
       const fileName = att.name ?? "file";
-      const filePath = join(dir, fileName);
-      await writeFile(filePath, buffer);
-      paths.push(filePath);
-      log.debug(`[discord] 附件下載：${fileName} (${buffer.length} bytes) → ${filePath}`);
+
+      // 判斷是否為圖片
+      const contentType = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+      const isImage = IMAGE_MIME_TYPES.has(contentType)
+        || IMAGE_EXTS.has(fileName.slice(fileName.lastIndexOf(".")).toLowerCase());
+      const mimeType = IMAGE_MIME_TYPES.has(contentType) ? contentType : (guessImageMime(fileName) ?? contentType);
+
+      if (isImage && mimeType) {
+        images.push({ data: buffer.toString("base64"), mimeType, name: fileName });
+        log.debug(`[discord] 圖片附件（vision）：${fileName} (${buffer.length} bytes)`);
+      } else {
+        const filePath = join(dir, fileName);
+        await writeFile(filePath, buffer);
+        filePaths.push(filePath);
+        log.debug(`[discord] 附件下載：${fileName} (${buffer.length} bytes) → ${filePath}`);
+      }
     } catch (err) {
       log.warn(`[discord] 附件下載失敗：${att.name ?? att.url} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return paths;
+  return { filePaths, images };
 }
 
 // ── Discord Client 建立 ──────────────────────────────────────────────────────
@@ -335,15 +374,19 @@ async function handleMessage(
     text = message.content.trim();
   }
 
-  // 下載附件（圖片、檔案等），路徑嵌入 prompt 讓 Claude 可存取
-  const attachmentPaths = await downloadAttachments(message);
+  // 下載附件（圖片直接 base64，非圖片存磁碟讓 Claude 用 read_file 讀取）
+  const { filePaths: attachmentPaths, images: imageAttachments } = await downloadAttachments(message);
   if (attachmentPaths.length > 0) {
     const fileList = attachmentPaths.map((p) => `- ${p}`).join("\n");
-    text += `\n\n[使用者附件，請用 Read 工具讀取]\n${fileList}`;
+    text += `\n\n[使用者附件，請用 read_file 工具讀取]\n${fileList}`;
+  }
+  if (imageAttachments.length > 0) {
+    const imgNote = imageAttachments.map(i => i.name).join(", ");
+    text += text ? `\n\n[使用者上傳圖片：${imgNote}]` : `[使用者上傳圖片：${imgNote}]`;
   }
 
   // 訊息為空（只有 mention 沒有文字，且無附件）→ 忽略
-  if (!text) {
+  if (!text && imageAttachments.length === 0) {
     log.debug("[discord] 忽略：文字為空");
     return;
   }
@@ -351,7 +394,7 @@ async function handleMessage(
   log.debug(`[discord] 通過過濾，text="${text.slice(0, 80)}" → 進入 debounce`);
 
   // Debounce：合併短時間內同一人的多則訊息
-  debounce(message, text, config, (combinedText, firstMessage) => { void (async () => {
+  debounce(message, text, imageAttachments, config, (combinedText, firstMessage, allImages) => { void (async () => {
     // 生成 turn_id，串聯 user input + AI response
     const turnId = randomUUID();
 
@@ -611,6 +654,7 @@ async function handleMessage(
             },
           },
         } : {}),
+        ...(allImages.length > 0 ? { imageAttachments: allImages } : {}),
       }, {
         sessionManager: getPlatformSessionManager(),
         permissionGate: getPlatformPermissionGate(),

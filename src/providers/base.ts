@@ -34,7 +34,16 @@ export interface TextBlock {
   text: string;
 }
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+/** Image content block（vision input） */
+export interface ImageBlock {
+  type: "image";
+  /** base64-encoded image data */
+  data: string;
+  /** MIME type, e.g. "image/png", "image/jpeg", "image/gif", "image/webp" */
+  mimeType: string;
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ImageBlock;
 
 export interface Message {
   role: MessageRole;

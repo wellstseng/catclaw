@@ -64,9 +64,10 @@ function toPiMessages(messages: Message[]): PiMessage[] {
         // 純文字 user 訊息
         result.push({ role: "user", content: msg.content, timestamp: 0 } satisfies UserMessage);
       } else {
-        // 有 content blocks：分離 tool_result 和文字
+        // 有 content blocks：分離 tool_result、文字、圖片
         const toolResults = msg.content.filter(b => b.type === "tool_result");
-        const textBlocks = msg.content.filter(b => b.type === "text");
+        const textBlocks  = msg.content.filter(b => b.type === "text");
+        const imageBlocks = msg.content.filter(b => b.type === "image");
 
         for (const b of toolResults) {
           if (b.type !== "tool_result") continue;
@@ -79,9 +80,20 @@ function toPiMessages(messages: Message[]): PiMessage[] {
             timestamp: 0,
           } satisfies ToolResultMessage);
         }
-        if (textBlocks.length > 0) {
-          const text = textBlocks.map(b => b.type === "text" ? b.text : "").join("\n");
-          result.push({ role: "user", content: text, timestamp: 0 } satisfies UserMessage);
+        // 文字 + 圖片合併為一條 user 訊息
+        if (textBlocks.length > 0 || imageBlocks.length > 0) {
+          type PiUserContent = string | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
+          const parts: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
+          for (const b of textBlocks) {
+            if (b.type === "text") parts.push({ type: "text", text: b.text });
+          }
+          for (const b of imageBlocks) {
+            if (b.type === "image") parts.push({ type: "image", data: b.data, mimeType: b.mimeType });
+          }
+          const content: PiUserContent = parts.length === 1 && parts[0]!.type === "text"
+            ? parts[0]!.text
+            : parts;
+          result.push({ role: "user", content, timestamp: 0 } as UserMessage);
         }
       }
     } else if (msg.role === "assistant") {

@@ -22,7 +22,7 @@ import { loadSessions, scanAndCleanActiveTurns } from "./session.js";
 import { startCron, stopCron } from "./cron.js";
 import { setupSlashCommands, registerSlashCommands } from "./slash.js";
 import { initHistory } from "./history.js";
-import { loadBuiltinSkills, loadPromptSkills } from "./skills/registry.js";
+import { loadBuiltinSkills, loadPromptSkills, loadExternalSkills, loadExternalPromptSkills } from "./skills/registry.js";
 import { initPlatform } from "./core/platform.js";
 import type { BridgeConfig as CoreBridgeConfig } from "./core/config.js";
 import { parseAgentArg, loadAgentConfig } from "./core/agent-loader.js";
@@ -78,6 +78,14 @@ void loadBuiltinSkills();
 
 // 載入 Prompt-type skill（同步，注入 system prompt 用）
 loadPromptSkills();
+
+// 載入外部 skill 目錄（使用者自訂 skill，預設 ~/.catclaw/skills/）
+{
+  const catclawDir = resolveCatclawDir();
+  const externalSkillsDir = join(catclawDir, "skills");
+  void loadExternalSkills(externalSkillsDir);
+  loadExternalPromptSkills(externalSkillsDir);
+}
 
 // ── 啟動 ─────────────────────────────────────────────────────────────────────
 

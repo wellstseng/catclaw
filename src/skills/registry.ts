@@ -39,6 +39,52 @@ export function registerSkill(skill: Skill): void {
 }
 
 /**
+ * 從外部目錄載入 command-type skills（.js 檔）。
+ * 適合使用者自訂 skill 目錄（如 ~/.catclaw/skills/）。
+ */
+export async function loadExternalSkills(dir: string): Promise<void> {
+  if (!existsSync(dir)) {
+    log.debug(`[skills] 外部 skill 目錄不存在，跳過：${dir}`);
+    return;
+  }
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".js"));
+  } catch {
+    log.warn(`[skills] 外部 skill 目錄無法讀取：${dir}`);
+    return;
+  }
+  let count = 0;
+  for (const file of files) {
+    try {
+      const mod = (await import(pathToFileURL(join(dir, file)).href)) as { skill?: Skill; skills?: Skill[] };
+      if (mod.skill) { registerSkill(mod.skill); count++; }
+      if (mod.skills) { mod.skills.forEach(s => { registerSkill(s); count++; }); }
+    } catch (err) {
+      log.warn(`[skills] 外部 skill 載入失敗：${file} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (count > 0) log.info(`[skills] 外部 skill 目錄 ${dir}：載入 ${count} 個`);
+}
+
+/**
+ * 從外部目錄載入 prompt-type skills（SKILL.md）。
+ * 適合使用者自訂 skill 目錄（如 ~/.catclaw/skills/）。
+ */
+export function loadExternalPromptSkills(dir: string): void {
+  if (!existsSync(dir)) {
+    log.debug(`[skills] 外部 prompt skill 目錄不存在，跳過：${dir}`);
+    return;
+  }
+  const found = scanSkillMd(dir);
+  for (const { name, filePath, content } of found) {
+    promptSkills.push({ name, description: extractDescription(content), filePath });
+    log.info(`[skills] 外部 Prompt-type 載入：${name}`);
+  }
+  if (found.length > 0) log.info(`[skills] 外部 prompt skill 目錄 ${dir}：載入 ${found.length} 個`);
+}
+
+/**
  * 比對輸入文字，回傳匹配的 skill + 剩餘 args
  * 無匹配回傳 null
  */

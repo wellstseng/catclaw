@@ -16,7 +16,7 @@
 
 import { log } from "../logger.js";
 import { makeToolResultMessage } from "../providers/base.js";
-import type { LLMProvider, Message, ProviderEvent } from "../providers/base.js";
+import type { LLMProvider, Message, ProviderEvent, ImageBlock, ContentBlock } from "../providers/base.js";
 import type { SessionManager } from "./session.js";
 import type { PermissionGate } from "../accounts/permission-gate.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -166,6 +166,11 @@ export interface AgentLoopOpts {
    * 注入到 ToolContext.parentRunId，讓子 agent 呼叫 spawn_subagent 時能建立 parentId 關聯。
    */
   parentRunId?: string;
+  /**
+   * 圖片附件（來自 Discord 訊息）。
+   * 直接作為 image content blocks 加入第一條 user 訊息，讓 LLM 可直接「看」圖。
+   */
+  imageAttachments?: Array<{ data: string; mimeType: string; name: string }>;
   /**
    * 執行指令前 DM 確認設定。
    * 啟用時，run_command 執行前會送 DM 給指定使用者等待確認。
@@ -388,9 +393,19 @@ export async function* agentLoop(
     return;
   }
 
+  // 若有圖片附件，建立混合 content blocks（文字 + 圖片）
+  const firstUserContent: string | ContentBlock[] = (() => {
+    if (!opts.imageAttachments?.length) return prompt;
+    const blocks: ContentBlock[] = [{ type: "text", text: prompt }];
+    for (const img of opts.imageAttachments) {
+      blocks.push({ type: "image", data: img.data, mimeType: img.mimeType } satisfies ImageBlock);
+    }
+    return blocks;
+  })();
+
   const messages: Message[] = [
     ...processedHistory,
-    { role: "user", content: prompt },
+    { role: "user", content: firstUserContent },
   ];
 
   // ── 3. Tool list（物理過濾）─────────────────────────────────────────────────
