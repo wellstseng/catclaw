@@ -88,10 +88,11 @@ export const queueSkill: Skill = {
     }
 
     if (args.trim().toLowerCase() === "clear") {
-      // 清空排隊（從 session manager 找 queue）
-      // SessionManager 沒有對外暴露 clear queue API，需在此呼叫 dequeueTurn 直到空
-      // 目前設計中 queue 不支援外部 clear，回傳提示
-      return { text: "ℹ️ 目前 queue clear 功能待實作（需 SessionManager.clearQueue API）。" };
+      const count = sessionManager.clearQueue(session.sessionKey);
+      return { text: count > 0
+        ? `✅ 已取消 ${count} 條排隊中的 turn。`
+        : "ℹ️ 目前沒有等待中的 turn。"
+      };
     }
 
     const depth = sessionManager.getQueueDepth(session.sessionKey);

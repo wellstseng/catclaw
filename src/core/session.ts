@@ -235,6 +235,26 @@ export class SessionManager {
     return this.queues.get(sessionKey)?.length ?? 0;
   }
 
+  /**
+   * 清除 sessionKey 的等待佇列（保留正在執行的 position=0）
+   * 回傳被取消的 turn 數量
+   */
+  clearQueue(sessionKey: string): number {
+    const queue = this.queues.get(sessionKey);
+    if (!queue || queue.length <= 1) return 0;
+
+    const waiting = queue.splice(1); // 移除 position 1+，留下正在執行的 0
+    let count = 0;
+    for (const entry of waiting) {
+      const timeoutId = (entry as unknown as Record<string, unknown>)["_timeoutId"];
+      if (timeoutId) clearTimeout(timeoutId as ReturnType<typeof setTimeout>);
+      entry.reject(new Error("CANCELLED: queue cleared by /stop clear"));
+      count++;
+    }
+    log.debug(`[session] clearQueue ${sessionKey}：已取消 ${count} 條排隊`);
+    return count;
+  }
+
   // ── 持久化 ────────────────────────────────────────────────────────────────────
 
   private sessionPath(sessionKey: string): string {
