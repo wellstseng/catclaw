@@ -105,6 +105,7 @@ export const tool: Tool = {
     "若不確定欄位名稱，先用 config_get 查看當前 config 結構。",
   ].join(" "),
   tier: "admin",
+  resultTokenCap: 200,
   parameters: {
     type: "object",
     properties: {

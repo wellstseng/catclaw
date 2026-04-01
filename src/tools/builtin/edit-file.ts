@@ -15,6 +15,7 @@ export const tool: Tool = {
   name: "edit_file",
   description: "對已存在的檔案進行精確字串替換。replace_all=false 時 old_string 必須唯一；true 時替換所有出現。",
   tier: "elevated",
+  resultTokenCap: 200,
   parameters: {
     type: "object",
     properties: {

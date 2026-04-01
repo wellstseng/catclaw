@@ -13,6 +13,7 @@ export const tool: Tool = {
   name: "read_file",
   description: "讀取檔案內容",
   tier: "elevated",
+  resultTokenCap: 4000,
   parameters: {
     type: "object",
     properties: {

@@ -14,6 +14,7 @@ export const tool: Tool = {
   name: "subagents",
   description: "管理子 agent：list（列出）/ kill（終止）/ steer（轉向）/ wait（等待完成）/ status（查詢狀態）/ resume（喚醒已結束的持久 session）",
   tier: "standard",
+  resultTokenCap: 500,
   parameters: {
     type: "object",
     properties: {

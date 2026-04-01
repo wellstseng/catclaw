@@ -47,6 +47,7 @@ export const tool: Tool = {
     "範例：path=\"memory.recall\" 回傳 recall 區塊；path=\"discord.guilds\" 回傳所有 guild 設定。",
   ].join(" "),
   tier: "admin",
+  resultTokenCap: 1000,
   parameters: {
     type: "object",
     properties: {

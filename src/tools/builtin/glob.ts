@@ -70,6 +70,7 @@ export const tool: Tool = {
   name: "glob",
   description: "按 glob 模式搜尋檔案路徑。支援 **、*、?、{a,b}。結果按修改時間降序排列，上限 1000 筆。",
   tier: "elevated",
+  resultTokenCap: 500,
   parameters: {
     type: "object",
     properties: {

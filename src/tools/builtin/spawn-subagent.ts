@@ -244,6 +244,7 @@ export const tool: Tool = {
 - async:true：立即回傳 runId，子 agent 背景執行，完成時推送 Discord 通知。
 多個任務可同時呼叫（同一輪並行執行，時間 = max(A,B)）。`,
   tier: "standard",
+  resultTokenCap: 4000,
   parameters: {
     type: "object",
     properties: {

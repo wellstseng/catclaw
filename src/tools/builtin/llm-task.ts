@@ -15,6 +15,7 @@ export const tool: Tool = {
   description: `單次 LLM 呼叫，回傳 JSON 結構化結果。
 不使用 tools、不累積 session，比 spawn_subagent 更輕量。
 適合：分類、評分、摘要、條件判斷、結構化資料抽取。`,
+  resultTokenCap: 2000,
   tier: "standard",
   parameters: {
     type: "object",

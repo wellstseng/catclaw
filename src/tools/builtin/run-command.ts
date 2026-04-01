@@ -19,6 +19,7 @@ export const tool: Tool = {
   name: "run_command",
   description: "在 shell 執行指令並取得輸出",
   tier: "elevated",
+  resultTokenCap: 3000,
   parameters: {
     type: "object",
     properties: {

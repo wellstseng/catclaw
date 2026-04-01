@@ -14,6 +14,7 @@ export const tool: Tool = {
   name: "write_file",
   description: "寫入或覆蓋檔案內容。若目錄不存在會自動建立。",
   tier: "elevated",
+  resultTokenCap: 200,
   parameters: {
     type: "object",
     properties: {
