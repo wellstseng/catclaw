@@ -21,6 +21,7 @@ Discord 收訊 → claude -p stream-json → 串流回覆 Discord。
 | [PLAN.md](PLAN.md) | 初始實作計畫（已完成） | 2026-03-18 |
 | [PLAN-V3.md](PLAN-V3.md) | V3 計畫書：Subagent 編排（spawn/registry/管理 skill） | 2026-03-27 |
 | [_CHANGELOG.md](_CHANGELOG.md) | 知識庫變更紀錄 | 2026-03-22 |
+| [AI-Human-Collaboration-Guide.md](AI-Human-Collaboration-Guide.md) | AI 自主開發實驗完整紀錄 + 團隊 AI-Human 協作教程指南 | 2026-04-02 |
 
 ### modules/ — 模組詳細說明
 
