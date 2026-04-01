@@ -228,6 +228,8 @@ export class BudgetGuardStrategy implements ContextStrategy {
     this.enabled = this.cfg.enabled;
   }
 
+  get contextWindowTokens(): number { return this.cfg.contextWindowTokens; }
+
   shouldApply(ctx: ContextBuildContext): boolean {
     if (!this.enabled) return false;
     const threshold = this.cfg.contextWindowTokens * this.cfg.maxUtilization;
@@ -351,6 +353,12 @@ export class ContextEngine {
 
   getStrategy(name: string): ContextStrategy | undefined {
     return this.strategies.get(name);
+  }
+
+  /** 取得 BudgetGuard 設定的 context window 大小（供 nudge 計算用） */
+  getContextWindowTokens(): number {
+    const bg = this.strategies.get("budget-guard") as BudgetGuardStrategy | undefined;
+    return bg?.contextWindowTokens ?? 100_000;
   }
 
   async build(messages: Message[], opts: BuildOpts): Promise<Message[]> {

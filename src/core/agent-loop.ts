@@ -367,6 +367,24 @@ export async function* agentLoop(
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${isolation}` : isolation;
   }
 
+  // ── 4b. Token Budget Nudge（參考 Claude Code tokenBudget.ts）────────────────
+  // 當 context 使用率超過 60%，主動提示 LLM 簡潔回應；超過 70% 加強提示
+  if (contextEngine) {
+    const estimatedTokens = contextEngine.lastBuildBreakdown.estimatedTokens;
+    const windowTokens = contextEngine.getContextWindowTokens();
+    const ratio = windowTokens > 0 ? estimatedTokens / windowTokens : 0;
+    let nudge = "";
+    if (ratio >= 0.70) {
+      nudge = `【Context 已用 ${Math.round(ratio * 100)}%，接近上限】請儘量簡短回應，避免冗長說明。`;
+    } else if (ratio >= 0.60) {
+      nudge = `【Context 使用 ${Math.round(ratio * 100)}%】請保持回應簡潔。`;
+    }
+    if (nudge) {
+      systemPrompt = systemPrompt ? `${systemPrompt}\n\n${nudge}` : nudge;
+      log.debug(`[agent-loop] token-budget-nudge ratio=${ratio.toFixed(2)} appended`);
+    }
+  }
+
   // ── 5. Turn abort signal ───────────────────────────────────────────────────
   const controller = new AbortController();
   if (opts.signal) {
