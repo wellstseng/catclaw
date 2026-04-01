@@ -248,7 +248,7 @@ type BeforeToolResult =
 
 function runBeforeToolCall(
   call: { id: string; name: string; params: Record<string, unknown> },
-  ctx: { accountId: string; recentCalls: ToolCallRecord[] },
+  ctx: { accountId: string; role?: string; recentCalls: ToolCallRecord[] },
   permissionGate: PermissionGate,
   safetyGuard: SafetyGuard,
 ): BeforeToolResult {
@@ -256,8 +256,8 @@ function runBeforeToolCall(
   const perm = permissionGate.check(ctx.accountId, call.name);
   if (!perm.allowed) return { blocked: true, reason: perm.reason ?? "權限不足" };
 
-  // 2. Safety Guard
-  const guard = safetyGuard.check(call.name, call.params);
+  // 2. Safety Guard（含 per-role/per-account 工具權限規則）
+  const guard = safetyGuard.check(call.name, call.params, { accountId: ctx.accountId, role: ctx.role });
   if (guard.blocked) return { blocked: true, reason: guard.reason ?? "安全規則阻擋" };
 
   // 3. Tool Loop Detection（同一 tool 連續 5 次）
@@ -516,7 +516,7 @@ export async function* agentLoop(
           const events: SpawnEvent[] = [];
           const hookResult = runBeforeToolCall(
             { id: call.id, name: call.name, params },
-            { accountId, recentCalls: tracker.toolCalls },
+            { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls },
             permissionGate, safetyGuard,
           );
           if (hookResult.blocked) {
@@ -568,7 +568,7 @@ export async function* agentLoop(
         // before_tool_call
         const hookResult = runBeforeToolCall(
           { id: call.id, name: call.name, params },
-          { accountId, recentCalls: tracker.toolCalls },
+          { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls },
           permissionGate,
           safetyGuard,
         );

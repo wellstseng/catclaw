@@ -41,6 +41,8 @@ export interface Atom {
   scope: AtomScope;
   /** 觸發關鍵詞列表 */
   triggers: string[];
+  /** 建立時間（Unix ms，用於 ACT-R activation 計算） */
+  createdAt?: number;
   /** 最後使用日期（YYYY-MM-DD） */
   lastUsed?: string;
   /** 確認次數 */
@@ -64,6 +66,7 @@ function parseAtomMetadata(raw: string): {
   confidence: AtomConfidence;
   scope: AtomScope;
   triggers: string[];
+  createdAt?: number;
   lastUsed?: string;
   confirmations: number;
   related: string[];
@@ -74,6 +77,7 @@ function parseAtomMetadata(raw: string): {
   let confidence: AtomConfidence = "[臨]";
   let scope: AtomScope = "global";
   let triggers: string[] = [];
+  let createdAt: number | undefined;
   let lastUsed: string | undefined;
   let confirmations = 0;
   let related: string[] = [];
@@ -94,6 +98,7 @@ function parseAtomMetadata(raw: string): {
       case "trigger":
       case "triggers":
         triggers = val.split(",").map(s => s.trim()).filter(Boolean); break;
+      case "created-at":   createdAt = parseInt(val.trim(), 10) || undefined; break;
       case "last-used":    lastUsed = val.trim(); break;
       case "confirmations": confirmations = parseInt(val.trim(), 10) || 0; break;
       case "related":
@@ -101,7 +106,7 @@ function parseAtomMetadata(raw: string): {
     }
   }
 
-  return { description, confidence, scope, triggers, lastUsed, confirmations, related, content };
+  return { description, confidence, scope, triggers, createdAt, lastUsed, confirmations, related, content };
 }
 
 // ── 公開 API ─────────────────────────────────────────────────────────────────
@@ -201,6 +206,7 @@ export function writeAtom(dir: string, name: string, opts: {
     `- Scope: ${opts.scope ?? "global"}`,
     `- Confidence: ${opts.confidence ?? "[臨]"}`,
     ...(opts.triggers?.length ? [`- Trigger: ${opts.triggers.join(", ")}`] : []),
+    `- Created-at: ${Date.now()}`,
     `- Last-used: ${today}`,
     `- Confirmations: 0`,
     ...(opts.related?.length ? [`- Related: ${opts.related.join(", ")}`] : []),
@@ -247,4 +253,44 @@ export function writeAtom(dir: string, name: string, opts: {
   }).catch(() => { /* 動態 import 失敗，略過 */ });
 
   return filePath;
+}
+
+// ── ACT-R Activation ──────────────────────────────────────────────────────────
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * 近似 ACT-R base-level activation：B(i) = ln(Σ t_k^{-d})
+ *
+ * 假設 n 次存取均勻分布在 createdAt～lastUsed 之間。
+ * 若無 createdAt，降級為 ln(n * t_last^{-d})（與舊公式相容）。
+ *
+ * @param d 衰減指數（預設 0.5）
+ */
+export function computeActivation(atom: Atom, d = 0.5): number {
+  const n = Math.max(1, atom.confirmations);
+  const nowMs = Date.now();
+
+  const lastMs = atom.lastUsed
+    ? new Date(atom.lastUsed).getTime()
+    : (atom.createdAt ?? nowMs);
+  const tLastDays = Math.max(0.1, (nowMs - lastMs) / MS_PER_DAY);
+
+  // 降級：無 createdAt 或只有 1 次存取 → 舊公式
+  if (!atom.createdAt || n <= 1) {
+    return Math.log(n * Math.pow(tLastDays, -d));
+  }
+
+  // 均勻分布：n 次存取散布在 [createdAt, lastUsed] 區間
+  const tCreatedDays = Math.max(0.1, (nowMs - atom.createdAt) / MS_PER_DAY);
+  const spanDays = Math.max(0, tCreatedDays - tLastDays);
+  const spacing = spanDays / (n - 1);
+
+  let sum = 0;
+  for (let k = 0; k < n; k++) {
+    const t = Math.max(0.1, tLastDays + k * spacing);
+    sum += Math.pow(t, -d);
+  }
+
+  return Math.log(Math.max(Number.EPSILON, sum));
 }

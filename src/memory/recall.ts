@@ -12,7 +12,7 @@
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { log } from "../logger.js";
-import { readAtom, touchAtom, type Atom } from "./atom.js";
+import { readAtom, touchAtom, computeActivation, type Atom } from "./atom.js";
 import { loadIndex, matchTriggers } from "./index-manager.js";
 import { embedOne } from "../vector/embedding.js";
 
@@ -260,8 +260,10 @@ async function llmSelectAtoms(
     log.debug(`[recall] LLM 選擇：${fragments.length} → ${selected.length} atoms`);
     return selected;
   } catch (err) {
-    log.debug(`[recall] LLM 選擇失敗，fallback score 排序：${err instanceof Error ? err.message : String(err)}`);
-    return fragments.sort((a, b) => b.score - a.score).slice(0, maxSelect);
+    log.debug(`[recall] LLM 選擇失敗，fallback ACT-R 排序：${err instanceof Error ? err.message : String(err)}`);
+    return fragments
+      .sort((a, b) => (computeActivation(b.atom) * 0.3 + b.score * 0.7) - (computeActivation(a.atom) * 0.3 + a.score * 0.7))
+      .slice(0, maxSelect);
   }
 }
 

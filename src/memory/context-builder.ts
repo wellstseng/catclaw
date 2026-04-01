@@ -10,6 +10,7 @@
 
 import { log } from "../logger.js";
 import type { AtomFragment, MemoryLayer } from "./recall.js";
+import { computeActivation } from "./atom.js";
 
 // ── Token 估算 ────────────────────────────────────────────────────────────────
 
@@ -25,23 +26,9 @@ export function estimateTokens(text: string): number {
 
 // ── ACT-R ─────────────────────────────────────────────────────────────────────
 
-/**
- * 近似 ACT-R activation：B ≈ ln(max(1, confirmations) * max(0.1, days)^{-0.5})
- * 越近期 + 使用次數越多 → 分數越高
- */
+/** ACT-R activation（0.3）+ 相似度（0.7）加權組合分數 */
 function actRScore(frag: AtomFragment): number {
-  const { atom, score } = frag;
-  const confirmations = Math.max(1, atom.confirmations);
-
-  let days = 30; // 預設 30 天前
-  if (atom.lastUsed) {
-    const ms = Date.now() - new Date(atom.lastUsed).getTime();
-    days = Math.max(0.1, ms / (1000 * 60 * 60 * 24));
-  }
-
-  const actR = Math.log(confirmations * Math.pow(days, -0.5));
-  // 與原始相似度分數加權
-  return actR * 0.3 + score * 0.7;
+  return computeActivation(frag.atom) * 0.3 + frag.score * 0.7;
 }
 
 // ── Token Diet ────────────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@
 import { log } from "../logger.js";
 import type { LLMProvider } from "./base.js";
 import type { ProviderEntry, ProviderRoutingConfig } from "../core/config.js";
+import { buildFailoverProvider } from "./failover-provider.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,22 @@ export async function buildProviderRegistry(
     }
 
     if (provider) registry.register(provider);
+  }
+
+  // Failover 鏈：自動建立 id="failover" 的 FailoverProvider
+  const failoverChain = routing.failoverChain;
+  if (failoverChain && failoverChain.length > 0) {
+    const chainProviders: LLMProvider[] = [];
+    for (const id of failoverChain) {
+      const p = registry.get(id);
+      if (p) chainProviders.push(p);
+      else log.warn(`[provider-registry] failoverChain 中找不到 provider: ${id}，已略過`);
+    }
+    if (chainProviders.length > 0) {
+      const failover = buildFailoverProvider("failover", chainProviders, routing.circuitBreaker);
+      registry.register(failover);
+      log.info(`[provider-registry] 已建立 failover 鏈：${chainProviders.map(p => p.id).join("→")}`);
+    }
   }
 
   return registry;

@@ -139,6 +139,14 @@ export interface ProviderRoutingConfig {
   roles?: Record<string, string>;
   /** projectId → providerId */
   projects?: Record<string, string>;
+  /** Failover 鏈（provider ID 清單，依序嘗試）→ 自動產生 id="failover" 的 FailoverProvider */
+  failoverChain?: string[];
+  /** Circuit Breaker 設定（failoverChain 存在時生效） */
+  circuitBreaker?: {
+    errorThreshold?: number;
+    windowMs?: number;
+    cooldownMs?: number;
+  };
 }
 
 /** Session 持久化設定 */
@@ -205,6 +213,22 @@ export interface OllamaConfig {
   timeout: number;
 }
 
+/** 單條工具權限規則 */
+export interface ToolPermissionRule {
+  /** 套用對象值（role 名稱或 accountId） */
+  subject: string;
+  /** 對象類型 */
+  subjectType: "role" | "account";
+  /** 工具名稱（支援 * 萬用符，例如 "write_*" 或 "*"） */
+  tool: string;
+  /** allow = 明確允許，deny = 明確拒絕 */
+  effect: "allow" | "deny";
+  /** 可選：參數條件（params[key] 必須符合 value 正則） */
+  paramMatch?: Record<string, string>;
+  /** deny 時的說明訊息（顯示給使用者） */
+  reason?: string;
+}
+
 /** 安全設定 */
 export interface SafetyConfig {
   enabled: boolean;
@@ -222,6 +246,13 @@ export interface SafetyConfig {
     dmUserId: string;
     /** 等待回覆超時毫秒（預設 60000） */
     timeoutMs?: number;
+  };
+  /** 細粒度工具權限規則（per-role / per-account） */
+  toolPermissions?: {
+    /** 規則清單（先匹配先套用） */
+    rules?: ToolPermissionRule[];
+    /** 無規則匹配時的預設行為（預設 true = 允許） */
+    defaultAllow?: boolean;
   };
 }
 
@@ -412,6 +443,8 @@ interface RawConfig {
     channels?: Record<string, string>;
     roles?: Record<string, string>;
     projects?: Record<string, string>;
+    failoverChain?: string[];
+    circuitBreaker?: { errorThreshold?: number; windowMs?: number; cooldownMs?: number };
   };
   session?: {
     ttlHours?: number;
@@ -672,6 +705,8 @@ function loadConfig(): BridgeConfig {
       channels: raw.providerRouting?.channels ?? {},
       roles: raw.providerRouting?.roles ?? { default: "ollama-local" },
       projects: raw.providerRouting?.projects ?? {},
+      failoverChain: raw.providerRouting?.failoverChain,
+      circuitBreaker: raw.providerRouting?.circuitBreaker,
     },
     session: {
       ttlHours:          raw.session?.ttlHours ?? 168,

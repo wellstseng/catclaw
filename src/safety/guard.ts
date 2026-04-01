@@ -10,13 +10,21 @@
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import type { SafetyConfig } from "../core/config.js";
+import type { SafetyConfig, ToolPermissionRule } from "../core/config.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
 export interface GuardResult {
   blocked: boolean;
   reason?: string;
+}
+
+/** 呼叫 check() 時傳入的身份上下文 */
+export interface PermissionContext {
+  /** 帳號 ID */
+  accountId?: string;
+  /** 帳號角色 */
+  role?: string;
 }
 
 // ── 預設保護路徑 ──────────────────────────────────────────────────────────────
@@ -82,6 +90,8 @@ export class SafetyGuard {
   private protectedWritePaths: string[];
   private protectedReadPaths: string[];
   private credentialPatterns: RegExp[];
+  private toolRules: ToolPermissionRule[];
+  private toolDefaultAllow: boolean;
 
   constructor(cfg?: SafetyConfig) {
     this.selfProtect = cfg?.selfProtect ?? true;
@@ -112,11 +122,22 @@ export class SafetyGuard {
       ...CREDENTIAL_PATTERNS_DEFAULT,
       ...(cfg?.filesystem?.credentialPatterns ?? []).map(s => new RegExp(s, "i")),
     ];
+
+    // 工具權限規則
+    this.toolRules = cfg?.toolPermissions?.rules ?? [];
+    this.toolDefaultAllow = cfg?.toolPermissions?.defaultAllow ?? true;
   }
 
   // ── 主要進入點（by tool call）────────────────────────────────────────────────
 
-  check(toolName: string, params: Record<string, unknown>): GuardResult {
+  check(toolName: string, params: Record<string, unknown>, ctx?: PermissionContext): GuardResult {
+    // 工具權限規則（優先於其他安全檢查）
+    if (ctx && this.toolRules.length > 0) {
+      const permResult = this.checkToolPermissions(toolName, params, ctx);
+      if (permResult.blocked) return permResult;
+      // effect=allow 的明確允許不繞過後續 bash/filesystem 檢查（安全優先）
+    }
+
     switch (toolName) {
       case "run_command":
         return this.checkBash(String(params["command"] ?? ""));
@@ -137,6 +158,61 @@ export class SafetyGuard {
       default:
         return { blocked: false };
     }
+  }
+
+  // ── 工具權限規則評估 ────────────────────────────────────────────────────────
+
+  /**
+   * 依序評估 toolPermissions.rules，第一條匹配的規則生效。
+   * deny → blocked；allow → 允許（後續 bash/fs 檢查仍執行）；
+   * 無匹配 → 依 defaultAllow 決定。
+   */
+  checkToolPermissions(
+    toolName: string,
+    params: Record<string, unknown>,
+    ctx: PermissionContext
+  ): GuardResult {
+    for (const rule of this.toolRules) {
+      // 比對 subject
+      if (rule.subjectType === "role" && rule.subject !== ctx.role) continue;
+      if (rule.subjectType === "account" && rule.subject !== ctx.accountId) continue;
+
+      // 比對工具名稱（支援 * 萬用符）
+      if (!this.matchToolPattern(rule.tool, toolName)) continue;
+
+      // 比對參數條件（可選）
+      if (rule.paramMatch) {
+        const paramMatch = Object.entries(rule.paramMatch).every(([key, pattern]) => {
+          const val = String(params[key] ?? "");
+          try { return new RegExp(pattern).test(val); }
+          catch { return false; }
+        });
+        if (!paramMatch) continue;
+      }
+
+      // 規則命中
+      if (rule.effect === "deny") {
+        return {
+          blocked: true,
+          reason: rule.reason ?? `工具 ${toolName} 對此帳號/角色不可用`,
+        };
+      }
+      return { blocked: false }; // effect=allow：明確允許
+    }
+
+    // 無規則匹配
+    if (!this.toolDefaultAllow) {
+      return { blocked: true, reason: `工具 ${toolName} 預設不允許（defaultAllow=false）` };
+    }
+    return { blocked: false };
+  }
+
+  /** 工具名稱萬用符匹配（支援 * 作為任意字元） */
+  private matchToolPattern(pattern: string, toolName: string): boolean {
+    if (pattern === "*") return true;
+    if (!pattern.includes("*")) return pattern === toolName;
+    const re = new RegExp("^" + pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
+    return re.test(toolName);
   }
 
   // ── Bash 指令檢查 ──────────────────────────────────────────────────────────

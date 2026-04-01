@@ -17,3 +17,4 @@
 | feedback-discord-report | feedback-discord-report.md | 完成, 回報, Discord, 主動 | [固] |
 | feedback-language | feedback-language.md | 日文, Japanese, 語言, 中文, 回應語言 | [固] |
 | pitfalls-migrate-skill | pitfalls-migrate-skill.md | migrate, countMd, statSync, require, ESM, /migrate status, atom count, 0 個 atom, typing 卡住 | [固] |
+| autonomous-experiment-v1 | autonomous-experiment-v1.md | 自主開發, autonomous, harness agent, PM subagent, 實驗指南, AI協作指南 | [固] |
