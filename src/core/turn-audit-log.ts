@@ -47,7 +47,9 @@ export interface TurnAuditEntry {
   outputTokens?: number;
   toolCalls: number;
   toolLogPath?: string;
+  startTimeMs?: number;
   durationMs?: number;
+  toolDurations?: Record<string, number[]>;
   error?: string;
 }
 

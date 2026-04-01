@@ -793,7 +793,12 @@ export async function* agentLoop(
       outputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
       toolCalls: tracker.toolCalls.length,
       toolLogPath: toolLogPath ?? undefined,
+      startTimeMs: turnStartMs,
       durationMs: Date.now() - turnStartMs,
+      toolDurations: tracker.toolCalls.reduce<Record<string, number[]>>((acc, tc) => {
+        (acc[tc.name] ??= []).push(tc.durationMs);
+        return acc;
+      }, {}),
     });
   }
 
