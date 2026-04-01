@@ -284,6 +284,15 @@ function runBeforeToolCall(
     return { blocked: true, reason: `偵測到工具迴圈：${call.name} 連續呼叫超過 5 次` };
   }
 
+  // 3b. Alternating Tool Cycle Detection（period-2：A→B→A→B→A…）
+  // 最近 4 次呼叫為 [X, Y, X, Y]，且當前要再呼叫 X → 封鎖
+  if (ctx.recentCalls.length >= 4) {
+    const r4 = ctx.recentCalls.slice(-4).map(c => c.name);
+    if (r4[0] === r4[2] && r4[1] === r4[3] && r4[0] !== r4[1] && call.name === r4[0]) {
+      return { blocked: true, reason: `偵測到交替工具迴圈：${r4[1]}↔${r4[0]}（已重複 2 輪）` };
+    }
+  }
+
   return { blocked: false, params: call.params };
 }
 
