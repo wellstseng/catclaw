@@ -412,7 +412,8 @@ export const tool: Tool = {
               description: `子 agent 結果：${record.label ?? record.task.slice(0, 50)}`,
               triggers,
               confidence: "[臨]",
-              scope: "project",
+              scope: "global",
+              namespace: "global",
               content: `## 任務\n${record.task}\n\n## 結果\n${text.slice(0, 2000)}`,
             });
             log.info(`[spawn-subagent] memory saved atomName=${atomName}`);
