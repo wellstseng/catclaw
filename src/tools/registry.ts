@@ -17,6 +17,11 @@ import { toDefinition } from "./types.js";
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private watchers: ReturnType<typeof watch>[] = [];
+  private defaultTimeoutMs: number;
+
+  constructor(opts?: { defaultTimeoutMs?: number }) {
+    this.defaultTimeoutMs = opts?.defaultTimeoutMs ?? 30_000;
+  }
 
   // ── 註冊 ────────────────────────────────────────────────────────────────────
 
@@ -94,10 +99,35 @@ export class ToolRegistry {
     const tool = this.tools.get(toolName);
     if (!tool) return { error: `找不到 tool: ${toolName}` };
 
+    // 計算 effective timeout（per-tool 優先，0 = 無限制）
+    const effectiveMs = tool.timeoutMs ?? this.defaultTimeoutMs;
+
     try {
-      return await tool.execute(params, ctx);
+      if (effectiveMs <= 0) {
+        // 無限制模式（原有邏輯）
+        return await tool.execute(params, ctx);
+      }
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // 安全：不在 error 訊息中暴露 toolName 或 params
+          reject(new Error("工具執行逾時"));
+        }, effectiveMs);
+      });
+
+      try {
+        const result = await Promise.race([tool.execute(params, ctx), timeoutPromise]);
+        return result;
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      // timeout 或執行錯誤統一由此 catch 轉換
+      const msg = err instanceof Error ? err.message : String(err);
+      // server log 記錄詳細資訊（不外洩）
+      log.warn(`[tool-registry] execute 失敗 tool=${toolName}：${msg}`);
+      return { error: msg };
     }
   }
 
@@ -112,8 +142,8 @@ export class ToolRegistry {
 
 let _registry: ToolRegistry | null = null;
 
-export function initToolRegistry(): ToolRegistry {
-  _registry = new ToolRegistry();
+export function initToolRegistry(opts?: { defaultTimeoutMs?: number }): ToolRegistry {
+  _registry = new ToolRegistry(opts);
   return _registry;
 }
 

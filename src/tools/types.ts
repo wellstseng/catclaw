@@ -64,6 +64,8 @@ export interface Tool {
    * 未設定則套用全域預設（8000 tokens）。設 0 表示無限制。
    */
   resultTokenCap?: number;
+  /** 單次執行超時毫秒（覆寫全域設定）。0 = 無限制。 */
+  timeoutMs?: number;
   /** 執行函式 */
   execute(params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }

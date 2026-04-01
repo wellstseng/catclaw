@@ -97,7 +97,7 @@ export async function initPlatform(
   }
 
   // ── 2. Tool Registry ───────────────────────────────────────────────────────
-  _toolRegistry = initToolRegistry();
+  _toolRegistry = initToolRegistry({ defaultTimeoutMs: config.toolBudget?.toolTimeoutMs ?? 30_000 });
   const builtinDir = join(distDir, "tools", "builtin");
   await _toolRegistry.loadFromDirectory(builtinDir);
 

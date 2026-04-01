@@ -385,6 +385,8 @@ export interface BridgeConfig {
     resultTokenCap?: number;
     /** 每個 turn 所有工具結果合計 token 上限（預設 0 = 無限制） */
     perTurnTotalCap?: number;
+    /** 單一 tool 執行超時毫秒（預設 30000，0 = 無限制） */
+    toolTimeoutMs?: number;
   };
 }
 
@@ -472,7 +474,7 @@ interface RawConfig {
   homeClaudeCode?: Partial<HomeClaudeCodeConfig>;
   agents?: AgentsConfig;
   dashboard?: { enabled?: boolean; port?: number };
-  toolBudget?: { resultTokenCap?: number; perTurnTotalCap?: number };
+  toolBudget?: { resultTokenCap?: number; perTurnTotalCap?: number; toolTimeoutMs?: number };
 }
 
 // ── 路徑解析 ──────────────────────────────────────────────────────────────────
