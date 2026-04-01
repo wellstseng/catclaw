@@ -21,6 +21,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import { log } from "../logger.js";
+import { upsertIndex } from "./index-manager.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────
 
@@ -216,5 +217,34 @@ export function writeAtom(dir: string, name: string, opts: {
 
   writeFileSync(filePath, lines.join("\n"), "utf-8");
   log.debug(`[atom] 寫入 ${filePath}`);
+
+  // 同步更新 MEMORY.md index（trigger matching 依賴此 index）
+  const memoryMdPath = join(dir, "MEMORY.md");
+  try {
+    upsertIndex(memoryMdPath, {
+      name,
+      path: `${name}.md`,
+      triggers: opts.triggers ?? [],
+      confidence: opts.confidence ?? "[臨]",
+    });
+    log.debug(`[atom] 更新 MEMORY.md index：${name}`);
+  } catch (err) {
+    log.warn(`[atom] MEMORY.md index 更新失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 自動 seed 進 LanceDB（fire-and-forget，vector service 不可用時靜默略過）
+  const namespace = opts.scope ?? "global";
+  const embedText = `${opts.description ?? name}\n${opts.content}`;
+  import("../vector/lancedb.js").then(({ getVectorService }) => {
+    try {
+      const vs = getVectorService();
+      if (vs.isAvailable()) {
+        vs.upsert(name, embedText, namespace, { path: filePath }).catch((err: unknown) => {
+          log.debug(`[atom] auto-seed ${name} 失敗：${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+    } catch { /* vector service 未初始化，略過 */ }
+  }).catch(() => { /* 動態 import 失敗，略過 */ });
+
   return filePath;
 }

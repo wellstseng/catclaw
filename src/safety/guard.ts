@@ -56,11 +56,18 @@ const BASH_BLACKLIST_DEFAULT: RegExp[] = [
   /dd\s+if=/,
   /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/,         // fork bomb
   /chmod\s+(-R\s+)?777\s+\//,
+  /chmod\s+[ugoa]*\+s\s/,                   // setuid/setgid bit
   /kill\s+-9\s+1$/,
   /\b(shutdown|reboot|poweroff)\b/,
   /systemctl\s+(stop|disable)\s/,
   /curl\s+.*\|\s*(ba)?sh/,                  // pipe to shell
   /wget\s+.*\|\s*(ba)?sh/,
+  /\$\((curl|wget)\s/,                      // $() fetch & execute
+  /\b(bash|sh|zsh)\s+-c\s/,                // shell -c injection bypass
+  /\beval\b/,                               // eval 任意代碼執行
+  /find\s+.*-exec\s/,                       // find -exec 任意執行
+  /base64\s+.*\|\s*(ba)?sh/,               // base64 decode to shell
+  /git\s+push\s+.*--force.*\s+(?:main|master)/,  // force push to protected branch
   /pm2\s+(delete|kill)\s+all/,
   /^\s*(env|printenv)\s*$/,                  // 洩漏 token/apiKey
 ];

@@ -510,9 +510,13 @@ async function handleMessage(
         }
       }
 
+      // ── 當前日期/時間注入 ────────────────────────────────────────────────────
+      const nowStr = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
+      const dateBlock = `[系統資訊] 當前時間（Asia/Taipei）：${nowStr}`;
+
       // ── Inbound History 注入 ─────────────────────────────────────────────
       // 組合順序：base（CATCLAW.md）→ 記憶 recall → inbound history
-      let combinedSystemPrompt = [baseSystemPrompt, systemPromptFromMemory].filter(Boolean).join("\n\n");
+      let combinedSystemPrompt = [baseSystemPrompt, systemPromptFromMemory, dateBlock].filter(Boolean).join("\n\n");
       const inboundStore = getInboundHistoryStore();
       const inboundCfg = (config as unknown as Record<string, unknown>).inboundHistory as Record<string, unknown> | undefined;
       if (inboundStore && inboundCfg?.enabled !== false) {
