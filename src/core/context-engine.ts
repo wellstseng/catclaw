@@ -165,7 +165,27 @@ export class CompactionStrategy implements ContextStrategy {
     try {
       const summaryPrompt = `以下是對話歷史，請用繁體中文精簡摘要（保留關鍵事實、決策、錯誤）：\n\n${
         convMessages.map(m => {
-          const content = typeof m.content === "string" ? m.content : "[tool interaction]";
+          let content: string;
+          if (typeof m.content === "string") {
+            content = m.content;
+          } else {
+            // 從 tool blocks 提取有意義的摘要文字（而非棄用 "[tool interaction]"）
+            content = (m.content as Array<{ type: string; name?: string; input?: unknown; tool_use_id?: string; content?: string }>)
+              .map(b => {
+                if (b.type === "tool_use") {
+                  const params = b.input ? JSON.stringify(b.input).slice(0, 120) : "";
+                  return `[工具:${b.name}] ${params}`;
+                }
+                if (b.type === "tool_result") {
+                  const result = typeof b.content === "string" ? b.content.slice(0, 200) : "";
+                  return `[結果] ${result}`;
+                }
+                if (b.type === "text") return (b as unknown as { text: string }).text;
+                return "";
+              })
+              .filter(Boolean)
+              .join(" ");
+          }
           return `[${m.role}]: ${content.slice(0, 500)}`;
         }).join("\n")
       }`;
