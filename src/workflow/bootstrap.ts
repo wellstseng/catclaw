@@ -15,6 +15,7 @@ import { initRutDetector } from "./rut-detector.js";
 import { initWisdomEngine } from "./wisdom-engine.js";
 import { initFailureDetector } from "./failure-detector.js";
 import { initAidocsManager } from "./aidocs-manager.js";
+import { initMemoryExtractor } from "./memory-extractor.js";
 
 export interface WorkflowConfig {
   enabled?: boolean;
@@ -75,6 +76,9 @@ export function initWorkflow(
     if (config?.aidocs?.enabled !== false) {
       initAidocsManager(eventBus, projectRoot);
     }
+
+    // ── 8. Memory Extractor
+    initMemoryExtractor(eventBus);
 
     log.info("[workflow] 工作流引擎初始化完成");
   } catch (err) {
