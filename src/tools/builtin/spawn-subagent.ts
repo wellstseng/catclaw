@@ -66,6 +66,8 @@ interface ChildRunOpts {
   parentSpawnDepth?: number;
   /** opt-in 開放子 agent 再 spawn（深度 < 2 時有效） */
   allowNestedSpawn?: boolean;
+  /** 此子 agent 的 runId（注入到 ToolContext.parentRunId，供孫層 spawn 建立 parentId 關聯） */
+  parentRunId?: string;
 }
 
 // ── ACP Runtime（SUB-6）──────────────────────────────────────────────────────
@@ -218,6 +220,7 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
     spawnDepth: childDepth,
     workspaceDir: opts.workspaceDir,
     _sessionKeyOverride: opts.childSessionKey,
+    parentRunId: opts.parentRunId,
   }, {
     sessionManager,
     permissionGate,
@@ -358,6 +361,7 @@ export const tool: Tool = {
       keepSession: keepSession || mode === "session",
       discordChannelId: ctx.channelId,
       accountId: ctx.accountId,
+      parentId: ctx.parentRunId,
     });
 
     // SUB-5：mode:session → 建立 Discord thread 並綁定
@@ -390,6 +394,7 @@ export const tool: Tool = {
             attachmentsDir,
             parentSpawnDepth: ctx.spawnDepth ?? 0,
             allowNestedSpawn,
+            parentRunId: record.runId,
           }),
           new Promise<never>((_, reject) => {
             setTimeout(() => reject(new Error("__TIMEOUT__")), timeoutMs + 1000);

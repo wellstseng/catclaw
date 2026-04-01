@@ -46,6 +46,11 @@ export interface ToolContext {
    * 傳入子 agent 時 +1；≥ 2 時 allowSpawn 強制 false（最多 3 層）。
    */
   spawnDepth?: number;
+  /**
+   * 父 subagent 的 runId（由 spawn-subagent 注入）。
+   * 子 agent 呼叫 spawn_subagent 時，registry.create 以此為 parentId，實現 cascade abort。
+   */
+  parentRunId?: string;
 }
 
 // ── Tool 介面 ─────────────────────────────────────────────────────────────────

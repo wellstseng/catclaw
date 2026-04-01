@@ -162,6 +162,11 @@ export interface AgentLoopOpts {
    */
   _sessionKeyOverride?: string;
   /**
+   * 父 subagent runId（由 spawn-subagent 注入）。
+   * 注入到 ToolContext.parentRunId，讓子 agent 呼叫 spawn_subagent 時能建立 parentId 關聯。
+   */
+  parentRunId?: string;
+  /**
    * 執行指令前 DM 確認設定。
    * 啟用時，run_command 執行前會送 DM 給指定使用者等待確認。
    * 回呼由呼叫端提供（需整合 discord client）。
@@ -552,7 +557,7 @@ export async function* agentLoop(
 
         const batchResults = await Promise.all(spawnCalls.map(async (call): Promise<SpawnBatchResult> => {
           const params = call.params as Record<string, unknown>;
-          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth };
+          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId };
           const events: SpawnEvent[] = [];
           const hookResult = runBeforeToolCall(
             { id: call.id, name: call.name, params },
@@ -604,6 +609,7 @@ export async function* agentLoop(
           channelId,
           eventBus,
           spawnDepth,
+          parentRunId: opts.parentRunId,
         };
 
         // before_tool_call

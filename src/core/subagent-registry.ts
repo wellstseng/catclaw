@@ -37,6 +37,8 @@ export interface SubagentRunRecord {
   createdAt: number;
   endedAt?: number;
   turns?: number;
+  /** 建立此 record 的父 subagent runId（頂層 spawn 無此欄位） */
+  parentId?: string;
 }
 
 export type SpawnResult =
@@ -67,6 +69,8 @@ export class SubagentRegistry {
     keepSession?: boolean;
     discordChannelId?: string;
     accountId: string;
+    /** 父 subagent runId（頂層 spawn 不傳） */
+    parentId?: string;
   }): SubagentRunRecord {
     const runId = randomUUID();
     const childSessionKey = `${opts.parentSessionKey}:sub:${runId}`;
@@ -86,6 +90,7 @@ export class SubagentRegistry {
       keepSession: opts.keepSession ?? false,
       accountId: opts.accountId,
       createdAt: Date.now(),
+      parentId: opts.parentId,
     };
 
     this.records.set(runId, record);
@@ -121,7 +126,21 @@ export class SubagentRegistry {
     record.status = "killed";
     record.endedAt = Date.now();
     log.info(`[subagent-registry] killed runId=${runId}`);
+    this.cascadeAbortChildren(runId, "killed");
     return true;
+  }
+
+  /** 級聯中止：將所有 parentId===runId 且 running/pending 的子 agent 標記為 killed */
+  private cascadeAbortChildren(parentRunId: string, parentStatus: string): void {
+    for (const child of this.records.values()) {
+      if (child.parentId === parentRunId && (child.status === "running" || child.status === "pending" as SubagentStatus)) {
+        child.abortController.abort();
+        child.status = "killed";
+        child.error = `cascade abort: parent ${parentRunId} ${parentStatus}`;
+        child.endedAt = Date.now();
+        log.info(`[subagent-registry] cascade killed runId=${child.runId} (parent=${parentRunId})`);
+      }
+    }
   }
 
   killAll(parentSessionKey: string): number {
@@ -150,6 +169,7 @@ export class SubagentRegistry {
     record.status = "failed";
     record.error = error;
     record.endedAt = Date.now();
+    this.cascadeAbortChildren(runId, "failed");
   }
 
   timeout(runId: string): void {
