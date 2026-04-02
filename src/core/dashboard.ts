@@ -333,6 +333,7 @@ details[open] summary { margin-bottom: 6px; }
 }
 .cfg-row input[type=number] { max-width: 120px; }
 .cfg-toggle { position: relative; display: block; width: 36px; min-width: 36px; max-width: 36px; height: 20px; flex: 0 0 36px; overflow: hidden; }
+label.cfg-toggle { min-width: 36px; }
 .cfg-toggle input { opacity: 0; width: 0; height: 0; }
 .cfg-toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #333; border-radius: 10px; transition: .2s; }
 .cfg-toggle .slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: var(--fg2); border-radius: 50%; transition: .2s; }
@@ -1077,7 +1078,7 @@ function renderField(f, val, prefix) {
   const v = val ?? '';
   const hint = f.d ? \`<span class="cfg-hint" title="\${esc(f.d)}">ℹ️ \${f.d}</span>\` : '';
   if (f.t === 'bool') {
-    return \`<div class="cfg-row"><label>\${f.l}\${hint}</label><div class="cfg-toggle"><input type="checkbox" data-path="\${id}" \${v ? 'checked' : ''}><span class="slider"></span></div></div>\`;
+    return \`<div class="cfg-row"><label>\${f.l}\${hint}</label><label class="cfg-toggle"><input type="checkbox" data-path="\${id}" \${v ? 'checked' : ''}><span class="slider"></span></label></div>\`;
   }
   if (f.t === 'select') {
     const opts = (f.opts||[]).map(o => \`<option value="\${o}" \${v===o?'selected':''}>\${o||'(auto)'}</option>\`).join('');
