@@ -119,11 +119,11 @@ export interface ProviderEntry {
   type?: "claude" | "claude-oauth" | "openai" | "openai-compat" | "codex-oauth" | "ollama";
   /**
    * Claude 認證模式（僅 type=claude 有效）
-   * - "oauth" → 使用 auth-profile.json（Claude.ai OAuth，預設）
-   * - "token" / "api" → 使用 token 欄位（Anthropic API key）
-   * 未設定時自動偵測：auth-profiles.json 存在且有憑證 → oauth，否則 → token
+   * - "token" → 使用 auth-profile.json 中的 OAuth token（sk-ant-oat...）
+   * - "api"   → 使用 token 欄位的 API key（sk-ant-api...）
+   * 未設定時自動偵測：auth-profiles.json 存在且有憑證 → token（oauth），否則 → api
    */
-  mode?: "token" | "oauth" | "api";
+  mode?: "token" | "api";
   /**
    * Ollama thinking 模式（僅 type=ollama 有效，qwen3 等 thinking 模型使用）
    * true = 送出 think:true 參數，回應包含推理過程

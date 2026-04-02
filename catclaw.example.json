@@ -54,22 +54,22 @@
   //   entry.token（無 baseUrl）→ claude
   //
   // claude mode 欄位（選填）：
-  //   "oauth" → 使用 auth-profile.json（Claude.ai OAuth 登入）
-  //   "token" / "api" → 直接用 token 欄位（Anthropic API key）
-  //   不填 → 自動偵測（有 auth-profile.json 且有效 → oauth，否則 → token）
+  //   "token" → 使用 auth-profile.json 的 OAuth token（sk-ant-oat...，Claude.ai）
+  //   "api"   → 直接用 token 欄位的 API key（sk-ant-api...，Anthropic Console）
+  //   不填 → 自動偵測（有 auth-profile.json 且有效 → token，否則 → api）
   "providers": {
     // Claude Sonnet（預設）
-    // mode="oauth"：使用 Claude.ai OAuth（auth-profile.json，無需 API key）
+    // mode="token"：使用 Claude.ai OAuth token（auth-profile.json，無需 API key）
     "claude": {
       "type": "claude",
-      "mode": "oauth",
+      "mode": "token",
       "model": "claude-sonnet-4-6"
     },
 
-    // mode="token"：使用 Anthropic API key（ANTHROPIC_TOKEN 環境變數）
+    // mode="api"：使用 Anthropic API key（ANTHROPIC_TOKEN 環境變數）
     // "claude-api": {
     //   "type": "claude",
-    //   "mode": "token",
+    //   "mode": "api",
     //   "token": "${ANTHROPIC_TOKEN}",
     //   "model": "claude-sonnet-4-6"
     // },
@@ -77,7 +77,7 @@
     // Claude Opus（重型任務）
     // "claude-opus": {
     //   "type": "claude",
-    //   "mode": "oauth",
+    //   "mode": "token",
     //   "model": "claude-opus-4-6"
     // },
 

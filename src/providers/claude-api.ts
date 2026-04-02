@@ -182,18 +182,18 @@ export class ClaudeApiProvider implements LLMProvider {
     this.modelId = resolveModelId(entry.model ?? DEFAULT_MODEL);
 
     const mode = entry.mode;
-    const forceToken = mode === "token" || mode === "api";
-    const forceOauth = mode === "oauth";
+    const forceApi = mode === "api";    // API key 模式（sk-ant-api...）
+    const forceToken = mode === "token"; // OAuth token 模式（sk-ant-oat...，auth-profile.json）
 
-    if (forceToken) {
-      // 明確指定 token 模式：直接用 token，不初始化 auth-profile store
+    if (forceApi) {
+      // 明確指定 api 模式：直接用 token 欄位（API key），不初始化 auth-profile store
       this.token = entry.token;
-      if (!this.token) log.warn(`[claude:${id}] mode=token 但未設定 token`);
-      log.debug(`[claude:${id}] token 模式`);
+      if (!this.token) log.warn(`[claude:${id}] mode=api 但未設定 token`);
+      log.debug(`[claude:${id}] api 模式（API key）`);
       return;
     }
 
-    // OAuth / 自動偵測：從 {workspace}/agents/default/auth-profiles.json 載入
+    // token（OAuth）模式 / 自動偵測：從 {workspace}/agents/default/auth-profiles.json 載入
     const workspaceDir = resolveWorkspaceDirSafe();
     const persistPath = join(workspaceDir, "data", "auth-profiles");
     const credentialsFilePath = join(workspaceDir, "agents", "default", "auth-profile.json");
@@ -201,11 +201,11 @@ export class ClaudeApiProvider implements LLMProvider {
     this._store.load();
 
     if (this._store.getAvailableCount() > 0) {
-      log.info(`[claude:${id}] oauth 模式，${this._store.getAvailableCount()} 組憑證可用`);
-    } else if (forceOauth) {
-      log.warn(`[claude:${id}] mode=oauth 但 ${credentialsFilePath} 無有效憑證`);
+      log.info(`[claude:${id}] token 模式（OAuth），${this._store.getAvailableCount()} 組憑證可用`);
+    } else if (forceToken) {
+      log.warn(`[claude:${id}] mode=token 但 ${credentialsFilePath} 無有效憑證`);
     } else {
-      // 自動偵測：oauth store 空 → fallback to token
+      // 自動偵測：oauth store 空 → fallback to API key
       this.token = entry.token;
       if (!this.token) {
         log.warn(`[claude:${id}] 憑證檔 ${credentialsFilePath} 為空且未設定 token`);

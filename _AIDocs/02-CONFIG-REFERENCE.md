@@ -90,10 +90,10 @@
     "claude": {
       "type": "claude",          // 型別：claude / openai / openai-compat / ollama / codex-oauth
                                  //   "claude" 是 "claude-oauth" 的短名稱別名
-      "mode": "oauth",           // Claude 認證模式（選填，僅 type=claude 有效）
-                                 //   "oauth"  → 使用 auth-profile.json（Claude.ai OAuth）
-                                 //   "token" / "api" → 使用 token 欄位（Anthropic API key）
-                                 //   不填 → 自動偵測（有 auth-profile.json → oauth；否則 token）
+      "mode": "token",            // Claude 認證模式（選填，僅 type=claude 有效）
+                                 //   "token" → auth-profile.json OAuth token（sk-ant-oat...）
+                                 //   "api"   → token 欄位 API key（sk-ant-api...）
+                                 //   不填 → 自動偵測（有 auth-profile.json → token；否則 api）
       "model": "claude-sonnet-4-6"  // 完整 model ID 或短名稱別名：
                                     //   "claude-haiku" → "claude-haiku-4-5"
                                     //   "claude-sonnet" → "claude-sonnet-4-6"
@@ -138,7 +138,7 @@
 | guild `allowBot` | `false` | 不允許 bot |
 | guild `allowFrom` | `[]` | 不限制 |
 | channel `autoThread` | `false` | 每則訊息建 Thread |
-| provider `mode` | auto | claude 認證模式：oauth/token/api |
+| provider `mode` | auto | claude 認證模式：token（OAuth）/ api（API key） |
 
 ---
 
