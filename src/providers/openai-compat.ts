@@ -160,12 +160,17 @@ export class OpenAICompatProvider implements LLMProvider {
 
     log.debug(`[openai-compat:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 inputTokens=${inputTokens} outputTokens=${outputTokens}`);
 
+    const estimated = usageInput <= 0;
     return {
       events: makeIterable(),
       stopReason: finalStopReason,
       toolCalls,
       text: finalText,
-      usage: { input: inputTokens, output: outputTokens, totalTokens: inputTokens + outputTokens },
+      usage: {
+        input: inputTokens, output: outputTokens, totalTokens: inputTokens + outputTokens,
+        model: this.modelId, providerType: "openai-compat",
+        ...(estimated && { estimated: true }),
+      },
     };
   }
 }

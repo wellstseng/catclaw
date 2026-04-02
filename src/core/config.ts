@@ -105,9 +105,103 @@ export interface HistoryConfig {
   enabled: boolean;
 }
 
-// ── 新增平台型別 ──────────────────────────────────────────────────────────────
+// ── 新三層分離型別（V2：provider/model 重構）────────────────────────────────
 
-/** 單一 Provider 設定 */
+/** models.json 中單一模型定義 */
+export interface ModelDefinition {
+  id: string;
+  name: string;
+  api?: ModelApi;
+  reasoning: boolean;
+  input: Array<"text" | "image">;
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+}
+
+/** models.json 中單一 Provider 定義 */
+export interface ModelProviderDefinition {
+  baseUrl: string;
+  api?: ModelApi;
+  apiKey?: string;
+  models: ModelDefinition[];
+}
+
+/** models.json 完整結構 */
+export interface ModelsJsonConfig {
+  providers: Record<string, ModelProviderDefinition>;
+}
+
+/** API 類型識別 */
+export type ModelApi = "anthropic-messages" | "openai-completions" | "openai-codex-responses" | "ollama";
+
+/** auth-profile.json 中單一 credential */
+export type AuthProfileCredential =
+  | { type: "api_key"; provider: string; key: string; email?: string }
+  | { type: "token"; provider: string; token: string; expires?: number; email?: string }
+  | { type: "oauth"; provider: string; access: string; refresh: string; expires: number; clientId?: string; email?: string };
+
+/** auth-profile.json 中單一 profile 的使用統計 */
+export interface ProfileUsageStats {
+  lastUsed?: number;
+  cooldownUntil?: number;
+  disabledUntil?: number;
+  disabledReason?: "rate_limit" | "overloaded" | "billing" | "auth";
+  errorCount?: number;
+}
+
+/** auth-profile.json 完整結構 */
+export interface AuthProfilesJson {
+  version: number;
+  profiles: Record<string, AuthProfileCredential>;
+  order?: Record<string, string[]>;
+  lastGood?: Record<string, string>;
+  usageStats?: Record<string, ProfileUsageStats>;
+}
+
+/** catclaw.json agents.defaults 中的 model alias entry */
+export interface ModelAliasEntry {
+  alias?: string;
+}
+
+/** catclaw.json agents.defaults 設定 */
+export interface AgentDefaultsConfig {
+  /** 主要模型（alias 或 "provider/model" 格式） */
+  model?: {
+    primary: string;
+    fallbacks?: string[];
+  };
+  /** 模型對照表（"provider/model" → alias） */
+  models?: Record<string, ModelAliasEntry>;
+  /** system prompt */
+  systemPrompt?: string;
+}
+
+/** catclaw.json models 區塊（自訂 provider + 合併模式） */
+export interface ModelsConfig {
+  /** "merge" = 內建 + 自訂合併（預設）；"replace" = 只用自訂 */
+  mode?: "merge" | "replace";
+  /** 自訂 Provider 定義（baseUrl + models） */
+  providers?: Record<string, ModelProviderDefinition>;
+}
+
+/** catclaw.json auth 區塊 */
+export interface AuthConfig {
+  /** 明確的 profile 設定（provider + mode，不含 credential） */
+  profiles?: Record<string, { provider: string; mode: "api_key" | "oauth" | "token" }>;
+  /** 輪替順序覆寫 */
+  order?: Record<string, string[]>;
+  /** cooldown 設定覆寫 */
+  cooldowns?: {
+    billingBackoffHours?: number;
+    billingMaxHours?: number;
+    failureWindowHours?: number;
+  };
+}
+
+// ── 舊平台型別（保留過渡期，Phase 3 移除）────────────────────────────────────
+
+/** @deprecated V1 格式 — 將被三層分離取代 */
 export interface ProviderEntry {
   /**
    * Provider 型別（明確指定時優先於自動偵測）
@@ -376,9 +470,19 @@ export interface BridgeConfig {
   history: HistoryConfig;
 
   // ── 平台擴充欄位 ──
-  /** 預設 provider ID */
+
+  // ── V2 三層分離（新結構）──
+  /** Agent 預設設定（model primary/fallbacks/aliases） */
+  agentDefaults?: AgentDefaultsConfig;
+  /** 模型目錄設定（自訂 provider + 合併模式） */
+  modelsConfig?: ModelsConfig;
+  /** 認證設定 */
+  authConfig?: AuthConfig;
+
+  // ── V1 相容欄位（過渡期保留）──
+  /** @deprecated V1 — 預設 provider ID */
   provider: string;
-  /** Provider 設定表 */
+  /** @deprecated V1 — Provider 設定表 */
   providers: Record<string, ProviderEntry>;
   /** Provider 路由規則 */
   providerRouting: ProviderRoutingConfig;
@@ -493,7 +597,11 @@ interface RawConfig {
   logLevel?: string;
   cron?: { enabled?: boolean; maxConcurrentRuns?: number; defaultAccountId?: string; defaultProvider?: string };
   history?: { enabled?: boolean };
-  // 平台擴充
+  // 平台擴充 — V2 三層分離
+  agentDefaults?: AgentDefaultsConfig;
+  modelsConfig?: ModelsConfig;
+  authConfig?: AuthConfig;
+  // 平台擴充 — V1 相容
   provider?: string;
   providers?: Record<string, ProviderEntry>;
   providerRouting?: {
@@ -560,9 +668,11 @@ export function resolveConfigPath(): string {
   return resolve(dir, "catclaw.json");
 }
 
-/** 解析 catclaw 根目錄（~/.catclaw 或 CATCLAW_CONFIG_DIR） */
+/** 解析 catclaw 根目錄（CATCLAW_CONFIG_DIR，無設定則報錯） */
 export function resolveCatclawDir(): string {
-  return resolve(process.env.CATCLAW_CONFIG_DIR ?? join(homedir(), ".catclaw"));
+  const dir = process.env.CATCLAW_CONFIG_DIR;
+  if (!dir) throw new Error("環境變數 CATCLAW_CONFIG_DIR 未設定");
+  return resolve(dir);
 }
 
 export function resolveWorkspaceDir(): string {
@@ -571,11 +681,11 @@ export function resolveWorkspaceDir(): string {
   return resolve(dir);
 }
 
-/** 解析 workspace 目錄（CATCLAW_WORKSPACE，fallback CONFIG_DIR/workspace） */
+/** 解析 workspace 目錄（CATCLAW_WORKSPACE��無設定則報錯） */
 export function resolveWorkspaceDirSafe(): string {
-  return process.env.CATCLAW_WORKSPACE
-    ? resolve(process.env.CATCLAW_WORKSPACE)
-    : join(resolveCatclawDir(), "workspace");
+  const dir = process.env.CATCLAW_WORKSPACE;
+  if (!dir) throw new Error("環境變數 CATCLAW_WORKSPACE 未設定");
+  return resolve(dir);
 }
 
 export function resolveClaudeBin(): string {
@@ -751,7 +861,13 @@ function loadConfig(): BridgeConfig {
     history: { enabled: raw.history?.enabled ?? true },
 
     // ── 平台擴充欄位 ──
-    // 未設定 providers 時，若有 ANTHROPIC_TOKEN 預設用 claude-oauth；否則 ollama-local
+
+    // V2 三層分離
+    agentDefaults: raw.agentDefaults,
+    modelsConfig: raw.modelsConfig,
+    authConfig: raw.authConfig,
+
+    // V1 相容（未設定 providers 時，若有 ANTHROPIC_TOKEN 預設用 claude-oauth；否則 ollama-local）
     provider: raw.provider ?? (process.env["ANTHROPIC_TOKEN"] ? "claude-oauth" : "ollama-local"),
     providers: raw.providers ?? (process.env["ANTHROPIC_TOKEN"]
       ? {

@@ -43,8 +43,12 @@ export interface TurnAuditEntry {
   tokensBeforeCE?: number;
   tokensAfterCE?: number;
   model?: string;
+  providerType?: string;
   inputTokens?: number;
   outputTokens?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  estimated?: boolean;
   toolCalls: number;
   toolLogPath?: string;
   startTimeMs?: number;

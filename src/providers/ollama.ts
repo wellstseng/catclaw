@@ -216,12 +216,17 @@ export class OllamaProvider implements LLMProvider {
     const outputTokens = evalCount > 0 ? evalCount : Math.round(finalText.length / 4);
     log.debug(`[ollama:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 tools=${toolCalls.length} inputTokens=${inputTokens} outputTokens=${outputTokens}`);
 
+    const estimated = promptEvalCount <= 0;
     return {
       events: makeIterable(),
       stopReason: finalStopReason,
       toolCalls,
       text: finalText,
-      usage: { input: inputTokens, output: outputTokens, totalTokens: inputTokens + outputTokens },
+      usage: {
+        input: inputTokens, output: outputTokens, totalTokens: inputTokens + outputTokens,
+        model: this.modelId, providerType: "ollama",
+        ...(estimated && { estimated: true }),
+      },
     };
   }
 }

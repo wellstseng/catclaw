@@ -193,34 +193,33 @@ export class ClaudeApiProvider implements LLMProvider {
       return;
     }
 
-    // token（OAuth）模式 / 自動偵測：從 {workspace}/agents/default/auth-profiles.json 載入
+    // token（OAuth）模式 / 自動偵測：從 auth-profile store 載入
     const workspaceDir = resolveWorkspaceDirSafe();
-    const persistPath = join(workspaceDir, "data", "auth-profiles");
-    const credentialsFilePath = join(workspaceDir, "agents", "default", "auth-profile.json");
-    this._store = new AuthProfileStore({ providerId: id, persistPath, credentialsFilePath });
+    const authProfilePath = join(workspaceDir, "agents", "default", "auth-profile.json");
+    this._store = new AuthProfileStore(authProfilePath);
     this._store.load();
 
-    if (this._store.getAvailableCount() > 0) {
-      log.info(`[claude:${id}] token 模式（OAuth），${this._store.getAvailableCount()} 組憑證可用`);
+    if (this._store.getAvailableCount("anthropic") > 0) {
+      log.info(`[claude:${id}] token 模式（OAuth），${this._store.getAvailableCount("anthropic")} 組憑證可用`);
     } else if (forceToken) {
-      log.warn(`[claude:${id}] mode=token 但 ${credentialsFilePath} 無有效憑證`);
+      log.warn(`[claude:${id}] mode=token 但 ${authProfilePath} 無有效憑證`);
     } else {
       // 自動偵測：oauth store 空 → fallback to API key
       this.token = entry.token;
       if (!this.token) {
-        log.warn(`[claude:${id}] 憑證檔 ${credentialsFilePath} 為空且未設定 token`);
+        log.warn(`[claude:${id}] 憑證檔 ${authProfilePath} 為空且未設定 token`);
       }
     }
   }
 
   /** 取得目前可用憑證數 */
   getAvailableCredentialCount(): number {
-    return this._store?.getAvailableCount() ?? (this.token ? 1 : 0);
+    return this._store?.getAvailableCount("anthropic") ?? (this.token ? 1 : 0);
   }
 
   /** 取得最快可用時間（所有憑證 cooldown 中時） */
   getEarliestAvailableTime(): number | null {
-    return this._store?.getEarliestAvailableTime() ?? null;
+    return this._store?.getEarliestAvailableTime("anthropic") ?? null;
   }
 
   // ── stream ────────────────────────────────────────────────────────────────────
@@ -230,12 +229,12 @@ export class ClaudeApiProvider implements LLMProvider {
     let credential: string;
     let activeProfileId: string | undefined;
 
-    const storeProfile = this._store?.pick() ?? null;
+    const storeProfile = this._store?.pickForProvider("anthropic") ?? null;
     if (storeProfile) {
-      credential = storeProfile.credential;
-      activeProfileId = storeProfile.id;
-    } else if (this._store && this._store.list().length > 0) {
-      const availAt = this._store.getEarliestAvailableTime();
+      credential = storeProfile.apiKey;
+      activeProfileId = storeProfile.profileId;
+    } else if (this._store && Object.keys(this._store.listAll()).length > 0) {
+      const availAt = this._store.getEarliestAvailableTime("anthropic");
       const waitMsg = availAt
         ? `最快 ${Math.ceil((availAt - Date.now()) / 60000)} 分鐘後可用`
         : "所有憑證已永久停用，請聯絡管理員";
@@ -311,9 +310,16 @@ export class ClaudeApiProvider implements LLMProvider {
       throw new Error(`[claude:${this.id}] ${msg}`);
     }
 
-    const resolvedUsage = finalUsage
-      ? { input: finalUsage.input, output: finalUsage.output, totalTokens: finalUsage.totalTokens }
-      : { input: 0, output: Math.round(finalText.length / 4), totalTokens: Math.round(finalText.length / 4) };
+    const est = Math.round(finalText.length / 4);
+    const resolvedUsage: import("./base.js").ProviderUsage = finalUsage
+      ? {
+          input: finalUsage.input, output: finalUsage.output, totalTokens: finalUsage.totalTokens,
+          cacheRead: finalUsage.cacheRead || undefined,
+          cacheWrite: finalUsage.cacheWrite || undefined,
+          model: this.modelId,
+          providerType: "claude",
+        }
+      : { input: 0, output: est, totalTokens: est, model: this.modelId, providerType: "claude", estimated: true };
 
     if (finalUsage) {
       log.debug(`[claude:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 inputTokens=${finalUsage.input} outputTokens=${finalUsage.output} cacheRead=${finalUsage.cacheRead} cacheWrite=${finalUsage.cacheWrite} total=${finalUsage.totalTokens}`);

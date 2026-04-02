@@ -273,7 +273,7 @@ export class CodexOAuthProvider implements LLMProvider {
       stopReason: finalStopReason,
       toolCalls,
       text: finalText,
-      usage: { input: 0, output: estTokens, totalTokens: estTokens },
+      usage: { input: 0, output: estTokens, totalTokens: estTokens, model: this.modelId, providerType: "codex-oauth", estimated: true },
     };
   }
 }

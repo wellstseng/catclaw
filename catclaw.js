@@ -23,6 +23,15 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// 手動載入 .env（與 ecosystem.config.cjs 同邏輯）
+const _envPath = resolve(__dirname, '.env');
+if (existsSync(_envPath)) {
+  for (const line of readFileSync(_envPath, 'utf-8').split('\n')) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+  }
+}
+
 /** String-aware JSONC comment stripper（跳過字串內的 //，如 URL） */
 function stripJsoncComments(text) {
   let result = "";
@@ -83,13 +92,16 @@ function triggerRestart(channelId) {
  * 回傳 { configDir, workspace, catclawJsonPath, needsToken }
  */
 function ensureInitialized() {
-  const configDir = process.env.CATCLAW_CONFIG_DIR
-    ? resolve(process.env.CATCLAW_CONFIG_DIR)
-    : join(homedir(), ".catclaw");
-
-  const workspace = process.env.CATCLAW_WORKSPACE
-    ? resolve(process.env.CATCLAW_WORKSPACE)
-    : join(homedir(), ".catclaw", "workspace");
+  if (!process.env.CATCLAW_CONFIG_DIR) {
+    console.error("❌ 環境變數 CATCLAW_CONFIG_DIR 未設定（檢查 .env 檔案）");
+    process.exit(1);
+  }
+  if (!process.env.CATCLAW_WORKSPACE) {
+    console.error("❌ 環境變數 CATCLAW_WORKSPACE 未設定（檢查 .env 檔案）");
+    process.exit(1);
+  }
+  const configDir = resolve(process.env.CATCLAW_CONFIG_DIR);
+  const workspace = resolve(process.env.CATCLAW_WORKSPACE);
 
   const catclawJsonPath = join(configDir, "catclaw.json");
   const catclawMdPath = join(workspace, "CATCLAW.md");
@@ -200,9 +212,7 @@ switch (cmd) {
     // start 前自動初始化（幂等，已存在的不覆蓋）
     const { needsToken } = ensureInitialized();
     if (needsToken) {
-      const configDir = process.env.CATCLAW_CONFIG_DIR
-        ? resolve(process.env.CATCLAW_CONFIG_DIR)
-        : join(homedir(), ".catclaw");
+      const configDir = resolve(process.env.CATCLAW_CONFIG_DIR);
       console.error(`\n❌ 請先設定 ${join(configDir, "catclaw.json")} 中的 discord.token`);
       process.exit(1);
     }
@@ -258,7 +268,8 @@ switch (cmd) {
     break;
 
   case "reset-session": {
-    const workspace = process.env.CATCLAW_WORKSPACE || join(homedir(), ".catclaw", "workspace");
+    if (!process.env.CATCLAW_WORKSPACE) { console.error("❌ 環境變數 CATCLAW_WORKSPACE 未設定"); process.exit(1); }
+    const workspace = resolve(process.env.CATCLAW_WORKSPACE);
     const sessionsPath = resolve(workspace, "data", "sessions.json");
     const targetChannel = process.argv[3];
 

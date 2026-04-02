@@ -493,6 +493,11 @@ export async function* agentLoop(
   const turnStartMs = Date.now();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  let totalCacheRead = 0;
+  let totalCacheWrite = 0;
+  let lastModel: string | undefined;
+  let lastProviderType: string | undefined;
+  let lastEstimated = false;
   let turnToolResultTokens = 0; // per-turn 工具結果 token 累計（省 token 用）
 
   eventBus.emit("turn:before", { accountId, channelId, sessionKey, prompt, projectId });
@@ -556,6 +561,11 @@ export async function* agentLoop(
 
       totalInputTokens += streamResult.usage.input;
       totalOutputTokens += streamResult.usage.output;
+      totalCacheRead += streamResult.usage.cacheRead ?? 0;
+      totalCacheWrite += streamResult.usage.cacheWrite ?? 0;
+      lastModel = streamResult.usage.model;
+      lastProviderType = streamResult.usage.providerType;
+      if (streamResult.usage.estimated) lastEstimated = true;
 
       if (controller.signal.aborted) break;
       if (streamResult.stopReason === "end_turn") break;
@@ -848,8 +858,13 @@ export async function* agentLoop(
       ceApplied: ceBreakdown?.strategiesApplied ?? [],
       tokensBeforeCE: ceBreakdown?.tokensBeforeCE,
       tokensAfterCE: ceBreakdown?.tokensAfterCE,
+      model: lastModel,
+      providerType: lastProviderType,
       inputTokens: totalInputTokens > 0 ? totalInputTokens : undefined,
       outputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
+      cacheRead: totalCacheRead > 0 ? totalCacheRead : undefined,
+      cacheWrite: totalCacheWrite > 0 ? totalCacheWrite : undefined,
+      estimated: lastEstimated || undefined,
       toolCalls: tracker.toolCalls.length,
       toolLogPath: toolLogPath ?? undefined,
       startTimeMs: turnStartMs,

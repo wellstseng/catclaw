@@ -26,9 +26,12 @@ module.exports = {
     watch_delay: 1000,
     autorestart: true,
     merge_logs: true,
-    env: {
-      CATCLAW_CONFIG_DIR: expandHome(process.env.CATCLAW_CONFIG_DIR) || `${homedir()}/.catclaw`,
-      CATCLAW_WORKSPACE: expandHome(process.env.CATCLAW_WORKSPACE) || `${homedir()}/.catclaw/workspace`,
-    },
+    env: (() => {
+      const configDir = expandHome(process.env.CATCLAW_CONFIG_DIR);
+      const workspace = expandHome(process.env.CATCLAW_WORKSPACE);
+      if (!configDir) { console.error("❌ .env 缺少 CATCLAW_CONFIG_DIR"); process.exit(1); }
+      if (!workspace) { console.error("❌ .env 缺少 CATCLAW_WORKSPACE"); process.exit(1); }
+      return { CATCLAW_CONFIG_DIR: configDir, CATCLAW_WORKSPACE: workspace };
+    })(),
   }]
 };

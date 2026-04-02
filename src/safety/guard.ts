@@ -39,6 +39,13 @@ const PROTECTED_WRITE_PATHS_DEFAULT = [
   "~/.gnupg/",
 ];
 
+/** auth-profile 相關檔案（credential 檔 + 狀態檔）禁止 AI 讀寫 */
+const AUTH_PROFILE_PATTERNS = [
+  /auth-profile\.json$/,
+  /auth-profiles\.json$/,
+  /-profiles\.json$/,       // {providerId}-profiles.json 狀態檔
+];
+
 const PROTECTED_READ_PATHS_DEFAULT = [
   "~/.catclaw/catclaw.json",
   "~/.catclaw/accounts/",
@@ -235,6 +242,14 @@ export class SafetyGuard {
     if (!filePath) return { blocked: true, reason: "路徑不能為空" };
 
     const abs = this.expandPath(filePath);
+
+    // auth-profile 檔案：讀寫皆禁止
+    const fileName = abs.split("/").pop() ?? "";
+    for (const pat of AUTH_PROFILE_PATTERNS) {
+      if (pat.test(fileName)) {
+        return { blocked: true, reason: `禁止${operation === "write" ? "寫入" : "讀取"} auth-profile 檔案：${abs}` };
+      }
+    }
 
     // 寫入保護
     if (operation === "write") {

@@ -108,6 +108,16 @@ export interface ProviderUsage {
   input: number;
   output: number;
   totalTokens: number;
+  /** prompt cache 建立消耗（Claude 等支援 cache 的 provider） */
+  cacheWrite?: number;
+  /** prompt cache 讀取（單價較低） */
+  cacheRead?: number;
+  /** 使用的模型 ID */
+  model?: string;
+  /** provider 類型識別（claude / ollama / openai-compat / codex-oauth） */
+  providerType?: string;
+  /** 是否為估算值（provider 未回傳 usage 時為 true） */
+  estimated?: boolean;
 }
 
 // ── StreamResult ──────────────────────────────────────────────────────────────
