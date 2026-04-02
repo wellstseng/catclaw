@@ -627,6 +627,15 @@ interface RawConfig {
   agents?: AgentsConfig;
   dashboard?: { enabled?: boolean; port?: number };
   toolBudget?: { resultTokenCap?: number; perTurnTotalCap?: number; toolTimeoutMs?: number };
+  contextEngineering?: ContextEngineeringConfig;
+  inboundHistory?: InboundHistoryConfig;
+  subagents?: Partial<SubagentsConfig>;
+  mcpServers?: Record<string, {
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+    tier?: "public" | "standard" | "elevated" | "admin" | "owner";
+  }>;
 }
 
 // ── 路徑解析 ──────────────────────────────────────────────────────────────────
@@ -949,6 +958,14 @@ function loadConfig(): BridgeConfig {
       port: raw.dashboard.port ?? 8088,
     } : undefined,
     toolBudget: raw.toolBudget,
+    contextEngineering: raw.contextEngineering,
+    inboundHistory: raw.inboundHistory,
+    subagents: raw.subagents ? {
+      maxConcurrent:     raw.subagents.maxConcurrent ?? 3,
+      defaultTimeoutMs:  raw.subagents.defaultTimeoutMs ?? 120_000,
+      defaultKeepSession: raw.subagents.defaultKeepSession ?? false,
+    } : undefined,
+    mcpServers: raw.mcpServers,
   };
 }
 

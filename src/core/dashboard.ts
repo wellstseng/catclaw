@@ -9,7 +9,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, writeFileSync, readdirSync, unlinkSync, renameSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, unlinkSync, renameSync, existsSync, mkdirSync, statSync, watchFile, unwatchFile } from "node:fs";
 import { dirname, basename, join, join as pathJoin, resolve } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
@@ -79,6 +79,57 @@ function tailLog(lines = 100): string {
     }
   }
   return "(log file not found)";
+}
+
+// ── SSE Log Streaming ────────────────────────────────────────────────────────
+const _sseClients = new Set<ServerResponse>();
+let _logWatchPath: string | null = null;
+let _logLastSize = 0;
+
+function findLogFile(): string | null {
+  const candidates = [
+    pathJoin(homedir(), ".pm2", "logs", "catclaw-out.log"),
+    pathJoin(homedir(), ".pm2", "logs", "catclaw-test-out.log"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+function startLogWatch(): void {
+  if (_logWatchPath) return;
+  const p = findLogFile();
+  if (!p) return;
+  _logWatchPath = p;
+  try { _logLastSize = statSync(p).size; } catch { _logLastSize = 0; }
+  watchFile(p, { interval: 500 }, () => {
+    if (_sseClients.size === 0) return;
+    try {
+      const newSize = statSync(p).size;
+      if (newSize <= _logLastSize) { _logLastSize = newSize; return; }
+      const buf = Buffer.alloc(newSize - _logLastSize);
+      const fd = require("node:fs").openSync(p, "r");
+      require("node:fs").readSync(fd, buf, 0, buf.length, _logLastSize);
+      require("node:fs").closeSync(fd);
+      _logLastSize = newSize;
+      const chunk = buf.toString("utf-8");
+      const lines = chunk.split("\n").filter(l => l.length > 0);
+      for (const line of lines) {
+        const msg = `data: ${JSON.stringify(line)}\n\n`;
+        for (const client of _sseClients) {
+          try { client.write(msg); } catch { _sseClients.delete(client); }
+        }
+      }
+    } catch { /* ignore */ }
+  });
+}
+
+function stopLogWatch(): void {
+  if (_logWatchPath) {
+    unwatchFile(_logWatchPath);
+    _logWatchPath = null;
+  }
 }
 
 // ── Signal restart ───────────────────────────────────────────────────────────
@@ -211,75 +262,103 @@ const HTML = `<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; }
-.topbar { background: #1a1d2e; padding: 12px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #2a2d3e; }
-.topbar h1 { font-size: 1.1rem; color: #a78bfa; flex: 1; }
-.tabs { display: flex; gap: 2px; background: #0f1117; padding: 0 20px; border-bottom: 1px solid #2a2d3e; }
-.tab { padding: 10px 16px; cursor: pointer; font-size: 0.85rem; color: #888; border-bottom: 2px solid transparent; }
-.tab.active { color: #a78bfa; border-bottom-color: #a78bfa; }
-.tab:hover:not(.active) { color: #ccc; }
+:root {
+  --bg: #0f1117; --bg2: #1a1d2e; --bg3: #1e2130; --bg4: #161827;
+  --fg: #e0e0e0; --fg2: #888; --fg3: #666;
+  --accent: #a78bfa; --accent2: #818cf8;
+  --border: #2a2d3e;
+  --green: #065f46; --green2: #34d399;
+  --red: #7f1d1d; --red2: #f87171;
+  --blue: #1e3a5f; --blue2: #60a5fa;
+  --purple: #4c1d95; --purple2: #5b21b6;
+  --warn: #f59e0b;
+  --font-scale: 1;
+}
+[data-theme="light"] {
+  --bg: #f5f5f5; --bg2: #ffffff; --bg3: #f0f0f0; --bg4: #e8e8e8;
+  --fg: #1a1a1a; --fg2: #666; --fg3: #999;
+  --accent: #7c3aed; --accent2: #6d28d9;
+  --border: #d0d0d0;
+  --green: #d1fae5; --green2: #059669;
+  --red: #fee2e2; --red2: #dc2626;
+  --blue: #dbeafe; --blue2: #2563eb;
+  --purple: #ede9fe; --purple2: #7c3aed;
+  --warn: #d97706;
+}
+html { font-size: calc(14px * var(--font-scale)); }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+.topbar { background: var(--bg2); padding: 12px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+.topbar h1 { font-size: 1.1rem; color: var(--accent); flex: 1; }
+.tabs { display: flex; gap: 2px; background: var(--bg); padding: 0 20px; border-bottom: 1px solid var(--border); }
+.tab { padding: 10px 16px; cursor: pointer; font-size: 0.85rem; color: var(--fg2); border-bottom: 2px solid transparent; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover:not(.active) { color: var(--fg); }
 .pane { display: none; padding: 20px; }
 .pane.active { display: block; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
-.card { background: #1e2130; border-radius: 8px; padding: 16px; }
-.card h2 { font-size: 0.9rem; color: #818cf8; margin-bottom: 10px; }
+.card { background: var(--bg3); border-radius: 8px; padding: 16px; }
+.card h2 { font-size: 0.9rem; color: var(--accent2); margin-bottom: 10px; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 16px; }
-.stat { background: #1e2130; border-radius: 8px; padding: 12px; text-align: center; }
-.stat-val { font-size: 1.3rem; font-weight: bold; color: #a78bfa; }
-.stat-lbl { font-size: 0.72rem; color: #888; margin-top: 4px; }
+.stat { background: var(--bg3); border-radius: 8px; padding: 12px; text-align: center; }
+.stat-val { font-size: 1.3rem; font-weight: bold; color: var(--accent); }
+.stat-lbl { font-size: 0.72rem; color: var(--fg2); margin-top: 4px; }
 canvas { max-height: 200px; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-.tbl th, .tbl td { padding: 6px 8px; border-bottom: 1px solid #2a2d3e; text-align: left; }
-.tbl th { color: #818cf8; background: #161827; }
-.tbl tr:hover td { background: #1e2130; }
-.btn { background: #4c1d95; border: none; color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
-.btn:hover { background: #5b21b6; }
-.btn-green { background: #065f46; } .btn-green:hover { background: #047857; }
-.btn-red { background: #7f1d1d; } .btn-red:hover { background: #991b1b; }
+.tbl th, .tbl td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+.tbl th { color: var(--accent2); background: var(--bg4); }
+.tbl tr:hover td { background: var(--bg3); }
+.btn { background: var(--purple); border: none; color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+.btn:hover { background: var(--purple2); }
+.btn-green { background: var(--green); } .btn-green:hover { background: #047857; }
+.btn-red { background: var(--red); } .btn-red:hover { background: #991b1b; }
 .btn-sm { padding: 3px 8px; font-size: 0.72rem; }
 .msg { font-size: 0.8rem; margin: 6px 0; }
-.msg.ok { color: #34d399; } .msg.err { color: #f87171; }
+.msg.ok { color: var(--green2); } .msg.err { color: var(--red2); }
 .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; }
-.badge-run { background: #065f46; color: #34d399; }
-.badge-done { background: #1e3a5f; color: #60a5fa; }
-.badge-err { background: #7f1d1d; color: #f87171; }
-textarea { width: 100%; background: #0f1117; color: #e0e0e0; border: 1px solid #2a2d3e; border-radius: 6px; padding: 8px; font-family: monospace; font-size: 0.78rem; resize: vertical; }
+.badge-run { background: var(--green); color: var(--green2); }
+.badge-done { background: var(--blue); color: var(--blue2); }
+.badge-err { background: var(--red); color: var(--red2); }
+textarea { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-family: monospace; font-size: 0.78rem; resize: vertical; }
 details summary { cursor: pointer; color: #818cf8; font-size: 0.78rem; padding: 4px 0; }
 details[open] summary { margin-bottom: 6px; }
 .cfg-section { margin-bottom: 12px; }
-.cfg-section summary { font-size: 0.88rem; font-weight: bold; color: #a78bfa; cursor: pointer; padding: 8px 12px; background: #161827; border-radius: 6px; }
+.cfg-section summary { font-size: 0.88rem; font-weight: bold; color: var(--accent); cursor: pointer; padding: 8px 12px; background: var(--bg4); border-radius: 6px; }
 .cfg-section[open] summary { border-radius: 6px 6px 0 0; }
-.cfg-fields { padding: 12px; background: #1a1d2e; border-radius: 0 0 6px 6px; }
+.cfg-fields { padding: 12px; background: var(--bg2); border-radius: 0 0 6px 6px; }
 .cfg-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-.cfg-row label { min-width: 180px; font-size: 0.78rem; color: #aaa; }
+.cfg-row label { min-width: 180px; font-size: 0.78rem; color: var(--fg2); }
 .cfg-row input[type=text], .cfg-row input[type=number], .cfg-row input[type=password], .cfg-row select {
-  flex: 1; min-width: 160px; background: #0f1117; color: #e0e0e0; border: 1px solid #2a2d3e; border-radius: 4px; padding: 4px 8px; font-size: 0.78rem; font-family: monospace;
+  flex: 1; min-width: 160px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 0.78rem; font-family: monospace;
 }
 .cfg-row input[type=number] { max-width: 120px; }
-.cfg-toggle { position: relative; display: inline-block; width: 36px; min-width: 36px; height: 20px; flex-shrink: 0; }
+.cfg-toggle { position: relative; display: block; width: 36px; min-width: 36px; max-width: 36px; height: 20px; flex: 0 0 36px; overflow: hidden; }
 .cfg-toggle input { opacity: 0; width: 0; height: 0; }
 .cfg-toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #333; border-radius: 10px; transition: .2s; }
-.cfg-toggle .slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: #888; border-radius: 50%; transition: .2s; }
-.cfg-toggle input:checked + .slider { background: #065f46; }
-.cfg-toggle input:checked + .slider:before { transform: translateX(16px); background: #34d399; }
+.cfg-toggle .slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: var(--fg2); border-radius: 50%; transition: .2s; }
+.cfg-toggle input:checked + .slider { background: var(--green); }
+.cfg-toggle input:checked + .slider:before { transform: translateX(16px); background: var(--green2); }
 .cfg-map { width: 100%; }
 .cfg-map-row { display: flex; gap: 4px; margin-bottom: 4px; align-items: center; }
-.cfg-map-row input { flex: 1; background: #0f1117; color: #e0e0e0; border: 1px solid #2a2d3e; border-radius: 4px; padding: 3px 6px; font-size: 0.75rem; font-family: monospace; }
-.cfg-map-row .btn-x { background: #7f1d1d; border: none; color: #f87171; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; }
-.cfg-add { background: #1e3a5f; border: none; color: #60a5fa; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.72rem; margin-top: 4px; }
+.cfg-map-row input { flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 0.75rem; font-family: monospace; }
+.cfg-map-row .btn-x { background: var(--red); border: none; color: var(--red2); width: 22px; height: 22px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; }
+.cfg-add { background: var(--blue); border: none; color: var(--blue2); padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 0.72rem; margin-top: 4px; }
 .cfg-list { width: 100%; }
 .cfg-list-item { display: flex; gap: 4px; margin-bottom: 4px; }
-.cfg-list-item input { flex: 1; background: #0f1117; color: #e0e0e0; border: 1px solid #2a2d3e; border-radius: 4px; padding: 3px 6px; font-size: 0.75rem; font-family: monospace; }
-.cfg-sub { margin-left: 16px; border-left: 2px solid #2a2d3e; padding-left: 12px; margin-top: 6px; margin-bottom: 6px; }
-.cfg-dynamic-entry { background: #161827; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+.cfg-list-item input { flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 0.75rem; font-family: monospace; }
+.cfg-sub { margin-left: 16px; border-left: 2px solid var(--border); padding-left: 12px; margin-top: 6px; margin-bottom: 6px; }
+.cfg-dynamic-entry { background: var(--bg4); border-radius: 6px; padding: 10px; margin-bottom: 8px; }
 .cfg-dynamic-entry .entry-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .cfg-dynamic-entry .entry-header input { flex: 1; font-weight: bold; }
-.cfg-hint { font-size: 0.68rem; color: #666; margin-left: 4px; }
+.cfg-hint { font-size: 0.68rem; color: var(--fg3); margin-left: 4px; }
 </style>
 </head>
 <body>
 <div class="topbar">
   <h1>🐱 CatClaw Dashboard</h1>
+  <span style="font-size:0.72rem;color:var(--fg2)">字體</span>
+  <input type="range" id="font-slider" min="0.7" max="1.4" step="0.05" value="1" style="width:80px;accent-color:var(--accent)" onchange="setFontScale(this.value)" oninput="setFontScale(this.value)">
+  <span id="font-pct" style="font-size:0.72rem;color:var(--fg2);min-width:30px">100%</span>
+  <button class="btn btn-sm" id="theme-btn" onclick="toggleTheme()">☀️ Light</button>
   <button class="btn btn-sm" onclick="refreshAll()">↻ 全部刷新</button>
 </div>
 <div class="tabs">
@@ -324,9 +403,8 @@ details[open] summary { margin-bottom: 6px; }
 <!-- 日誌 -->
 <div id="pane-logs" class="pane">
   <div class="card">
-    <h2>PM2 日誌（最近 200 行）
-      <button class="btn btn-sm" style="float:right;margin-left:4px" onclick="startLogRefresh()">▶ 自動刷新</button>
-      <button class="btn btn-sm" style="float:right" onclick="loadLogs()">↻ 讀取</button>
+    <h2>PM2 日誌（即時串流）
+      <button class="btn btn-sm" style="float:right" onclick="connectLogStream()">↻ 重新連線</button>
     </h2>
     <textarea id="log-area" rows="30" readonly></textarea>
   </div>
@@ -391,6 +469,12 @@ details[open] summary { margin-bottom: 6px; }
     <h2>Provider 狀態（Cooldown / Round-Robin）</h2>
     <div id="auth-statuses"></div>
   </div>
+  <div class="card" style="margin-top:16px">
+    <h2>models.json（唯讀）
+      <button class="btn btn-sm" style="float:right" onclick="loadModelsJson()">↻ 讀取</button>
+    </h2>
+    <div id="models-json-viewer" style="font-size:0.75rem;color:#888">點擊「讀取」載入</div>
+  </div>
 </div>
 
 <!-- Config -->
@@ -399,14 +483,36 @@ details[open] summary { margin-bottom: 6px; }
     <button class="btn" onclick="loadCfg()">↻ 讀取</button>
     <button class="btn btn-green" onclick="saveCfg()">💾 備份後儲存</button>
     <div id="cfg-msg" class="msg" style="flex:1"></div>
-    <p style="font-size:0.72rem;color:#f59e0b;margin:0">⚠ 敏感欄位顯示 ***，儲存前請手動還原</p>
+    <p style="font-size:0.72rem;color:var(--fg3);margin:0">🔒 敏感欄位顯示 ***，儲存時自動保留原值</p>
   </div>
   <div id="cfg-gui"></div>
 </div>
 
 <script>
+// ── Theme + Font Scale ──────────────────────────────────────────────────────
+function setFontScale(v) {
+  document.documentElement.style.setProperty('--font-scale', v);
+  document.getElementById('font-pct').textContent = Math.round(v * 100) + '%';
+  localStorage.setItem('cc-font-scale', v);
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'light' ? '' : 'light';
+  if (next) document.documentElement.setAttribute('data-theme', 'light');
+  else document.documentElement.removeAttribute('data-theme');
+  document.getElementById('theme-btn').textContent = next === 'light' ? '🌙 Dark' : '☀️ Light';
+  localStorage.setItem('cc-theme', next || 'dark');
+}
+(function initPrefs() {
+  const t = localStorage.getItem('cc-theme');
+  if (t === 'light') { document.documentElement.setAttribute('data-theme', 'light'); document.getElementById('theme-btn').textContent = '🌙 Dark'; }
+  const f = localStorage.getItem('cc-font-scale');
+  if (f) { document.getElementById('font-slider').value = f; setFontScale(f); }
+})();
+
 let tokenChart, ceChart;
 let logTimer = null;
+let logES = null;
 
 function fmtK(n) { return n >= 10000 ? (n/1000).toFixed(1)+'k' : n.toLocaleString(); }
 function fmtCache(r, w) {
@@ -420,7 +526,8 @@ function switchTab(id, el) {
   el.classList.add('active');
   document.getElementById('pane-' + id).classList.add('active');
   if (id === 'sessions') loadSessions();
-  if (id === 'logs') loadLogs();
+  if (id === 'logs') connectLogStream();
+  if (id !== 'logs') disconnectLogStream();
   if (id === 'ops') { loadSubagents(); }
   if (id === 'auth') loadAuthProfiles();
   if (id === 'cron') loadCron();
@@ -436,7 +543,8 @@ async function loadStatus() {
     document.getElementById('status-grid').innerHTML = [
       ['Uptime', d.uptimeStr], ['Memory', d.memoryMB + ' MB'],
       ['Heap', d.heapUsedMB + ' MB'], ['PID', d.pid],
-    ].map(([l,v]) => \`<div class="stat"><div class="stat-val" style="font-size:1rem">\${v}</div><div class="stat-lbl">\${l}</div></div>\`).join('');
+      ['Config 目錄', d.configDir || '(未設定)'], ['工作目錄', d.workspace || '(未設定)'],
+    ].map(([l,v]) => \`<div class="stat"><div class="stat-val" style="font-size:\${String(v).length > 20 ? '0.7rem' : '1rem'}">\${v}</div><div class="stat-lbl">\${l}</div></div>\`).join('');
   } catch {}
 }
 
@@ -524,21 +632,36 @@ async function loadSessions() {
   } catch(e) { document.getElementById('sessions-list').innerHTML = '讀取失敗：' + e; }
 }
 
-// ── 日誌 ─────────────────────────────────────────────────────────────────────
-async function loadLogs() {
-  try {
-    const text = await fetch('/api/logs?lines=200').then(r => r.text());
-    const el = document.getElementById('log-area');
-    el.value = text;
+// ── 日誌（SSE 即時串流）──────────────────────────────────────────────────────
+function connectLogStream() {
+  if (logES) { logES.close(); logES = null; }
+  const el = document.getElementById('log-area');
+  el.value = '連線中...';
+  logES = new EventSource('/api/logs/stream');
+  logES.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+    if (typeof data === 'string' && data.includes('\\n')) {
+      // 初始整包
+      el.value = data;
+    } else {
+      // 增量行
+      el.value += '\\n' + data;
+      // 限制顯示行數避免 DOM 過大
+      const lines = el.value.split('\\n');
+      if (lines.length > 2000) el.value = lines.slice(-1500).join('\\n');
+    }
     el.scrollTop = el.scrollHeight;
-  } catch(e) { document.getElementById('log-area').value = '讀取失敗：' + e; }
+  };
+  logES.onerror = function() {
+    el.value += '\\n[SSE 斷線，3 秒後重連...]';
+  };
 }
-
-function startLogRefresh() {
-  if (logTimer) { clearInterval(logTimer); logTimer = null; return; }
-  loadLogs();
-  logTimer = setInterval(loadLogs, 5000);
+function disconnectLogStream() {
+  if (logES) { logES.close(); logES = null; }
 }
+// 相容舊按鈕
+async function loadLogs() { connectLogStream(); }
+function startLogRefresh() { connectLogStream(); }
 
 // ── 操作 ─────────────────────────────────────────────────────────────────────
 async function doRestart() {
@@ -670,8 +793,21 @@ let _cfgData = null;
 
 // Schema: 描述 config 結構，驅動表單生成
 const CFG_SCHEMA = [
+  { key:'agentDefaults', label:'V2 Agent Defaults', fields:[
+    {k:'agentDefaults.model.primary',t:'text',l:'Primary Model',d:'主模型（alias 或 provider/model）'},
+    {k:'agentDefaults.model.fallbacks',t:'list',l:'Fallback Models',d:'降級模型清單'},
+    {k:'agentDefaults.systemPrompt',t:'text',l:'System Prompt',d:'Agent 預設 system prompt'},
+  ], dynamic:true, dynamicPath:'agentDefaults.models', entryFields:[
+    {k:'alias',t:'text',l:'Alias',d:'短名稱（如 sonnet, haiku）'},
+  ]},
+  { key:'modelsConfig', label:'V2 Models Config', fields:[
+    {k:'modelsConfig.mode',t:'select',l:'Mode',opts:['merge','replace'],d:'merge=內建+自訂, replace=只用自訂'},
+  ], dynamic:true, dynamicPath:'modelsConfig.providers', entryFields:[
+    {k:'baseUrl',t:'text',l:'Base URL'},
+    {k:'api',t:'select',l:'API Type',opts:['','anthropic-messages','openai-completions','openai-codex-responses','ollama']},
+    {k:'apiKey',t:'pw',l:'API Key'},
+  ]},
   { key:'_basic', label:'基本設定', fields:[
-    {k:'provider',t:'text',l:'預設 Provider ID',d:'所有頻道預設使用的 LLM provider'},
     {k:'logLevel',t:'select',l:'Log Level',opts:['debug','info','warn','error'],d:'日誌等級'},
     {k:'turnTimeoutMs',t:'num',l:'Turn Timeout (ms)',d:'單次 turn 最長執行時間'},
     {k:'turnTimeoutToolCallMs',t:'num',l:'Tool Call Timeout (ms)',d:'含 tool call 的 turn 最長時間'},
@@ -686,24 +822,6 @@ const CFG_SCHEMA = [
     {k:'discord.dm.enabled',t:'bool',l:'DM 啟用'},
     {k:'admin.allowedUserIds',t:'list',l:'管理員 User IDs'},
   ]},
-  { key:'providers', label:'Providers', dynamic:true, entryFields:[
-    {k:'type',t:'select',l:'Type',opts:['','claude','claude-oauth','openai','openai-compat','codex-oauth','ollama'],d:'Provider 型別（空 = 自動偵測）'},
-    {k:'mode',t:'select',l:'Auth Mode',opts:['','token','api','password'],d:'token=OAuth, api=API Key, password=Basic Auth'},
-    {k:'token',t:'pw',l:'Token / API Key',d:'支援環境變數展開'},
-    {k:'model',t:'text',l:'Model',d:'模型 ID'},
-    {k:'baseUrl',t:'text',l:'Base URL',d:'OpenAI 相容端點'},
-    {k:'host',t:'text',l:'Host',d:'Ollama host (如 http://localhost:11434)'},
-    {k:'think',t:'bool',l:'Think Mode',d:'Ollama thinking 模式（qwen3 等）'},
-    {k:'thinking',t:'bool',l:'Extended Thinking',d:'Claude extended thinking'},
-    {k:'numPredict',t:'num',l:'Num Predict',d:'Ollama 最大輸出 token'},
-    {k:'username',t:'text',l:'Username',d:'Basic Auth 帳號'},
-    {k:'password',t:'pw',l:'Password',d:'Basic Auth 密碼'},
-    {k:'wsUrl',t:'text',l:'WebSocket URL',d:'OpenClaw WS URL'},
-    {k:'agentId',t:'text',l:'Agent ID',d:'OpenClaw agent ID'},
-    {k:'oauthTokenPath',t:'text',l:'OAuth Token Path',d:'Codex OAuth 檔案路徑'},
-    {k:'oauthRefreshUrl',t:'text',l:'OAuth Refresh URL'},
-    {k:'oauthClientId',t:'text',l:'OAuth Client ID'},
-  ]},
   { key:'providerRouting', label:'Provider Routing', fields:[
     {k:'providerRouting.failoverChain',t:'list',l:'Failover Chain'},
   ], maps:[
@@ -717,7 +835,7 @@ const CFG_SCHEMA = [
       {k:'cooldownMs',t:'num',l:'Cooldown (ms)'},
     ]},
   ]},
-  { key:'guilds', label:'Guilds', dynamicPath:'discord.guilds', entryFields:[
+  { key:'guilds', label:'Guilds', dynamic:true, dynamicPath:'discord.guilds', entryFields:[
     {k:'allow',t:'bool',l:'Allow'},
     {k:'requireMention',t:'bool',l:'Require Mention'},
     {k:'allowBot',t:'bool',l:'Allow Bot'},
@@ -938,7 +1056,7 @@ function renderField(f, val, prefix) {
   const v = val ?? '';
   const hint = f.d ? \`<span class="cfg-hint" title="\${esc(f.d)}">ℹ️ \${f.d}</span>\` : '';
   if (f.t === 'bool') {
-    return \`<div class="cfg-row"><label>\${f.l}\${hint}</label><label class="cfg-toggle"><input type="checkbox" data-path="\${id}" \${v ? 'checked' : ''}><span class="slider"></span></label></div>\`;
+    return \`<div class="cfg-row"><label>\${f.l}\${hint}</label><div class="cfg-toggle"><input type="checkbox" data-path="\${id}" \${v ? 'checked' : ''}><span class="slider"></span></div></div>\`;
   }
   if (f.t === 'select') {
     const opts = (f.opts||[]).map(o => \`<option value="\${o}" \${v===o?'selected':''}>\${o||'(auto)'}</option>\`).join('');
@@ -1131,6 +1249,34 @@ function showCfgMsg(msg, ok) {
   el.textContent = msg;
 }
 
+// ── Models JSON Viewer ──────────────────────────────────────────────────────
+async function loadModelsJson() {
+  try {
+    const d = await fetch('/api/models-json').then(r => r.json());
+    const el = document.getElementById('models-json-viewer');
+    if (!d.exists) { el.innerHTML = '<span style="color:#f59e0b">models.json 不存在（V1 模式？）</span>'; return; }
+    const providers = d.data?.providers || {};
+    let html = '<div style="font-size:0.68rem;color:#666;margin-bottom:8px">📁 ' + (d.path||'') + '</div>';
+    for (const [pid, prov] of Object.entries(providers)) {
+      const p = prov || {};
+      html += '<div style="margin-bottom:10px;padding:8px;background:#161827;border-radius:6px">';
+      html += '<div style="font-weight:bold;color:#a78bfa;margin-bottom:6px">' + esc(pid) + ' <span style="color:#666;font-weight:normal;font-size:0.72rem">' + esc(p.baseUrl||'') + ' / ' + esc(p.api||'auto') + '</span></div>';
+      const models = p.models || [];
+      if (models.length > 0) {
+        html += '<table class="tbl" style="font-size:0.72rem"><thead><tr><th>Model ID</th><th>Name</th><th>Context</th><th>Max Out</th><th>Cost (in/out)</th><th>Input</th></tr></thead><tbody>';
+        for (const m of models) {
+          html += '<tr><td style="color:#60a5fa">' + esc(m.id) + '</td><td>' + esc(m.name||'') + '</td><td>' + (m.contextWindow||'?').toLocaleString() + '</td><td>' + (m.maxTokens||'?').toLocaleString() + '</td><td>$' + (m.cost?.input??'?') + '/$' + (m.cost?.output??'?') + '</td><td>' + (m.input||[]).join(', ') + '</td></tr>';
+        }
+        html += '</tbody></table>';
+      } else {
+        html += '<span style="color:#888">無模型定義</span>';
+      }
+      html += '</div>';
+    }
+    el.innerHTML = html;
+  } catch(e) { document.getElementById('models-json-viewer').innerHTML = '<span class="msg err">讀取失敗：' + e + '</span>'; }
+}
+
 // ── Auth Profiles ────────────────────────────────────────────────────────────
 async function loadAuthProfiles() {
   try {
@@ -1248,7 +1394,29 @@ export class DashboardServer {
           heapUsedMB: Math.round(mem.heapUsed/1024/1024),
           nodeVersion: process.version,
           pid: process.pid,
+          configDir: process.env.CATCLAW_CONFIG_DIR ?? "(未設定)",
+          workspace: process.env.CATCLAW_WORKSPACE ?? "(未設定)",
         }));
+        return;
+      }
+
+      // GET /api/logs/stream (SSE)
+      if (url === "/api/logs/stream" && method === "GET") {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+        // 送出初始 log
+        const initial = tailLog(200);
+        res.write(`data: ${JSON.stringify(initial)}\n\n`);
+        _sseClients.add(res);
+        startLogWatch();
+        req.on("close", () => {
+          _sseClients.delete(res);
+          if (_sseClients.size === 0) stopLogWatch();
+        });
         return;
       }
 
@@ -1415,6 +1583,28 @@ export class DashboardServer {
         return;
       }
 
+      // GET /api/models-json (唯讀：models.json 內容)
+      if (url === "/api/models-json" && method === "GET") {
+        void (async () => {
+          try {
+            const { resolveWorkspaceDirSafe } = await import("./config.js");
+            const ws = resolveWorkspaceDirSafe();
+            const modelsPath = join(ws, "agents", "default", "models.json");
+            if (!existsSync(modelsPath)) {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ exists: false }));
+              return;
+            }
+            const data = JSON.parse(readFileSync(modelsPath, "utf-8"));
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ exists: true, data, path: modelsPath }));
+          } catch (err) {
+            res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+          }
+        })();
+        return;
+      }
+
       // GET /api/auth-profiles
       if (url === "/api/auth-profiles" && method === "GET") {
         void (async () => {
@@ -1422,26 +1612,55 @@ export class DashboardServer {
             const { resolveWorkspaceDirSafe } = await import("./config.js");
             const ws = resolveWorkspaceDirSafe();
             const credPath = join(ws, "agents", "default", "auth-profile.json");
-            const creds: Array<{ id: string; credential: string }> = existsSync(credPath)
-              ? JSON.parse(readFileSync(credPath, "utf-8"))
-              : [];
-            // 遮罩 credential
-            const masked = creds.map(c => ({
-              id: c.id,
-              credential: c.credential ? c.credential.slice(0, 12) + "..." + c.credential.slice(-4) : "",
-            }));
-            // 讀取各 provider 的 profiles 狀態
+            let masked: Array<{ id: string; credential: string }> = [];
+            const statuses: Record<string, Array<{ id: string; lastUsed?: number; cooldownUntil?: number; cooldownReason?: string; disabled?: boolean }>> = {};
+
+            if (existsSync(credPath)) {
+              const raw = JSON.parse(readFileSync(credPath, "utf-8"));
+              if (Array.isArray(raw)) {
+                // V1 陣列格式
+                masked = raw.map((c: { id: string; credential: string }) => ({
+                  id: c.id,
+                  credential: c.credential ? c.credential.slice(0, 12) + "..." + c.credential.slice(-4) : "",
+                }));
+              } else if (raw.profiles && typeof raw.profiles === "object") {
+                // V2 物件格式
+                const profiles = raw.profiles as Record<string, { type: string; provider: string; key?: string; token?: string; access?: string }>;
+                const usageStats = (raw.usageStats ?? {}) as Record<string, { lastUsed?: number; cooldownUntil?: number; disabledUntil?: number; disabledReason?: string }>;
+                for (const [pid, cred] of Object.entries(profiles)) {
+                  const secret = cred.key ?? cred.token ?? cred.access ?? "";
+                  masked.push({
+                    id: pid,
+                    credential: secret ? secret.slice(0, 12) + "..." + secret.slice(-4) : `(${cred.type})`,
+                  });
+                  // 建立 provider 狀態
+                  const provider = cred.provider ?? pid.split(":")[0];
+                  if (!statuses[provider]) statuses[provider] = [];
+                  const stats = usageStats[pid];
+                  statuses[provider].push({
+                    id: pid,
+                    lastUsed: stats?.lastUsed,
+                    cooldownUntil: stats?.cooldownUntil,
+                    cooldownReason: stats?.disabledReason,
+                    disabled: stats?.disabledUntil === Infinity,
+                  });
+                }
+              }
+            }
+
+            // 也讀取舊格式的 per-provider profiles（相容）
             const profilesDir = join(ws, "data", "auth-profiles");
-            const statuses: Record<string, unknown[]> = {};
             if (existsSync(profilesDir)) {
               for (const f of readdirSync(profilesDir).filter(f => f.endsWith("-profiles.json"))) {
                 try {
                   const data = JSON.parse(readFileSync(join(profilesDir, f), "utf-8"));
                   const providerId = data.providerId ?? f.replace("-profiles.json", "");
-                  statuses[providerId] = (data.profiles ?? []).map((p: Record<string, unknown>) => ({
-                    id: p.id, lastUsed: p.lastUsed, cooldownUntil: p.cooldownUntil,
-                    cooldownReason: p.cooldownReason, disabled: p.disabled,
-                  }));
+                  if (!statuses[providerId]) {
+                    statuses[providerId] = (data.profiles ?? []).map((p: Record<string, unknown>) => ({
+                      id: p.id, lastUsed: p.lastUsed, cooldownUntil: p.cooldownUntil,
+                      cooldownReason: p.cooldownReason, disabled: p.disabled,
+                    }));
+                  }
                 } catch { /* skip */ }
               }
             }
@@ -1454,7 +1673,7 @@ export class DashboardServer {
         return;
       }
 
-      // POST /api/auth-profiles (新增/刪除 credential)
+      // POST /api/auth-profiles (新增/刪除 credential — 支援 V2 格式)
       if (url === "/api/auth-profiles" && method === "POST") {
         const chunks: Buffer[] = [];
         req.on("data", (c: Buffer) => chunks.push(c));
@@ -1465,30 +1684,44 @@ export class DashboardServer {
               const ws = resolveWorkspaceDirSafe();
               const credPath = join(ws, "agents", "default", "auth-profile.json");
               const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as {
-                action: "add" | "remove" | "set";
+                action: "add" | "remove";
                 id?: string;
                 credential?: string;
-                credentials?: Array<{ id: string; credential: string }>;
+                provider?: string;
               };
-              let creds: Array<{ id: string; credential: string }> = existsSync(credPath)
-                ? JSON.parse(readFileSync(credPath, "utf-8"))
-                : [];
-              if (body.action === "add" && body.id && body.credential) {
-                const existing = creds.find(c => c.id === body.id);
-                if (existing) existing.credential = body.credential;
-                else creds.push({ id: body.id, credential: body.credential });
-              } else if (body.action === "remove" && body.id) {
-                creds = creds.filter(c => c.id !== body.id);
-              } else if (body.action === "set" && body.credentials) {
-                creds = body.credentials;
+
+              // 載入現有資料（支援 V1 陣列和 V2 物件）
+              let data: { version: number; profiles: Record<string, { type: string; provider: string; key: string }>; order: Record<string, string[]>; usageStats: Record<string, unknown> };
+              if (existsSync(credPath)) {
+                const raw = JSON.parse(readFileSync(credPath, "utf-8"));
+                if (Array.isArray(raw)) {
+                  // V1 → V2 就地轉換
+                  const profiles: Record<string, { type: string; provider: string; key: string }> = {};
+                  for (const c of raw as Array<{ id: string; credential: string }>) {
+                    profiles[`anthropic:${c.id}`] = { type: "api_key", provider: "anthropic", key: c.credential };
+                  }
+                  data = { version: 1, profiles, order: {}, usageStats: {} };
+                } else {
+                  data = { version: raw.version ?? 1, profiles: raw.profiles ?? {}, order: raw.order ?? {}, usageStats: raw.usageStats ?? {} };
+                }
               } else {
-                throw new Error("無效操作");
+                data = { version: 1, profiles: {}, order: {}, usageStats: {} };
+              }
+
+              if (body.action === "add" && body.id && body.credential) {
+                const provider = body.provider ?? body.id.split(":")[0] ?? "anthropic";
+                data.profiles[body.id] = { type: "api_key", provider, key: body.credential };
+              } else if (body.action === "remove" && body.id) {
+                delete data.profiles[body.id];
+                if (data.usageStats) delete data.usageStats[body.id];
+              } else {
+                throw new Error("無效操作（需要 action=add/remove + id）");
               }
               mkdirSync(dirname(credPath), { recursive: true });
               const tmp = credPath + ".tmp";
-              writeFileSync(tmp, JSON.stringify(creds, null, 2), "utf-8");
+              writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
               renameSync(tmp, credPath);
-              res.writeHead(200); res.end(JSON.stringify({ success: true, count: creds.length }));
+              res.writeHead(200); res.end(JSON.stringify({ success: true, count: Object.keys(data.profiles).length }));
             } catch (err) {
               res.writeHead(400); res.end(JSON.stringify({ error: String(err) }));
             }
