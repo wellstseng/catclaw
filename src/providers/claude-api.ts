@@ -173,7 +173,7 @@ export class ClaudeApiProvider implements LLMProvider {
   readonly maxContextTokens = 200_000;
 
   private token?: string;
-  private modelId: string;
+  readonly modelId: string;
   private _store?: AuthProfileStore;
 
   constructor(id: string, entry: ProviderEntry) {

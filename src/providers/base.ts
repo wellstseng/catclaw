@@ -128,6 +128,8 @@ export interface LLMProvider {
   readonly name: string;
   readonly supportsToolUse: boolean;
   readonly maxContextTokens: number;
+  /** 可選：主要模型 ID（用於 /status 顯示） */
+  readonly modelId?: string;
 
   stream(messages: Message[], opts?: ProviderOpts): Promise<StreamResult>;
 

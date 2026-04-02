@@ -46,7 +46,8 @@ export const statusSkill: Skill = {
       lines.push(`\n**Providers** (${providers.length})`);
       for (const p of providers) {
         const active = session?.providerId === p.id ? " ◀" : "";
-        lines.push(`  \`${p.id}\`${active}`);
+        const model = p.modelId ? ` (${p.modelId})` : "";
+        lines.push(`  \`${p.id}\`${model}${active}`);
       }
     } catch { /* provider registry not ready */ }
 

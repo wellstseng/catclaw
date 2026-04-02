@@ -30,14 +30,14 @@ export class OpenAICompatProvider implements LLMProvider {
   readonly maxContextTokens = 128_000;
 
   private baseUrl: string;
-  private model: string;
+  readonly modelId: string;
   private token?: string;
 
   constructor(id: string, entry: ProviderEntry) {
     this.id = id;
     this.name = `OpenAI-Compat (${id})`;
     this.baseUrl = (entry.baseUrl ?? entry.host ?? DEFAULT_BASE_URL).replace(/\/$/, "");
-    this.model = entry.model ?? DEFAULT_MODEL;
+    this.modelId = entry.model ?? DEFAULT_MODEL;
     this.token = entry.token;
     // 預設支援 tool_use（Ollama 新版支援）；可由 config 覆寫
     this.supportsToolUse = (entry as Record<string, unknown>)["supportsToolUse"] !== false;
@@ -50,7 +50,7 @@ export class OpenAICompatProvider implements LLMProvider {
       const resp = await fetch(`${this.baseUrl}/api/show`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: this.model }),
+        body: JSON.stringify({ name: this.modelId }),
         signal: AbortSignal.timeout(5000),
       });
       if (resp.ok) {
@@ -58,7 +58,7 @@ export class OpenAICompatProvider implements LLMProvider {
         const hasTool = info?.capabilities?.includes("tools") ?? false;
         (this as { supportsToolUse: boolean }).supportsToolUse = hasTool;
         if (!hasTool) {
-          log.warn(`[openai-compat:${this.id}] 模型 ${this.model} 不支援 tool_use，純文字模式`);
+          log.warn(`[openai-compat:${this.id}] 模型 ${this.modelId} 不支援 tool_use，純文字模式`);
         }
       }
     } catch {
@@ -78,7 +78,7 @@ export class OpenAICompatProvider implements LLMProvider {
     const openaiMessages = convertMessages(messages, opts.systemPrompt);
 
     const body: Record<string, unknown> = {
-      model: this.model,
+      model: this.modelId,
       max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
       messages: openaiMessages,
       stream: true,
@@ -101,7 +101,7 @@ export class OpenAICompatProvider implements LLMProvider {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
 
-    log.debug(`[openai-compat:${this.id}] POST /v1/chat/completions model=${this.model} msgs=${messages.length}`);
+    log.debug(`[openai-compat:${this.id}] POST /v1/chat/completions model=${this.modelId} msgs=${messages.length}`);
 
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: "POST",

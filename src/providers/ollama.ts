@@ -57,7 +57,7 @@ export class OllamaProvider implements LLMProvider {
   readonly maxContextTokens = 128_000;
 
   private host: string;
-  private model: string;
+  readonly modelId: string;
   private think: boolean;
   private numPredict: number;
 
@@ -65,7 +65,7 @@ export class OllamaProvider implements LLMProvider {
     this.id = id;
     this.name = `Ollama (${id})`;
     this.host = (entry.host ?? entry.baseUrl ?? DEFAULT_HOST).replace(/\/$/, "");
-    this.model = entry.model ?? DEFAULT_MODEL;
+    this.modelId = entry.model ?? DEFAULT_MODEL;
     this.think = (entry as Record<string, unknown>)["think"] === true;
     this.numPredict = (entry as Record<string, unknown>)["numPredict"] as number ?? DEFAULT_NUM_PREDICT;
     this.supportsToolUse = (entry as Record<string, unknown>)["supportsToolUse"] !== false;
@@ -78,7 +78,7 @@ export class OllamaProvider implements LLMProvider {
       const resp = await fetch(`${this.host}/api/show`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: this.model }),
+        body: JSON.stringify({ name: this.modelId }),
         signal: AbortSignal.timeout(5000),
       });
       if (resp.ok) {
@@ -86,9 +86,9 @@ export class OllamaProvider implements LLMProvider {
         const hasTool = info?.capabilities?.includes("tools") ?? false;
         this.supportsToolUse = hasTool;
         if (!hasTool) {
-          log.info(`[ollama:${this.id}] 模型 ${this.model} 不支援 tool_use，純文字模式`);
+          log.info(`[ollama:${this.id}] 模型 ${this.modelId} 不支援 tool_use，純文字模式`);
         } else {
-          log.debug(`[ollama:${this.id}] 模型 ${this.model} 支援 tool_use`);
+          log.debug(`[ollama:${this.id}] 模型 ${this.modelId} 支援 tool_use`);
         }
       }
     } catch {
@@ -107,7 +107,7 @@ export class OllamaProvider implements LLMProvider {
     const ollamaMessages = convertMessages(messages, opts.systemPrompt);
 
     const body: Record<string, unknown> = {
-      model: this.model,
+      model: this.modelId,
       messages: ollamaMessages,
       stream: true,
       options: { num_predict: opts.maxTokens ?? this.numPredict },
@@ -134,7 +134,7 @@ export class OllamaProvider implements LLMProvider {
       (body["options"] as Record<string, unknown>)["temperature"] = opts.temperature;
     }
 
-    log.debug(`[ollama:${this.id}] POST /api/chat model=${this.model} msgs=${messages.length} think=${this.think}`);
+    log.debug(`[ollama:${this.id}] POST /api/chat model=${this.modelId} msgs=${messages.length} think=${this.think}`);
 
     const response = await fetch(`${this.host}/api/chat`, {
       method: "POST",
