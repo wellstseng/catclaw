@@ -595,18 +595,18 @@ async function handleMessage(
       const channelSystemOverride = getChannelSystemOverride(firstMessage.channelId);
       let combinedSystemPrompt = [baseSystemPrompt, systemPromptFromMemory, channelSystemOverride, dateBlock].filter(Boolean).join("\n\n");
       const inboundStore = getInboundHistoryStore();
-      const inboundCfg = (config as unknown as Record<string, unknown>).inboundHistory as Record<string, unknown> | undefined;
+      const inboundCfg = config.inboundHistory;
       if (inboundStore && inboundCfg?.enabled !== false) {
         try {
           const inboundContext = await inboundStore.consumeForInjection(
             firstMessage.channelId,
             {
               enabled: true,
-              fullWindowHours: (inboundCfg?.fullWindowHours as number | undefined) ?? 24,
-              decayWindowHours: (inboundCfg?.decayWindowHours as number | undefined) ?? 168,
-              bucketBTokenCap: (inboundCfg?.bucketBTokenCap as number | undefined) ?? 600,
-              decayIITokenCap: (inboundCfg?.decayIITokenCap as number | undefined) ?? 300,
-              inject: { enabled: (inboundCfg?.inject as Record<string, unknown> | undefined)?.enabled as boolean ?? false },
+              fullWindowHours: inboundCfg?.fullWindowHours ?? 24,
+              decayWindowHours: inboundCfg?.decayWindowHours ?? 168,
+              bucketBTokenCap: inboundCfg?.bucketBTokenCap ?? 600,
+              decayIITokenCap: inboundCfg?.decayIITokenCap ?? 300,
+              inject: { enabled: inboundCfg?.inject?.enabled ?? false },
             },
           );
           if (inboundContext) {
