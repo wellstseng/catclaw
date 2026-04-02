@@ -131,8 +131,35 @@ export interface MessageTraceEntry {
   /** input + cacheRead + cacheWrite = 實際送進 LLM 的總 context */
   effectiveInputTokens: number;
   totalToolCalls: number;
+  /** 預估費用（USD），依 model pricing 計算 */
+  estimatedCostUsd?: number;
   error?: string;
   status: "completed" | "aborted" | "error";
+}
+
+// ── 費用計算 ─────────────────────────────────────────────────────────────────
+
+/** 模型價格表（per 1M tokens, USD）。與 models-config.ts BUILTIN_PROVIDERS 同步。 */
+const MODEL_PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
+  "claude-opus-4-6":              { input: 15,   output: 75,  cacheRead: 1.5,   cacheWrite: 18.75 },
+  "claude-sonnet-4-6":            { input: 3,    output: 15,  cacheRead: 0.3,   cacheWrite: 3.75 },
+  "claude-sonnet-4-5-20250514":   { input: 3,    output: 15,  cacheRead: 0.3,   cacheWrite: 3.75 },
+  "claude-haiku-4-5-20251001":    { input: 0.8,  output: 4,   cacheRead: 0.08,  cacheWrite: 1 },
+  "gpt-4o":                       { input: 2.5,  output: 10,  cacheRead: 1.25,  cacheWrite: 0 },
+  "gpt-4o-mini":                  { input: 0.15, output: 0.6, cacheRead: 0.075, cacheWrite: 0 },
+};
+
+function estimateCost(calls: TraceLLMCall[]): number {
+  let total = 0;
+  for (const call of calls) {
+    const p = MODEL_PRICING[call.model];
+    if (!p) continue; // Ollama / unknown → free
+    total += (call.inputTokens * p.input
+            + call.outputTokens * p.output
+            + call.cacheRead * p.cacheRead
+            + call.cacheWrite * p.cacheWrite) / 1_000_000;
+  }
+  return total;
 }
 
 // ── MessageTrace（收集器）──────────────────────────────────────────────────
@@ -358,6 +385,7 @@ export class MessageTrace {
   /** 結束追蹤，回傳完整記錄 */
   finalize(): MessageTraceEntry {
     this.entry.totalDurationMs = Date.now() - this.entry.inbound.receivedAt;
+    this.entry.estimatedCostUsd = estimateCost(this.entry.llmCalls);
     return { ...this.entry };
   }
 }

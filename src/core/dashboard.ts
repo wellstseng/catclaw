@@ -1379,6 +1379,7 @@ async function loadTraces() {
     html += '<th style="text-align:right;padding:4px">LLM</th>';
     html += '<th style="text-align:center;padding:4px">CE</th>';
     html += '<th style="text-align:center;padding:4px">Status</th>';
+    html += '<th style="text-align:right;padding:4px">Cost</th>';
     html += '<th style="text-align:left;padding:4px">Preview</th>';
     html += '</tr>';
     for (const t of d.traces) {
@@ -1399,6 +1400,8 @@ async function loadTraces() {
       html += '<td style="padding:4px;text-align:right">' + (t.llmCalls?.length ?? 0) + '</td>';
       html += '<td style="padding:4px;text-align:center">' + ce + '</td>';
       html += '<td style="padding:4px;text-align:center">' + statusIcon + '</td>';
+      const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
+      html += '<td style="padding:4px;text-align:right;color:var(--warn)">' + cost + '</td>';
       html += '<td style="padding:4px;color:var(--fg2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prev + '</td>';
       html += '</tr>';
     }
@@ -1547,6 +1550,7 @@ async function showTraceDetail(traceId) {
     html += '<span>Cache R: ' + (t.totalCacheRead ?? 0).toLocaleString() + ' W: ' + (t.totalCacheWrite ?? 0).toLocaleString() + '</span>';
     html += '<span>↓ ' + (t.totalOutputTokens ?? 0).toLocaleString() + '</span>';
     html += '<span>Tools: ' + (t.totalToolCalls ?? 0) + '</span>';
+    if (t.estimatedCostUsd) html += '<span style="color:var(--warn)">💰 $' + t.estimatedCostUsd.toFixed(4) + '</span>';
     html += '<span>Status: ' + (t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌') + ' ' + t.status + '</span>';
     if (t.error) html += '<span style="color:var(--red2)">Error: ' + t.error + '</span>';
     html += '</div>';
