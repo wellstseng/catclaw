@@ -52,6 +52,7 @@ import { getProviderRegistry } from "./providers/registry.js";
 import { agentLoop } from "./core/agent-loop.js";
 import { getChannelThinking } from "./skills/builtin/think.js";
 import { getChannelProviderOverride } from "./skills/builtin/use.js";
+import { getChannelSystemOverride } from "./skills/builtin/system.js";
 import { eventBus } from "./core/event-bus.js";
 import { handleAgentLoopReply } from "./core/reply-handler.js";
 import { setDiscordClient, getSubagentThreadBinding } from "./core/subagent-discord-bridge.js";
@@ -225,7 +226,7 @@ export function createBot(): Client {
   });
 
   // SUB-5：持久子 agent Discord 通知 + thread 建立用
-  client.once("ready", () => {
+  client.once("clientReady", () => {
     setDiscordClient(client);
     setApprovalDiscordClient(client);
   });
@@ -590,8 +591,9 @@ async function handleMessage(
       const dateBlock = `[系統資訊] 當前時間（Asia/Taipei）：${nowStr}`;
 
       // ── Inbound History 注入 ─────────────────────────────────────────────
-      // 組合順序：base（CATCLAW.md）→ 記憶 recall → inbound history
-      let combinedSystemPrompt = [baseSystemPrompt, systemPromptFromMemory, dateBlock].filter(Boolean).join("\n\n");
+      // 組合順序：base（CATCLAW.md）→ 記憶 recall → channel override → inbound history
+      const channelSystemOverride = getChannelSystemOverride(firstMessage.channelId);
+      let combinedSystemPrompt = [baseSystemPrompt, systemPromptFromMemory, channelSystemOverride, dateBlock].filter(Boolean).join("\n\n");
       const inboundStore = getInboundHistoryStore();
       const inboundCfg = (config as unknown as Record<string, unknown>).inboundHistory as Record<string, unknown> | undefined;
       if (inboundStore && inboundCfg?.enabled !== false) {

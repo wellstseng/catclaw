@@ -97,7 +97,7 @@ watchConfig();
 // Slash command 事件綁定（在 login 前綁，確保 ready 前就 listening）
 setupSlashCommands(bot);
 
-bot.once("ready", (c) => {
+bot.once("clientReady", (c) => {
   log.info(`[bridge] Bot 上線：${c.user.tag}`);
   log.info(`  DM：${config.discord.dm.enabled ? "啟用" : "停用"}`);
   const guildCount = Object.keys(config.discord.guilds).length;
