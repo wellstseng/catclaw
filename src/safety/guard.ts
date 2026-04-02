@@ -56,28 +56,17 @@ const CREDENTIAL_PATTERNS_DEFAULT = [
   /private_key/i,
 ];
 
-// ── Bash 黑名單（預設） ────────────────────────────────────────────────────────
+// ── Bash 黑名單（最後防線，不可被 config 移除） ──────────────────────────────
+// 注意：一般規則已移到 catclaw.json safety.bash.blacklist，此處僅保留
+// 即使 selfProtect=true 也無法透過 config 關掉的核心安全底線。
 
-const BASH_BLACKLIST_DEFAULT: RegExp[] = [
-  /rm\s+(-rf?|--recursive)\s+[\/~]/,
-  /mkfs/,
-  /dd\s+if=/,
-  /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/,         // fork bomb
-  /chmod\s+(-R\s+)?777\s+\//,
-  /chmod\s+[ugoa]*\+s\s/,                   // setuid/setgid bit
-  /kill\s+-9\s+1$/,
-  /\b(shutdown|reboot|poweroff)\b/,
-  /systemctl\s+(stop|disable)\s/,
-  /curl\s+.*\|\s*(ba)?sh/,                  // pipe to shell
+const BASH_BLACKLIST_HARDCODED: RegExp[] = [
+  /:\(\)\s*\{\s*:\|:&\s*\}\s*;:/,         // fork bomb（任何情況都禁止）
+  /\beval\b/,                              // eval 任意代碼執行
+  /\b(bash|sh|zsh)\s+-c\s/,              // shell -c injection bypass
+  /curl\s+.*\|\s*(ba)?sh/,               // pipe to shell
   /wget\s+.*\|\s*(ba)?sh/,
-  /\$\((curl|wget)\s/,                      // $() fetch & execute
-  /\b(bash|sh|zsh)\s+-c\s/,                // shell -c injection bypass
-  /\beval\b/,                               // eval 任意代碼執行
-  /find\s+.*-exec\s/,                       // find -exec 任意執行
-  /base64\s+.*\|\s*(ba)?sh/,               // base64 decode to shell
-  /git\s+push\s+.*--force.*\s+(?:main|master)/,  // force push to protected branch
-  /pm2\s+(delete|kill)\s+all/,
-  /^\s*(env|printenv)\s*$/,                  // 洩漏 token/apiKey
+  /base64\s+.*\|\s*(ba)?sh/,
 ];
 
 // ── SafetyGuard 類別 ──────────────────────────────────────────────────────────
@@ -98,10 +87,10 @@ export class SafetyGuard {
     this.bashMode = (cfg?.bash as { mode?: string } | undefined)?.mode === "whitelist"
       ? "whitelist" : "blacklist";
 
-    // Bash blacklist：預設 + config 追加
+    // Bash blacklist：硬編碼底線 + config 設定（config 為主要來源）
     const configBlacklist = cfg?.bash?.blacklist ?? [];
     this.bashBlacklist = [
-      ...BASH_BLACKLIST_DEFAULT,
+      ...BASH_BLACKLIST_HARDCODED,
       ...configBlacklist.map(s => new RegExp(s)),
     ];
 

@@ -118,12 +118,17 @@ export interface ProviderEntry {
    */
   type?: "claude" | "claude-oauth" | "openai" | "openai-compat" | "codex-oauth" | "ollama";
   /**
-   * Claude 認證模式（僅 type=claude 有效）
-   * - "token" → 使用 auth-profile.json 中的 OAuth token（sk-ant-oat...）
-   * - "api"   → 使用 token 欄位的 API key（sk-ant-api...）
-   * 未設定時自動偵測：auth-profiles.json 存在且有憑證 → token（oauth），否則 → api
+   * 認證模式（通用欄位）
+   * - "token"    → Claude OAuth token（auth-profile.json，sk-ant-oat...）
+   * - "api"      → Anthropic API key（token 欄位，sk-ant-api...）
+   * - "password" → HTTP Basic Auth（username + password，適用 Ollama / OpenAI-compat）
+   * 未設定時自動偵測（Claude：有 auth-profile.json → token，否則 api）
    */
-  mode?: "token" | "api";
+  mode?: "token" | "api" | "password";
+  /** HTTP Basic Auth 帳號（mode=password 時使用） */
+  username?: string;
+  /** HTTP Basic Auth 密碼（mode=password 時使用，支援環境變數展開） */
+  password?: string;
   /**
    * Ollama thinking 模式（僅 type=ollama 有效，qwen3 等 thinking 模型使用）
    * true = 送出 think:true 參數，回應包含推理過程
@@ -797,6 +802,7 @@ function loadConfig(): BridgeConfig {
       selfProtect: raw.safety.selfProtect ?? true,
       bash: raw.safety.bash ?? { blacklist: [] },
       filesystem: raw.safety.filesystem ?? { protectedPaths: [], credentialPatterns: [] },
+      execApproval: raw.safety.execApproval,
     } : undefined,
     workflow: raw.workflow ? {
       guardian:       raw.workflow.guardian       ?? { enabled: true, syncReminder: true, fileTracking: true },

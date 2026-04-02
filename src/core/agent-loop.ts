@@ -662,29 +662,39 @@ export async function* agentLoop(
           continue;
         }
 
-        // ── Exec Approval（run_command DM 確認）──────────────────────────────
-        if (call.name === "run_command" && opts.execApproval?.enabled) {
-          const command = String((hookResult.params as Record<string, unknown>)["command"] ?? "");
+        // ── Exec Approval（run_command / write_file / edit_file DM 確認）────────
+        const _approvalTools = ["run_command", "write_file", "edit_file"];
+        if (_approvalTools.includes(call.name) && opts.execApproval?.enabled) {
+          const p = hookResult.params as Record<string, unknown>;
+          // 組成可讀的操作描述
+          let displayCmd: string;
+          if (call.name === "run_command") {
+            displayCmd = String(p["command"] ?? "");
+          } else if (call.name === "write_file") {
+            displayCmd = `write_file ${String(p["path"] ?? p["file_path"] ?? "")}`;
+          } else {
+            displayCmd = `edit_file ${String(p["path"] ?? p["file_path"] ?? "")}`;
+          }
           const timeoutMs = opts.execApproval.timeoutMs ?? 60_000;
 
-          // 白名單檢查：符合 pattern → 自動允許，跳過 DM
-          if (isCommandAllowed(command, opts.execApproval.allowedPatterns ?? [])) {
-            log.debug(`[agent-loop] exec-approval 白名單通過，自動允許 command="${command.slice(0, 80)}"`);
+          // 白名單檢查
+          if (isCommandAllowed(displayCmd, opts.execApproval.allowedPatterns ?? [])) {
+            log.debug(`[agent-loop] exec-approval 白名單通過，自動允許 command="${displayCmd.slice(0, 80)}"`);
           } else {
-            const [approvalId, approvalPromise] = createApproval(command, channelId, timeoutMs);
+            const [approvalId, approvalPromise] = createApproval(displayCmd, channelId, timeoutMs);
             try {
               await sendApprovalDm({
                 dmUserId: opts.execApproval.dmUserId,
-                command,
+                command: displayCmd,
                 channelId,
                 approvalId,
                 timeoutMs,
                 sendTextFallback: opts.execApproval.sendDm,
               });
-              log.info(`[agent-loop] exec-approval 等待確認 approvalId=${approvalId} command="${command.slice(0, 80)}"`);
+              log.info(`[agent-loop] exec-approval 等待確認 approvalId=${approvalId} command="${displayCmd.slice(0, 80)}"`);
             } catch (err) {
               log.warn(`[agent-loop] exec-approval 送 DM 失敗，自動拒絕：${err instanceof Error ? err.message : String(err)}`);
-              toolResults.push({ tool_use_id: call.id, content: "錯誤：DM 確認失敗，指令未執行", is_error: true });
+              toolResults.push({ tool_use_id: call.id, content: "錯誤：DM 確認失敗，操作未執行", is_error: true });
               yield { type: "tool_blocked", name: call.name, reason: "DM 確認失敗" };
               continue;
             }
@@ -692,7 +702,7 @@ export async function* agentLoop(
             if (!approved) {
               log.info(`[agent-loop] exec-approval 拒絕 approvalId=${approvalId}`);
               toolResults.push({ tool_use_id: call.id, content: "錯誤：使用者拒絕執行（或確認逾時）", is_error: true });
-              yield { type: "tool_blocked", name: call.name, reason: "使用者拒絕執行指令" };
+              yield { type: "tool_blocked", name: call.name, reason: "使用者拒絕執行操作" };
               continue;
             }
             log.info(`[agent-loop] exec-approval 允許 approvalId=${approvalId}`);

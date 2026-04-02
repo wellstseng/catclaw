@@ -157,7 +157,8 @@ export async function sendApprovalDm(opts: {
  */
 export function isCommandAllowed(command: string, allowedPatterns: string[]): boolean {
   if (allowedPatterns.length === 0) return false;
-  return allowedPatterns.some(p => command.includes(p));
+  const cmd = command.trim();
+  return allowedPatterns.some(p => cmd === p || cmd.startsWith(p + " ") || cmd.startsWith(p + "\n"));
 }
 
 /** 目前等待中的數量（debug 用） */
