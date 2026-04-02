@@ -51,20 +51,33 @@
   // 若不填 type，系統依以下順序自動判斷：
   //   entry.wsUrl → openclaw | id=claude-api → claude
   //   id 含 ollama → ollama | entry.host/baseUrl → openai-compat
-  //   entry.token（無 baseUrl）→ claude-oauth
+  //   entry.token（無 baseUrl）→ claude
+  //
+  // claude mode 欄位（選填）：
+  //   "oauth" → 使用 auth-profile.json（Claude.ai OAuth 登入）
+  //   "token" / "api" → 直接用 token 欄位（Anthropic API key）
+  //   不填 → 自動偵測（有 auth-profile.json 且有效 → oauth，否則 → token）
   "providers": {
-    // Claude Sonnet（預設）：type 可簡寫為 "claude"
-    // 需先設定環境變數 ANTHROPIC_TOKEN（export 或 .env）
-    "claude-oauth": {
+    // Claude Sonnet（預設）
+    // mode="oauth"：使用 Claude.ai OAuth（auth-profile.json，無需 API key）
+    "claude": {
       "type": "claude",
-      "token": "${ANTHROPIC_TOKEN}",
+      "mode": "oauth",
       "model": "claude-sonnet-4-6"
     },
 
-    // Claude Opus（重型任務）：同 claude-oauth 改 model 即可
+    // mode="token"：使用 Anthropic API key（ANTHROPIC_TOKEN 環境變數）
+    // "claude-api": {
+    //   "type": "claude",
+    //   "mode": "token",
+    //   "token": "${ANTHROPIC_TOKEN}",
+    //   "model": "claude-sonnet-4-6"
+    // },
+
+    // Claude Opus（重型任務）
     // "claude-opus": {
     //   "type": "claude",
-    //   "token": "${ANTHROPIC_TOKEN}",
+    //   "mode": "oauth",
     //   "model": "claude-opus-4-6"
     // },
 

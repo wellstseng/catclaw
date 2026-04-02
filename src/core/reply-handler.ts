@@ -390,13 +390,26 @@ export async function handleAgentLoopReply(
         }
 
       } else if (event.type === "error") {
-        if (useStreamEdit) { cancelEditTimer(); await finalizeStreamEdit(); }
-        else { cancelFlushTimer(); if (!fileMode) await flush(true); }
         stopTyping();
         const errorMsg = `⚠️ ${event.message}`.slice(0, TEXT_LIMIT);
-        await send(errorMsg);
-        if (isFirst) stopTyping();
-        isFirst = false;
+        if (useStreamEdit) {
+          cancelEditTimer();
+          await waitEditDone();
+          // 若有空白 placeholder（editMsg 存在但 buffer 空），直接 edit 為錯誤訊息
+          if (editMsg !== null && !buffer.trim()) {
+            try { await (editMsg as Message).edit(errorMsg); } catch { /* 靜默 */ }
+            editMsg = null; buffer = "";
+          } else {
+            await finalizeStreamEdit();
+            await send(errorMsg);
+            isFirst = false;
+          }
+        } else {
+          cancelFlushTimer();
+          if (!fileMode) await flush(true);
+          await send(errorMsg);
+          isFirst = false;
+        }
       }
     }
   } finally {

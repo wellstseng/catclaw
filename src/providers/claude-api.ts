@@ -181,17 +181,31 @@ export class ClaudeApiProvider implements LLMProvider {
     this.name = `Claude API (${id})`;
     this.modelId = resolveModelId(entry.model ?? DEFAULT_MODEL);
 
-    // 多憑證：從 {workspace}/agents/default/auth-profiles.json 載入
-    const workspaceDir = resolveWorkspaceDirSafe();
+    const mode = entry.mode;
+    const forceToken = mode === "token" || mode === "api";
+    const forceOauth = mode === "oauth";
 
+    if (forceToken) {
+      // 明確指定 token 模式：直接用 token，不初始化 auth-profile store
+      this.token = entry.token;
+      if (!this.token) log.warn(`[claude:${id}] mode=token 但未設定 token`);
+      log.debug(`[claude:${id}] token 模式`);
+      return;
+    }
+
+    // OAuth / 自動偵測：從 {workspace}/agents/default/auth-profiles.json 載入
+    const workspaceDir = resolveWorkspaceDirSafe();
     const persistPath = join(workspaceDir, "data", "auth-profiles");
     const credentialsFilePath = join(workspaceDir, "agents", "default", "auth-profile.json");
     this._store = new AuthProfileStore({ providerId: id, persistPath, credentialsFilePath });
     this._store.load();
 
     if (this._store.getAvailableCount() > 0) {
-      log.info(`[claude:${id}] 多憑證模式，${this._store.getAvailableCount()} 組可用`);
+      log.info(`[claude:${id}] oauth 模式，${this._store.getAvailableCount()} 組憑證可用`);
+    } else if (forceOauth) {
+      log.warn(`[claude:${id}] mode=oauth 但 ${credentialsFilePath} 無有效憑證`);
     } else {
+      // 自動偵測：oauth store 空 → fallback to token
       this.token = entry.token;
       if (!this.token) {
         log.warn(`[claude:${id}] 憑證檔 ${credentialsFilePath} 為空且未設定 token`);
