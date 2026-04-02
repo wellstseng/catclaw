@@ -51,6 +51,7 @@ import { resolveProvider, getChannelAccess as getCoreChannelAccess } from "./cor
 import { getProviderRegistry } from "./providers/registry.js";
 import { agentLoop } from "./core/agent-loop.js";
 import { getChannelThinking } from "./skills/builtin/think.js";
+import { getChannelProviderOverride } from "./skills/builtin/use.js";
 import { eventBus } from "./core/event-bus.js";
 import { handleAgentLoopReply } from "./core/reply-handler.js";
 import { setDiscordClient, getSubagentThreadBinding } from "./core/subagent-discord-bridge.js";
@@ -546,8 +547,9 @@ async function handleMessage(
         rateLimiter.record(accountId);
       }
 
-      // ── Provider 路由（channel > role > project > default） ─────────────
-      const providerId = resolveProvider({
+      // ── Provider 路由（channel override > channel > role > project > default） ─
+      const providerOverride = getChannelProviderOverride(firstMessage.channelId);
+      const providerId = providerOverride ?? resolveProvider({
         channelAccess: coreChannelAccess,
         role: accountRole,
         projectId: resolvedProjectId,
@@ -625,13 +627,35 @@ async function handleMessage(
         }
       }
 
+      // ── AutoThread：為每條訊息建立獨立 Thread ────────────────────────────
+      let replyThread: import("discord.js").AnyThreadChannel | null = null;
+      let effectiveChannelId = firstMessage.channelId;
+      const isAlreadyThread = (
+        firstMessage.channel.type === ChannelType.PublicThread ||
+        firstMessage.channel.type === ChannelType.PrivateThread ||
+        firstMessage.channel.type === ChannelType.AnnouncementThread
+      );
+      if (access.autoThread && !isAlreadyThread) {
+        try {
+          const threadName = combinedText.replace(/\n/g, " ").slice(0, 50) || "對話";
+          replyThread = await firstMessage.startThread({
+            name: threadName,
+            autoArchiveDuration: 60,
+          });
+          effectiveChannelId = replyThread.id;
+          log.debug(`[discord] autoThread 建立 threadId=${replyThread.id} name="${threadName}"`);
+        } catch (err) {
+          log.warn(`[discord] autoThread 建立失敗，改用原頻道：${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       // ── Ack Reaction：⏳ queued ──────────────────────────────────────────
       void firstMessage.react("⏳").catch(() => { /* 無 permission 時靜默 */ });
 
       const memoryRoot = getPlatformMemoryRoot();
       const gen = agentLoop(prompt, {
         platform: "discord",
-        channelId: firstMessage.channelId,
+        channelId: effectiveChannelId,
         accountId,
         isGroupChannel,
         speakerDisplay: firstMessage.author.displayName,
@@ -701,7 +725,7 @@ async function handleMessage(
         }
       }
 
-      void handleAgentLoopReply(withAckReactions(gen), firstMessage, config);
+      void handleAgentLoopReply(withAckReactions(gen), firstMessage, config, replyThread ? { threadChannel: replyThread } : undefined);
     }
   })(); });
 }

@@ -21,7 +21,9 @@
       //   "allowBot": false,
       //   "allowFrom": [],
       //   "channels": {
-      //     "<頻道 ID>": { "allow": true, "requireMention": false }
+      //     "<頻道 ID>": { "allow": true, "requireMention": false },
+      //     // autoThread: 每條訊息自動建立 Thread（適合多人討論頻道）
+      //     "<thread 頻道 ID>": { "allow": true, "requireMention": false, "autoThread": true }
       //   }
       // }
     }
@@ -51,27 +53,35 @@
   //   id 含 ollama → ollama | entry.host/baseUrl → openai-compat
   //   entry.token（無 baseUrl）→ claude-oauth
   "providers": {
-    // Claude API：token 使用 ${VAR} 語法引用環境變數
+    // Claude Sonnet（預設）：type 可簡寫為 "claude"
     // 需先設定環境變數 ANTHROPIC_TOKEN（export 或 .env）
     "claude-oauth": {
+      "type": "claude",
       "token": "${ANTHROPIC_TOKEN}",
       "model": "claude-sonnet-4-6"
     },
 
-    // Codex OAuth：OpenAI Codex，使用 Responses API（/v1/responses）
+    // Claude Opus（重型任務）：同 claude-oauth 改 model 即可
+    // "claude-opus": {
+    //   "type": "claude",
+    //   "token": "${ANTHROPIC_TOKEN}",
+    //   "model": "claude-opus-4-6"
+    // },
+
+    // OpenAI / GPT：type 可簡寫為 "openai"
+    // "openai": {
+    //   "type": "openai",
+    //   "baseUrl": "https://api.openai.com",
+    //   "token": "${OPENAI_API_KEY}",
+    //   "model": "gpt-4o"
+    // },
+
+    // Codex OAuth：OpenAI Codex（GPT-5），使用 Responses API（/v1/responses）
     // 需先執行 `codex auth login` 產生 ~/.codex/auth.json
     // "codex": {
     //   "type": "codex-oauth",
     //   "model": "openai-codex/gpt-5.4",
     //   "oauthTokenPath": "~/.codex/auth.json"
-    // },
-
-    // OpenAI compat：任何相容 OpenAI /v1/chat/completions 的服務
-    // "openai-local": {
-    //   "type": "openai-compat",
-    //   "baseUrl": "http://localhost:8080",
-    //   "token": "sk-...",
-    //   "model": "gpt-4o"
     // },
 
     // Ollama 本地 LLM：使用 /api/chat NDJSON 串流（非 OpenAI compat）

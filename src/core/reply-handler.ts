@@ -86,11 +86,14 @@ async function sendFile(content: string, fileName: string, originalMessage: Mess
 
 /**
  * 消費 AgentLoop async generator，串流回覆到 Discord
+ *
+ * @param opts.threadChannel 若提供，所有回覆直接 send 到此 channel（autoThread 模式）
  */
 export async function handleAgentLoopReply(
   gen: AsyncGenerator<AgentLoopEvent>,
   originalMessage: Message,
   bridgeConfig: BridgeConfig,
+  opts?: { threadChannel?: SendableChannels },
 ): Promise<void> {
   let buffer = "";
   let totalText = "";
@@ -102,9 +105,22 @@ export async function handleAgentLoopReply(
 
   const threshold = bridgeConfig.fileUploadThreshold;
   const toolMode = bridgeConfig.showToolCalls;
+  const threadChannel = opts?.threadChannel;
+
+  // 決定送出目標：若有 threadChannel，一律 send 到該 channel；否則第一則 reply，後續 send
+  async function send(content: string): Promise<void> {
+    if (!content.trim()) return;
+    if (threadChannel) {
+      await threadChannel.send(content);
+    } else if (isFirst) {
+      await originalMessage.reply(content);
+    } else {
+      await (originalMessage.channel as SendableChannels).send(content);
+    }
+  }
 
   // Typing indicator
-  const channel = originalMessage.channel;
+  const channel = threadChannel ?? originalMessage.channel;
   if ("sendTyping" in channel) void (channel as SendableChannels).sendTyping();
   const typingInterval = setInterval(() => {
     if ("sendTyping" in channel) void (channel as SendableChannels).sendTyping();
@@ -143,7 +159,7 @@ export async function handleAgentLoopReply(
       const toSend = hadOpenFence ? closeFenceIfOpen(chunk) : chunk;
       prevChunkHadOpenFence = hadOpenFence;
 
-      await sendChunk(toSend, originalMessage, isFirst);
+      await send(toSend);
       if (isFirst) stopTyping();
       isFirst = false;
     }
@@ -155,7 +171,7 @@ export async function handleAgentLoopReply(
     const toSend = `> 💭 **Thinking**\n${formatted}`;
     let remaining = toSend;
     while (remaining.length > 0) {
-      await sendChunk(remaining.slice(0, TEXT_LIMIT), originalMessage, isFirst);
+      await send(remaining.slice(0, TEXT_LIMIT));
       isFirst = false;
       remaining = remaining.slice(TEXT_LIMIT);
     }
@@ -198,13 +214,13 @@ export async function handleAgentLoopReply(
         if (toolMode === "all") {
           cancelFlushTimer();
           if (!fileMode) await flush(true);
-          await sendChunk(`🔧 使用工具：${event.name}`, originalMessage, isFirst);
+          await send(`🔧 使用工具：${event.name}`);
           if (isFirst) stopTyping();
           isFirst = false;
         } else if (toolMode === "summary" && !summaryHintSent) {
           cancelFlushTimer();
           if (!fileMode) await flush(true);
-          await sendChunk("⏳ 處理中...", originalMessage, isFirst);
+          await send("⏳ 處理中...");
           if (isFirst) stopTyping();
           isFirst = false;
           summaryHintSent = true;
@@ -214,7 +230,7 @@ export async function handleAgentLoopReply(
         if (toolMode !== "none") {
           cancelFlushTimer();
           if (!fileMode) await flush(true);
-          await sendChunk(`🚫 工具被阻擋：${event.name} — ${event.reason}`, originalMessage, isFirst);
+          await send(`🚫 工具被阻擋：${event.name} — ${event.reason}`);
           if (isFirst) stopTyping();
           isFirst = false;
         }
@@ -227,7 +243,12 @@ export async function handleAgentLoopReply(
 
         if (fileMode && mediaPaths.length === 0) {
           const preview = cleanedText.slice(0, 150).replace(/\n/g, " ") + "...";
-          await sendFile(cleanedText, "response.md", originalMessage, isFirst, preview);
+          if (threadChannel) {
+            const attachment = new AttachmentBuilder(Buffer.from(cleanedText, "utf-8"), { name: "response.md" });
+            await threadChannel.send({ content: preview ?? undefined, files: [attachment] });
+          } else {
+            await sendFile(cleanedText, "response.md", originalMessage, isFirst, preview);
+          }
           isFirst = false;
         } else {
           if (fileMode) {
@@ -240,8 +261,17 @@ export async function handleAgentLoopReply(
         }
 
         for (const filePath of mediaPaths) {
-          const uploaded = await uploadMediaFile(filePath, originalMessage, isFirst);
-          if (uploaded) isFirst = false;
+          if (threadChannel) {
+            try {
+              const buffer2 = await readFile(filePath);
+              const attachment = new AttachmentBuilder(buffer2, { name: basename(filePath) });
+              await threadChannel.send({ files: [attachment] });
+              isFirst = false;
+            } catch { /* 靜默 */ }
+          } else {
+            const uploaded = await uploadMediaFile(filePath, originalMessage, isFirst);
+            if (uploaded) isFirst = false;
+          }
         }
 
       } else if (event.type === "error") {
@@ -249,7 +279,7 @@ export async function handleAgentLoopReply(
         stopTyping();
         if (!fileMode) await flush(true);
         const errorMsg = `⚠️ ${event.message}`.slice(0, TEXT_LIMIT);
-        await sendChunk(errorMsg, originalMessage, isFirst);
+        await send(errorMsg);
         isFirst = false;
       }
     }

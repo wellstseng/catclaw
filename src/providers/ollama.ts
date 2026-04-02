@@ -33,6 +33,8 @@ interface OllamaMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   tool_calls?: Array<{ function: { name: string; arguments: object } }>;
+  /** base64-encoded images（vision 模型用） */
+  images?: string[];
 }
 
 interface OllamaChunk {
@@ -257,8 +259,15 @@ function convertMessages(messages: Message[], systemPrompt?: string): OllamaMess
 
     // user：tool results → role=tool（每個 result 一則訊息）
     if (msg.role === "user") {
-      if (textParts.length) {
-        result.push({ role: "user", content: textParts.join("") });
+      // 圖片 blocks → images 陣列（Ollama vision）
+      const imageBases = msg.content
+        .filter((b): b is import("./base.js").ImageBlock => b.type === "image")
+        .map(b => b.data);
+
+      if (textParts.length || imageBases.length) {
+        const userMsg: OllamaMessage = { role: "user", content: textParts.join("") };
+        if (imageBases.length) userMsg.images = imageBases;
+        result.push(userMsg);
       }
       for (const tr of toolResults) {
         result.push({ role: "tool", content: tr.content });

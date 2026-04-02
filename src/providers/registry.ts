@@ -106,12 +106,15 @@ export async function buildProviderRegistry(
 
     // 型別解析優先序：entry.type > wsUrl > id heuristic > field heuristic
     let providerType: "claude-oauth" | "openai-compat" | "codex-oauth" | "openclaw" | "ollama" | null = null;
-    if (entry.type)               providerType = entry.type;
-    else if (entry.wsUrl)         providerType = "openclaw";
-    else if (id === "claude-api" || id === "claude-oauth") providerType = "claude-oauth";
+    if (entry.type === "claude")        providerType = "claude-oauth";
+    else if (entry.type === "openai")   providerType = "openai-compat";
+    else if (entry.type)                providerType = entry.type;
+    else if (entry.wsUrl)               providerType = "openclaw";
+    else if (id === "claude" || id === "claude-api" || id === "claude-oauth") providerType = "claude-oauth";
     else if (id === "ollama" || id.startsWith("ollama-")) providerType = "ollama";
+    else if (id === "openai" || id.startsWith("gpt") || id.startsWith("openai-")) providerType = "openai-compat";
     else if (entry.host || entry.baseUrl) providerType = "openai-compat";
-    else if (entry.token)         providerType = "claude-oauth";  // 無 baseUrl → 預設 Anthropic
+    else if (entry.token)               providerType = "claude-oauth";  // 無 baseUrl → 預設 Anthropic
 
     if (providerType === "codex-oauth") {
       const { CodexOAuthProvider } = await import("./codex-oauth.js");

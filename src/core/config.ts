@@ -38,6 +38,13 @@ export interface ChannelConfig {
    * 預設 false（FIFO 佇列行為）。
    */
   interruptOnNewMessage?: boolean;
+  /**
+   * 自動為每條使用者訊息建立 Discord Thread（公開 Thread）。
+   * 每條新訊息 → startThread → 回覆在 thread 中，session key 以 thread ID 計。
+   * 適合想把每次對話隔離在獨立 thread 的頻道。
+   * 預設 false。
+   */
+  autoThread?: boolean;
 }
 
 export interface GuildConfig {
@@ -104,12 +111,12 @@ export interface HistoryConfig {
 export interface ProviderEntry {
   /**
    * Provider 型別（明確指定時優先於自動偵測）
-   * - "claude-oauth"  → ClaudeApiProvider（Anthropic Messages API，token 或 OAuth）
-   * - "openai-compat" → OpenAICompatProvider（/v1/chat/completions）
-   * - "codex-oauth"   → CodexOAuthProvider（OpenAI Codex + OAuth 自動刷新）
-   * - "ollama"        → OllamaProvider（/api/chat NDJSON，支援 think 參數）
+   * - "claude" / "claude-oauth" → ClaudeApiProvider（Anthropic Messages API，token 或 OAuth）
+   * - "openai" / "openai-compat" → OpenAICompatProvider（/v1/chat/completions）
+   * - "codex-oauth"              → CodexOAuthProvider（OpenAI Codex + OAuth 自動刷新）
+   * - "ollama"                   → OllamaProvider（/api/chat NDJSON，支援 think 參數）
    */
-  type?: "claude-oauth" | "openai-compat" | "codex-oauth" | "ollama";
+  type?: "claude" | "claude-oauth" | "openai" | "openai-compat" | "codex-oauth" | "ollama";
   /**
    * Ollama thinking 模式（僅 type=ollama 有效，qwen3 等 thinking 模型使用）
    * true = 送出 think:true 參數，回應包含推理過程
@@ -817,6 +824,8 @@ export interface ChannelAccess {
   boundProject?: string;
   /** 新訊息自動中斷正在執行的 turn（插隊模式，預設 false） */
   interruptOnNewMessage: boolean;
+  /** 每條使用者訊息自動建立 Discord Thread（預設 false） */
+  autoThread: boolean;
 }
 
 /**
@@ -840,16 +849,17 @@ export function getChannelAccess(
       allowFrom: [],
       blockGroupMentions: false,
       interruptOnNewMessage: false,
+      autoThread: false,
     };
   }
 
   if (Object.keys(config.discord.guilds).length === 0) {
-    return { allowed: true, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true, interruptOnNewMessage: false };
+    return { allowed: true, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true, interruptOnNewMessage: false, autoThread: false };
   }
 
   const guild = config.discord.guilds[guildId];
   if (!guild) {
-    return { allowed: false, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true, interruptOnNewMessage: false };
+    return { allowed: false, requireMention: true, allowBot: false, allowFrom: [], blockGroupMentions: true, interruptOnNewMessage: false, autoThread: false };
   }
 
   const guildDefaults: Required<Omit<ChannelConfig, "boundProject" | "provider">> = {
@@ -859,6 +869,7 @@ export function getChannelAccess(
     allowFrom: guild.allowFrom ?? [],
     blockGroupMentions: guild.blockGroupMentions ?? true,
     interruptOnNewMessage: false,
+    autoThread: false,
   };
 
   const channels = guild.channels ?? {};
@@ -872,6 +883,7 @@ export function getChannelAccess(
     allowFrom:              channelCfg?.allowFrom                ?? parentCfg?.allowFrom                ?? guildDefaults.allowFrom,
     blockGroupMentions:     channelCfg?.blockGroupMentions       ?? parentCfg?.blockGroupMentions       ?? guildDefaults.blockGroupMentions,
     interruptOnNewMessage:  channelCfg?.interruptOnNewMessage    ?? parentCfg?.interruptOnNewMessage    ?? guildDefaults.interruptOnNewMessage,
+    autoThread:             channelCfg?.autoThread               ?? parentCfg?.autoThread               ?? guildDefaults.autoThread,
     provider:               channelCfg?.provider                 ?? parentCfg?.provider,
     boundProject:           channelCfg?.boundProject             ?? parentCfg?.boundProject,
   };
