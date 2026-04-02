@@ -428,14 +428,35 @@ async function doRestart() {
 async function loadSubagents() {
   try {
     const d = await fetch('/api/subagents').then(r => r.json());
-    if (!d.subagents?.length) { document.getElementById('subagents-list').innerHTML = '<p style="color:#888;font-size:0.8rem">無 active subagent</p>'; return; }
-    const rows = d.subagents.map(s => {
+    if (!d.subagents?.length) { document.getElementById('subagents-list').innerHTML = '<p style="color:#888;font-size:0.8rem">無 subagent 記錄</p>'; return; }
+    const rows = d.subagents.slice(0, 30).map(s => {
       const badge = s.status === 'running' ? 'badge-run' : s.status === 'completed' ? 'badge-done' : 'badge-err';
-      return \`<tr><td>\${s.label||s.runId.slice(-8)}</td><td><span class="badge \${badge}">\${s.status}</span></td><td>\${s.turns||0}</td></tr>\`;
+      const dur = s.endedAt ? ((s.endedAt - s.createdAt)/1000).toFixed(1)+'s' : s.status === 'running' ? ((Date.now()-s.createdAt)/1000).toFixed(0)+'s...' : '-';
+      const task = (s.task || '-').slice(0, 40);
+      const killBtn = s.status === 'running' ? \`<button class="btn btn-sm btn-red" onclick="killSubagent('\${s.runId}')">✕</button>\` : '';
+      return \`<tr>
+        <td title="\${s.runId}">\${(s.label||s.runId).slice(-12)}</td>
+        <td><span class="badge \${badge}">\${s.status}</span></td>
+        <td style="font-size:0.72rem" title="\${s.task}">\${task}</td>
+        <td>\${s.turns||0}</td>
+        <td style="font-size:0.72rem">\${dur}</td>
+        <td>\${killBtn}</td>
+      </tr>\`;
     }).join('');
     document.getElementById('subagents-list').innerHTML =
-      \`<table class="tbl"><thead><tr><th>Label</th><th>狀態</th><th>Turns</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+      \`<table class="tbl"><thead><tr><th>Label</th><th>狀態</th><th>Task</th><th>Turns</th><th>時長</th><th></th></tr></thead><tbody>\${rows}</tbody></table>\`;
   } catch {}
+}
+
+async function killSubagent(runId) {
+  if (!confirm('確定強制中止 ' + runId + '？')) return;
+  try {
+    const d = await fetch('/api/subagents/kill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId})}).then(r=>r.json());
+    const el = document.getElementById('ops-msg');
+    el.className = 'msg ' + (d.success ? 'ok' : 'err');
+    el.textContent = d.success ? '✓ 已中止 ' + runId : '錯誤：' + d.error;
+    loadSubagents();
+  } catch(e) { const el = document.getElementById('ops-msg'); el.className='msg err'; el.textContent='失敗：'+e; }
 }
 
 // ── 排程 ─────────────────────────────────────────────────────────────────────
@@ -729,10 +750,11 @@ export class DashboardServer {
           try {
             const { getSubagentRegistry } = await import("./subagent-registry.js");
             const reg = getSubagentRegistry();
-            const all = reg ? Array.from((reg as unknown as { records: Map<string, unknown> }).records.values()) : [];
-            const subagents = (all as Array<Record<string, unknown>>).map(r => ({
+            const all = reg ? Array.from(reg["records"].values() as IterableIterator<Record<string, unknown>>) : [];
+            const subagents = (all as Record<string, unknown>[]).map(r => ({
               runId: r["runId"], label: r["label"], status: r["status"],
-              turns: r["turns"], createdAt: r["createdAt"],
+              turns: r["turns"], createdAt: r["createdAt"], endedAt: r["endedAt"],
+              task: r["task"], parentSessionKey: r["parentSessionKey"],
             }));
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ subagents }));
@@ -741,6 +763,27 @@ export class DashboardServer {
             res.end(JSON.stringify({ subagents: [], error: String(err) }));
           }
         })();
+        return;
+      }
+
+      // POST /api/subagents/kill
+      if (url === "/api/subagents/kill" && method === "POST") {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { runId } = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as { runId: string };
+              const { getSubagentRegistry } = await import("./subagent-registry.js");
+              const reg = getSubagentRegistry();
+              const ok = reg ? reg.kill(runId) : false;
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(ok ? { success: true } : { success: false, error: "not found or not running" }));
+            } catch (err) {
+              res.writeHead(400); res.end(JSON.stringify({ success: false, error: String(err) }));
+            }
+          })();
+        });
         return;
       }
 
