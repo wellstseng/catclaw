@@ -3,6 +3,7 @@
 > 知識庫變更紀錄（最新在上，超過 8 筆觸發滾動淘汰）
 
 | 日期 | 變更 | 影響文件 |
+| 2026-04-02 | **feat: provider 三層分離重構 Phase 1-3** — ①model-ref.ts（"provider/model" 解析 + alias）②config.ts V2 型別（AgentDefaultsConfig/ModelsConfig/AuthConfig）③auth-profile-store.ts 對齊 OpenClaw 格式（provider:name profileId、三種 credential type、round-robin rotation）④models-config.ts（內建模型目錄 + 自訂 merge）⑤registry.ts 內建 alias 解析（get/resolve 自動解析）⑥platform.ts V2 啟動路徑⑦周邊 10 檔適配（configure/use/llm-task/spawn-subagent/cron/config-patch/config-manage） | model-ref.ts(new), models-config.ts(new), auth-profile-store.ts, registry.ts, config.ts, platform.ts, configure.ts, use.ts, llm-task.ts, spawn-subagent.ts, cron.ts, config-patch.ts, config-manage.ts, catclaw.example.json, 02-CONFIG-REFERENCE.md |
 | 2026-04-02 | **feat(Sprint 3): provider mode + modelId + 串流回覆改進** — ①provider `mode` 欄位（oauth/token/api）②`streamingReply` 設定 ③`autoThread` per-channel ④`/system` `/use` skill ⑤model alias（claude-haiku/sonnet/opus）⑥所有 provider 公開 `modelId` 供 /status /use 顯示 ⑦error 時 edit placeholder 取代發新訊息 | providers/base.ts, claude-api.ts, ollama.ts, openai-compat.ts, codex-oauth.ts, failover-provider.ts, core/config.ts, core/reply-handler.ts, skills/builtin/status.ts, skills/builtin/use.ts, skills/builtin/system.ts, 02-CONFIG-REFERENCE.md |
 | 2026-04-02 | **fix(memory): Sprint 2 記憶管線修復** — ①接線 memory-extractor.ts（turn:after→extractPerTurn→writeAtom）②補 write-gate dedup+injection 保護 ③修正 llmSelect config 預設 false（opt-in）④修正 writeAtom vector namespace mismatch（project→project/id）⑤spawn-subagent namespace 同步修正 | memory-extractor.ts(new), atom.ts, config.ts, spawn-subagent.ts, workflow/bootstrap.ts |
 | 2026-04-01 | **perf(memory): recall+context 省 token** — ACT-R 排序 overflow 填充、LLM select opt-in、CE compaction 保留工具上下文、交替工具迴圈偵測 | recall.ts, context-builder.ts, agent-loop.ts, context-engine.ts, extract.ts |
@@ -11,4 +12,3 @@
 | 2026-03-27 | **feat: cron subagent action + agentLoop memoryRecall** | cron.ts, core/config.ts, core/agent-loop.ts |
 | 2026-03-23 | **feat(cron): exec action type + 修正** | cron.ts, config.ts, 09-PITFALLS.md |
 | 2026-03-22 | **feat: timeout 分級 + restart 雙保險 + 環境變數化路徑** | session.ts, reply.ts, discord.ts, slash.ts, ecosystem.config.cjs |
-| 2026-03-22 | **docs: _AIDocs 全面校正 + reset-session 指令** | 09-PITFALLS.md, 00-OVERVIEW.md, 01-ARCHITECTURE.md, catclaw.js |

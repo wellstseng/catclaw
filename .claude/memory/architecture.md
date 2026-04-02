@@ -3,7 +3,7 @@
 - Scope: project
 - Confidence: [固]
 - Trigger: 架構, 資料流, 目錄結構, session 策略, config, 環境變數, restart, cron, 安全, PM2, hot-reload, catclaw.json, CATCLAW_WORKSPACE, pi-ai, OAuth, provider, credentials
-- Last-used: 2026-03-31
+- Last-used: 2026-04-02
 - Confirmations: 15
 
 # catclaw 架構
@@ -37,7 +37,7 @@ ollama: { embeddingModel: "qwen3-embedding:8b" }
 2. ToolRegistry（dist/tools/builtin/ 掃描載入）
 3. PermissionGate（role → tier access map）
 4. SafetyGuard（bash 黑名單 + 路徑限制）
-5. ProviderRegistry（Claude API / OpenAI-compat）
+5. ProviderRegistry — V2 三層分離（見下方）或 V1 舊格式
 6. SessionManager（新版持久化，~/.catclaw/workspace/data/sessions-v2/）
 7. RegistrationManager + IdentityLinker（帳號註冊 + 跨平台綁定）
 8. ProjectManager（~/.catclaw/workspace/data/projects/）
@@ -47,8 +47,26 @@ ollama: { embeddingModel: "qwen3-embedding:8b" }
 
 **isPlatformReady()** 回傳 true 才走新路徑，否則 fallback 舊 CLI。
 
+### Provider 三層分離（V2，2026-04-02 完成，branch: platform-rebuild）
+
+**判斷條件**：`config.agentDefaults?.model?.primary` 存在 → V2 路徑；否則 → V1 舊格式
+
+**三層結構**：
+1. **catclaw.json `agentDefaults`** — model primary/fallbacks + alias 對照表（如 `"sonnet"` → `"anthropic/claude-sonnet-4-6"`）
+2. **models.json**（自動產生於 `{workspace}/agents/default/models.json`）— 內建 provider 目錄（Anthropic/OpenAI/OpenAI-Codex）+ 自訂 merge
+3. **auth-profile.json**（`{workspace}/agents/default/auth-profile.json`）— 認證 credential，profileId 格式 `"provider:name"`，支援 api_key/token/oauth 三種 type，round-robin rotation + cooldown
+
+**關鍵檔案**：
+- `model-ref.ts` — `parseModelRef()` / `formatModelRef()` 解析 "provider/model" + alias
+- `models-config.ts` — `ensureModelsJson()` 產生 models.json，`loadModelsJson()` 載入
+- `auth-profile-store.ts` — `AuthProfileStore` 管理 credential，`pickForProvider()` round-robin 取得
+- `registry.ts` — `ProviderRegistry` 內建 `resolveId()` alias 解析，`get()` / `resolve()` 自動解析
+- `platform.ts` Step 5 — V2: ensureModelsJson → loadModelsJson → initAuthProfileStore → buildProviderRegistryV2
+
+**alias 解析**：ProviderRegistry 構造時接收 aliases map，`get("sonnet")` 自動解析為 `"anthropic/claude-sonnet-4-6"`。所有呼叫端（tools/skills/cron/discord）自動受益。
+
 ### Provider Routing 優先序
-`channel config > role routing > project routing > default`
+`channel config > role routing > project routing > default`（V2 值支援 alias）
 
 ### 三層記憶
 - Global：`~/.catclaw/memory/global/`（或 HomeClaudeCode 模式 → ~/.claude/memory/global）

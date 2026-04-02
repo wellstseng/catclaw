@@ -82,31 +82,44 @@
   "fileUploadThreshold": 4000,   // 回覆超過此字數時改上傳 .md 檔（0 = 停用），預設 4000
   "logLevel": "info",            // 日誌層級：debug / info / warn / error / silent
 
-  // ── Provider 設定 ─────────────────────────────────────────────────
-  // 若完全不填：有 ANTHROPIC_TOKEN 環境變數 → 自動建立 claude-oauth provider
-  //            否則 → 自動建立 ollama-local provider
-  "provider": "claude",          // 預設使用的 provider ID
-  "providers": {
-    "claude": {
-      "type": "claude",          // 型別：claude / openai / openai-compat / ollama / codex-oauth
-                                 //   "claude" 是 "claude-oauth" 的短名稱別名
-      "mode": "token",            // Claude 認證模式（選填，僅 type=claude 有效）
-                                 //   "token" → auth-profile.json OAuth token（sk-ant-oat...）
-                                 //   "api"   → token 欄位 API key（sk-ant-api...）
-                                 //   不填 → 自動偵測（有 auth-profile.json → token；否則 api）
-      "model": "claude-sonnet-4-6"  // 完整 model ID 或短名稱別名：
-                                    //   "claude-haiku" → "claude-haiku-4-5"
-                                    //   "claude-sonnet" → "claude-sonnet-4-6"
-                                    //   "claude-opus" → "claude-opus-4-6"
+  // ══════════════════════════════════════════════════════════════
+  // V2 三層分離設定（推薦，2026-04-02 新增）
+  // 格式："provider/model"（如 "anthropic/claude-sonnet-4-6"）
+  // 認證放 auth-profile.json，模型目錄自動從內建 + 自訂合併
+  // ══════════════════════════════════════════════════════════════
+
+  "agentDefaults": {
+    "model": {
+      "primary": "sonnet",                         // alias 或 "provider/model" 格式
+      "fallbacks": ["anthropic/claude-opus-4-6"]   // primary 不可用時依序嘗試
     },
-    "ollama-local": {
-      "type": "ollama",
-      "host": "http://localhost:11434",
-      "model": "qwen3:14b"
+    "models": {                                     // 模型對照表：key = "provider/model"，alias = 簡短名
+      "anthropic/claude-sonnet-4-6": { "alias": "sonnet" },
+      "anthropic/claude-opus-4-6": { "alias": "opus" },
+      "anthropic/claude-haiku-4-5-20251001": { "alias": "haiku" }
     }
   },
+
+  // modelsConfig（可選）— 自訂 provider 在此新增，mode="merge" 與內建合併
+  // "modelsConfig": { "mode": "merge", "providers": { "ollama": { ... } } },
+
+  // authConfig（可選）— 輪替順序和 cooldown
+  // 實際 credential 放 {workspace}/agents/default/auth-profile.json
+  // "authConfig": { "order": { "anthropic": ["anthropic:default"] } },
+
   "providerRouting": {
-    "roles": { "default": "claude" }
+    "roles": { "default": "sonnet" }   // 值可以是 alias 或 "provider/model"
+    // "channels": { "<頻道 ID>": "opus" }
+  },
+
+  // ── V1 舊格式（保留相容，有 agentDefaults 時以 V2 優先）────────
+  "provider": "claude",
+  "providers": {
+    "claude": {
+      "type": "claude",
+      "mode": "token",
+      "model": "claude-sonnet-4-6"
+    }
   },
 
   // ── 排程（job 定義在 data/cron-jobs.json）──────────────────────
@@ -139,6 +152,9 @@
 | guild `allowFrom` | `[]` | 不限制 |
 | channel `autoThread` | `false` | 每則訊息建 Thread |
 | provider `mode` | auto | claude 認證模式：token（OAuth）/ api（API key） |
+| `agentDefaults.model.primary` | — | V2 主要模型（alias 或 provider/model 格式） |
+| `agentDefaults.model.fallbacks` | `[]` | V2 備援模型清單 |
+| `modelsConfig.mode` | `"merge"` | 模型目錄合併模式：merge / replace |
 
 ---
 

@@ -3,7 +3,7 @@
 - Scope: project
 - Confidence: [固]
 - Trigger: 模組, config.ts, discord.ts, session.ts, acp.ts, reply.ts, logger, cron.ts, pm2, index.ts, 函式, 介面, BridgeConfig, getChannelAccess, enqueue, AcpEvent, providers, claude-api, auth-profile, skills, configure
-- Last-used: 2026-03-28
+- Last-used: 2026-04-02
 - Confirmations: 9
 
 # catclaw 模組詳細說明
@@ -279,16 +279,25 @@ reset-session：讀 CATCLAW_WORKSPACE 定位 sessions.json，不需重啟
 - `buildToolNameMap()` 建立 tool_use_id → toolName 反查表供 ToolResultMessage 使用
 - `getModel("anthropic", modelId as any)` + `Type.Unsafe(input_schema)` 建 pi-ai Tool
 
-### AuthProfileStore（auth-profile-store.ts）
-- 憑證檔：`{CATCLAW_WORKSPACE}/agents/default/auth-profile.json`（user-editable，格式：`[{id, credential}]`）
-- 狀態檔：`{CATCLAW_WORKSPACE}/data/auth-profiles/{providerId}-profiles.json`（runtime 管理）
-- `load()` 合併兩份檔案（credentials 覆蓋 credential 欄位，保留 lastUsed/cooldownUntil/disabled）
-- Cooldown：rate_limit=15min, overloaded=5min, billing/auth=永久停用
-- 永久停用恢復：刪 state 檔 + 重啟
+### AuthProfileStore（auth-profile-store.ts）— V2 重寫（2026-04-02）
+- 檔案：`{CATCLAW_WORKSPACE}/agents/default/auth-profile.json`（單檔，credential + state 合一）
+- ProfileId 格式：`"provider:name"`（如 `"anthropic:default"`）
+- 三種 credential type：`api_key`（apiKey 欄位）、`token`（token 欄位）、`oauth`（access/refresh/expires）
+- `pickForProvider(provider)` — round-robin rotation，跳過 cooldown 中的 profile
+- Cooldown 策略：rate_limit=5h, overloaded=5min, billing=24h, auth=permanent
+- V1→V2 自動遷移（舊 `[{id, credential}]` 陣列 → 新格式）
+- 全域單例：`initAuthProfileStore(filePath)` / `getAuthProfileStore()`
 
-### 設定（catclaw.json）
-- `providers.{id}.type = "claude-api"` + `model` 選填，**不設 token/profiles**
-- 憑證統一放 auth-profile.json
+### model-ref.ts（V2 新增，2026-04-02）
+- `parseModelRef(raw, aliases)` — 解析 alias / "provider/model" → `ModelRef { provider, model }`
+- `formatModelRef(ref)` — `ModelRef` → `"provider/model"` 字串
+- Provider alias 內建對應：claude→anthropic, bedrock→amazon-bedrock 等
+
+### models-config.ts（V2 新增，2026-04-02）
+- `ensureModelsJson(wsDir, modelsConfig?)` — 產生/更新 models.json（atomic write）
+- 內建 provider：anthropic（4 models）、openai（2 models）、openai-codex（1 model）
+- `modelsConfig.mode = "merge"` 與內建合併，`"replace"` 只用自訂
+- `findModelDefinition()` / `listAllModels()` 查詢介面
 
 ## skills/ — Skill 系統
 
@@ -296,8 +305,8 @@ reset-session：讀 CATCLAW_WORKSPACE 定位 sessions.json，不需重啟
 - `loadBuiltinSkills()` 掃描 `dist/skills/builtin/*.js`，auto-import `export const skill`
 - `matchSkill(text)` 前綴匹配 trigger
 
-### /configure skill（configure.ts，tier=admin）
-- `/configure` — 顯示目前 provider/model
-- `/configure model <id> [--provider <id>]` — 改 model（寫 catclaw.json，hot-reload 生效）
-- `/configure provider <id>` — 切換預設 provider
-- `/configure models` — 列出 pi-ai Anthropic 模型清單
+### /configure skill（configure.ts，tier=admin）— V2 支援（2026-04-02）
+- `/configure` — V2 顯示 agentDefaults primary/fallbacks + registry 列表；V1 顯示 providers 表
+- `/configure model <id>` — V2 改 `agentDefaults.model.primary`；V1 改 `providers.{id}.model`
+- `/configure provider <id>` — 切換預設 provider（V1 only）
+- `/configure models` — V2 從 models.json 列出全部 provider/model；V1 從 pi-ai 列出 Anthropic
