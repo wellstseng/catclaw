@@ -41,7 +41,10 @@ export const skill: Skill = {
 
     if (!arg) {
       const providerRegistry = getProviderRegistry();
-      const all = providerRegistry.list().map(p => `\`${p.id}\``).join("  ");
+      const all = providerRegistry.list().map(p => {
+        const model = p.modelId ? ` (${p.modelId})` : "";
+        return `\`${p.id}\`${model}`;
+      }).join("  ");
       const status = current ? `\`${current}\` (覆寫中)` : "依 routing 設定（未覆寫）";
       return { text: `🔌 **Provider**：${status}\n可用：${all}\n用法：\`/use <id>\` 或 \`/use reset\`` };
     }
@@ -60,6 +63,7 @@ export const skill: Skill = {
     }
 
     setChannelProviderOverride(channelId, arg);
-    return { text: `🔌 此頻道已切換至 \`${arg}\`（${p.name}）。下次對話生效。` };
+    const modelSuffix = p.modelId ? ` — ${p.modelId}` : "";
+    return { text: `🔌 此頻道已切換至 \`${arg}\`（${p.name}${modelSuffix}）。下次對話生效。` };
   },
 };
