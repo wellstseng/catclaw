@@ -60,6 +60,7 @@ export class OllamaProvider implements LLMProvider {
   readonly modelId: string;
   private think: boolean;
   private numPredict: number;
+  private authHeader?: string;
 
   constructor(id: string, entry: ProviderEntry) {
     this.id = id;
@@ -69,6 +70,11 @@ export class OllamaProvider implements LLMProvider {
     this.think = (entry as Record<string, unknown>)["think"] === true;
     this.numPredict = (entry as Record<string, unknown>)["numPredict"] as number ?? DEFAULT_NUM_PREDICT;
     this.supportsToolUse = (entry as Record<string, unknown>)["supportsToolUse"] !== false;
+    if (entry.mode === "password" && entry.username != null) {
+      const creds = Buffer.from(`${entry.username}:${entry.password ?? ""}`).toString("base64");
+      this.authHeader = `Basic ${creds}`;
+      log.debug(`[ollama:${id}] Basic Auth 模式 user=${entry.username}`);
+    }
   }
 
   // ── 啟動：偵測模型 tool_use 能力 ──────────────────────────────────────────
@@ -77,7 +83,7 @@ export class OllamaProvider implements LLMProvider {
     try {
       const resp = await fetch(`${this.host}/api/show`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: this._headers(),
         body: JSON.stringify({ name: this.modelId }),
         signal: AbortSignal.timeout(5000),
       });
@@ -94,6 +100,12 @@ export class OllamaProvider implements LLMProvider {
     } catch {
       log.debug(`[ollama:${this.id}] 無法偵測模型能力，使用預設值 supportsToolUse=${this.supportsToolUse}`);
     }
+  }
+
+  private _headers(): Record<string, string> {
+    const h: Record<string, string> = { "content-type": "application/json" };
+    if (this.authHeader) h["Authorization"] = this.authHeader;
+    return h;
   }
 
   // ── 主要串流方法 ──────────────────────────────────────────────────────────
@@ -138,7 +150,7 @@ export class OllamaProvider implements LLMProvider {
 
     const response = await fetch(`${this.host}/api/chat`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: this._headers(),
       body: JSON.stringify(body),
       signal: controller.signal,
     });

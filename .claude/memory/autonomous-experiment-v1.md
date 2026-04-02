@@ -3,8 +3,8 @@
 - Scope: project
 - Confidence: [固]
 - Trigger: 自主開發, autonomous, harness agent, PM subagent, 實驗指南, AI協作指南
-- Last-used: 2026-04-01
-- Confirmations: 1
+- Last-used: 2026-04-02
+- Confirmations: 2
 
 ## 知識
 
@@ -36,6 +36,13 @@
 - 控制點：PM 監控 channel 回應、可發 steer 指令、可直接改 source code
 - 失控預防：bot 開始亂跑時發「停止所有動作」立即有效
 
+### S3-後期新增教訓（2026-04-02）
+- [固] Claude Code（PM）回應要走 Discord reply tool，不能只輸出到 terminal — Wells 看不到 terminal
+- [固] 新欄位命名前先查既有系統（openclaw）慣例，避免命名後被更正
+- [固] config 路徑要確認：環境可能是 ~/.catclaw-test，不是 ~/.catclaw
+- [固] bot 可透過 exec-approval DM 審批後自改 catclaw.json — selfProtect 必須涵蓋所有 configDir，不只 ~/.catclaw
+- [固] isCommandAllowed 用 substring match 會被路徑中的字串誤中（如 /tmp/catclaw 含 "cat"）→ 改用 startsWith
+
 ### 待後續處理
 - Session 檔案競態（需加 mutex）
 - Upload 目錄定期清理
@@ -46,3 +53,4 @@
 - 下次大型功能開發可複用此 4-phase 結構
 - 測試時用 /migrate seed 觸發 LanceDB 重建（Ollama 需在線）
 - bot 身份混淆（把自己叫茱蒂而非 CatClaw）：CATCLAW.md identity 強化
+- exec-approval 測試：用不含 catclaw 路徑的指令名稱（或確認 allowedPatterns 不是純 substring）
