@@ -11,7 +11,7 @@
  * 消費後刪除這批 entries（append-only JSONL）。
  */
 
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
@@ -142,6 +142,33 @@ export class InboundHistoryStore {
     return result;
   }
 
+  // ── 公開查詢（Dashboard 用） ──────────────────────────────────────────────
+
+  /** 列出所有有 pending entries 的 channel */
+  listChannels(): Array<{ channelId: string; count: number; lastTs: string }> {
+    const results: Array<{ channelId: string; count: number; lastTs: string }> = [];
+    try {
+      const files = readdirSync(this.storeDir).filter(f => f.endsWith(".jsonl"));
+      for (const f of files) {
+        const channelId = f.replace(/^discord_/, "").replace(/\.jsonl$/, "");
+        const entries = this._readAllByFile(join(this.storeDir, f));
+        if (entries.length > 0) {
+          results.push({
+            channelId,
+            count: entries.length,
+            lastTs: entries[entries.length - 1]!.ts,
+          });
+        }
+      }
+    } catch { /* 靜默 */ }
+    return results.sort((a, b) => b.lastTs.localeCompare(a.lastTs));
+  }
+
+  /** 讀取指定 channel 的所有 pending entries */
+  readEntries(channelId: string): InboundEntry[] {
+    return this._readAll(channelId);
+  }
+
   // ── 私有輔助 ──────────────────────────────────────────────────────────────
 
   private _filePath(channelId: string): string {
@@ -150,7 +177,10 @@ export class InboundHistoryStore {
   }
 
   private _readAll(channelId: string): InboundEntry[] {
-    const filePath = this._filePath(channelId);
+    return this._readAllByFile(this._filePath(channelId));
+  }
+
+  private _readAllByFile(filePath: string): InboundEntry[] {
     if (!existsSync(filePath)) return [];
     try {
       return readFileSync(filePath, "utf-8")

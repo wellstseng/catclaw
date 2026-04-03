@@ -19,6 +19,7 @@ import { getTurnAuditLog, type TurnAuditEntry } from "./turn-audit-log.js";
 import { getTraceStore, type MessageTraceEntry } from "./message-trace.js";
 import { getSessionManager } from "./session.js";
 import { getContextEngine } from "./context-engine.js";
+import { getInboundHistoryStore } from "../discord/inbound-history.js";
 
 // ── Config 備份 ──────────────────────────────────────────────────────────────
 const BACKUP_KEEP = 5;
@@ -407,6 +408,10 @@ label.cfg-toggle { min-width: 36px; }
     <h2>Sessions（最近 50）<span style="float:right;display:inline-flex;gap:6px"><button class="btn btn-sm" onclick="purgeExpiredSessions()">🧹 Purge Expired</button><button class="btn btn-sm" onclick="loadSessions()">↻</button></span></h2>
     <div id="sessions-list"></div>
   </div>
+  <div class="card" style="margin-top:12px">
+    <h2>Inbound History（未消費）<button class="btn btn-sm" style="float:right" onclick="loadInboundHistory()">↻</button></h2>
+    <div id="inbound-list" style="font-size:0.8rem;color:var(--fg2)">按 ↻ 載入</div>
+  </div>
 </div>
 
 <!-- 日誌 -->
@@ -566,7 +571,7 @@ function switchTab(id, el) {
   document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
   el.classList.add('active');
   document.getElementById('pane-' + id).classList.add('active');
-  if (id === 'sessions') loadSessions();
+  if (id === 'sessions') { loadSessions(); loadInboundHistory(); }
   if (id === 'logs') connectLogStream();
   if (id !== 'logs') disconnectLogStream();
   if (id === 'ops') { loadSubagents(); }
@@ -730,7 +735,7 @@ async function sessAction(action, sessionKey) {
     const d = await r.json();
     if (d.success) {
       let msg = labels[action] + ' 成功';
-      if (d.clearedMessages != null) msg += '（' + d.clearedMessages + ' 條）';
+      if (d.clearedMessages != null) msg += '（' + d.clearedMessages + ' 條訊息, ' + (d.tracesDeleted||0) + ' 筆 trace）';
       if (d.strategies?.length) msg += '（策略：' + d.strategies.join(', ') + '）';
       alert(msg);
       loadSessions();
@@ -752,6 +757,54 @@ async function purgeExpiredSessions() {
       alert('失敗：' + (d.error || '未知錯誤'));
     }
   } catch(e) { alert('錯誤：' + e); }
+}
+
+// ── Inbound History ─────────────────────────────────────────────────────────
+async function loadInboundHistory() {
+  const el = document.getElementById('inbound-list');
+  try {
+    const d = await authFetch('/api/inbound-history').then(r => r.json());
+    const channels = d.channels || [];
+    if (!channels.length) { el.innerHTML = '<p style="color:#888">無 pending entries</p>'; return; }
+    let html = '<table class="tbl"><thead><tr><th>Channel</th><th>Pending</th><th>最新</th><th></th></tr></thead><tbody>';
+    for (const ch of channels) {
+      const ts = new Date(ch.lastTs).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
+      html += '<tr>';
+      html += '<td title="' + ch.channelId + '">' + ch.channelId.slice(-12) + '</td>';
+      html += '<td>' + ch.count + '</td>';
+      html += '<td>' + ts + '</td>';
+      html += '<td><a href="#" style="color:var(--accent);text-decoration:none;font-size:0.78rem" onclick="event.preventDefault();expandInbound(\\'' + ch.channelId + '\\',this.closest(\\'tr\\'))">展開</a></td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML = '載入失敗：' + e; }
+}
+
+async function expandInbound(channelId, row) {
+  const existing = row.nextElementSibling;
+  if (existing && existing.classList.contains('inbound-expand')) {
+    existing.remove(); return;
+  }
+  try {
+    const d = await authFetch('/api/inbound-history?channelId=' + encodeURIComponent(channelId)).then(r => r.json());
+    const entries = d.entries || [];
+    let html = '<td colspan="4" style="padding:8px 12px;background:var(--bg4);font-size:0.78rem">';
+    if (!entries.length) { html += '無 entries'; }
+    else {
+      html += '<div style="max-height:200px;overflow-y:auto">';
+      for (const e of entries) {
+        const ts = new Date(e.ts).toLocaleTimeString('zh-TW',{hour12:false});
+        html += '<div style="margin:2px 0"><span style="color:var(--fg2)">' + ts + '</span> <b>' + (e.authorName||'?') + '</b>: ' + (e.content||'').slice(0,120) + '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</td>';
+    const tr = document.createElement('tr');
+    tr.className = 'inbound-expand';
+    tr.innerHTML = html;
+    row.after(tr);
+  } catch(e) { alert('載入失敗：' + e); }
 }
 
 // ── 日誌（SSE 即時串流）──────────────────────────────────────────────────────
@@ -2123,9 +2176,27 @@ export class DashboardServer {
         return;
       }
 
+      // GET /api/inbound-history — 列出各頻道 pending inbound entries
+      if (url.startsWith("/api/inbound-history") && method === "GET") {
+        const store = getInboundHistoryStore();
+        if (!store) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ channels: [] })); return; }
+        const chMatch = url.match(/[?&]channelId=([^&]+)/);
+        if (chMatch) {
+          const channelId = decodeURIComponent(chMatch[1]!);
+          const entries = store.readEntries(channelId);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ channelId, entries }));
+        } else {
+          const channels = store.listChannels();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ channels }));
+        }
+        return;
+      }
+
       // ── Session Management API ─────────────────────────────────────────────
 
-      // POST /api/sessions/clear — 清空指定 session 訊息
+      // POST /api/sessions/clear — 清空指定 session 訊息 + traces
       if (url === "/api/sessions/clear" && method === "POST") {
         const chunks: Buffer[] = [];
         let sz = 0;
@@ -2136,14 +2207,16 @@ export class DashboardServer {
             if (!sessionKey) { res.writeHead(400); res.end(JSON.stringify({ error: "missing sessionKey" })); return; }
             const sm = getSessionManager();
             const count = sm.clearMessages(sessionKey);
+            const traceStore = getTraceStore();
+            const tracesDeleted = traceStore?.deleteBySession(sessionKey) ?? 0;
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ success: true, clearedMessages: count }));
+            res.end(JSON.stringify({ success: true, clearedMessages: count, tracesDeleted }));
           } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
         });
         return;
       }
 
-      // POST /api/sessions/delete — 刪除指定 session
+      // POST /api/sessions/delete — 刪除指定 session + traces
       if (url === "/api/sessions/delete" && method === "POST") {
         const chunks: Buffer[] = [];
         let sz = 0;
@@ -2154,8 +2227,10 @@ export class DashboardServer {
             if (!sessionKey) { res.writeHead(400); res.end(JSON.stringify({ error: "missing sessionKey" })); return; }
             const sm = getSessionManager();
             sm.delete(sessionKey);
+            const traceStore = getTraceStore();
+            const tracesDeleted = traceStore?.deleteBySession(sessionKey) ?? 0;
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ success: true }));
+            res.end(JSON.stringify({ success: true, tracesDeleted }));
           } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
         });
         return;

@@ -11,7 +11,7 @@
  *   3. agent-loop 結束 → trace.finalize() → TraceStore 持久化
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
@@ -491,6 +491,30 @@ export class TraceStore {
       }
     } catch { /* directory may not exist */ }
     return null;
+  }
+
+  /** 刪除指定 sessionKey 的所有 trace 記錄，回傳刪除數量 */
+  deleteBySession(sessionKey: string): number {
+    let count = 0;
+    try {
+      const files = readdirSync(this.logDir).filter(f => f.endsWith(".jsonl"));
+      for (const f of files) {
+        const filePath = join(this.logDir, f);
+        const lines = readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+        const kept: string[] = [];
+        for (const line of lines) {
+          try {
+            const entry = JSON.parse(line) as MessageTraceEntry;
+            if (entry.sessionKey === sessionKey) { count++; }
+            else { kept.push(line); }
+          } catch { kept.push(line); }
+        }
+        if (kept.length < lines.length) {
+          writeFileSync(filePath, kept.length > 0 ? kept.join("\n") + "\n" : "", "utf-8");
+        }
+      }
+    } catch { /* ignore */ }
+    return count;
   }
 
   /** 清理過期檔案 */

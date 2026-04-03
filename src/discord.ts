@@ -610,15 +610,17 @@ async function handleMessage(
       const nowStr = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
       const dateBlock = `[系統資訊] 當前時間（Asia/Taipei）：${nowStr}`;
 
-      // ── Inbound History 注入 ─────────────────────────────────────────────
-      // 組合順序：base（CATCLAW.md）→ 記憶 recall → channel override → inbound history
+      // ── System Prompt 組裝（不含 inbound history） ──────────────────────
       const channelSystemOverride = getChannelSystemOverride(firstMessage.channelId);
-      let combinedSystemPrompt = [baseSystemPrompt, systemPromptFromMemory, channelSystemOverride, dateBlock].filter(Boolean).join("\n\n");
+      const combinedSystemPrompt = [baseSystemPrompt, systemPromptFromMemory, channelSystemOverride, dateBlock].filter(Boolean).join("\n\n");
+
+      // ── Inbound History（注入到 messages 層，非 system prompt）──────────
+      let inboundContext: string | undefined;
       const inboundStore = getInboundHistoryStore();
       const inboundCfg = config.inboundHistory;
       if (inboundStore && inboundCfg?.enabled !== false) {
         try {
-          const inboundContext = await inboundStore.consumeForInjection(
+          const ctx = await inboundStore.consumeForInjection(
             firstMessage.channelId,
             {
               enabled: true,
@@ -629,14 +631,11 @@ async function handleMessage(
               inject: { enabled: inboundCfg?.inject?.enabled ?? false },
             },
           );
-          if (inboundContext) {
-            combinedSystemPrompt = combinedSystemPrompt
-              ? `${combinedSystemPrompt}\n\n${inboundContext}`
-              : inboundContext;
-            // Trace: inbound history 注入（簡易計算 token 數）
+          if (ctx) {
+            inboundContext = ctx;
             trace.recordInboundHistory({
               bucketA: 0, bucketB: 0,
-              tokens: Math.ceil(inboundContext.length / 4),
+              tokens: Math.ceil(ctx.length / 4),
               decayIIApplied: false,
             });
           }
@@ -701,6 +700,7 @@ async function handleMessage(
         speakerRole: accountRole,
         provider,
         systemPrompt: combinedSystemPrompt || undefined,
+        inboundContext,
         turnTimeoutMs: config.turnTimeoutMs,
         showToolCalls: config.showToolCalls as "all" | "summary" | "none",
         ...(memoryRoot && config.memory.sessionMemory?.enabled !== false ? {

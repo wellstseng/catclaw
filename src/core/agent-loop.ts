@@ -212,6 +212,11 @@ export interface AgentLoopOpts {
   /** Message Lifecycle Trace 收集器（由呼叫端建立並傳入） */
   trace?: MessageTrace;
   /**
+   * Inbound History context（頻道脈絡）。
+   * 注入為 messages 層的 user context（非 system prompt），CE 可壓縮。
+   */
+  inboundContext?: string;
+  /**
    * Extended thinking 等級（Anthropic）。
    * 傳入後 LLM 會輸出 thinking_delta 事件。
    */
@@ -474,8 +479,17 @@ export async function* agentLoop(
     return blocks;
   })();
 
+  // Inbound History：注入為 context messages（在 user prompt 前），CE 可壓縮
+  const inboundMessages: Message[] = opts.inboundContext
+    ? [
+        { role: "user", content: opts.inboundContext },
+        { role: "assistant", content: "好的，我已了解頻道近期脈絡。" },
+      ]
+    : [];
+
   const messages: Message[] = [
     ...processedHistory,
+    ...inboundMessages,
     { role: "user", content: firstUserContent },
   ];
 

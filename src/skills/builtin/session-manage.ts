@@ -13,6 +13,7 @@
 import type { Skill, SkillContext, SkillResult } from "../types.js";
 import { getSessionManager, makeSessionKey } from "../../core/session.js";
 import { getContextEngine } from "../../core/context-engine.js";
+import { getTraceStore } from "../../core/message-trace.js";
 
 /** 從 SkillContext 推算當前頻道的 session key */
 function currentSessionKey(ctx: SkillContext): string {
@@ -76,10 +77,11 @@ function handleClear(ctx: SkillContext): SkillResult {
   const sm = getSessionManager();
   const key = currentSessionKey(ctx);
   const count = sm.clearMessages(key);
-  if (count === 0) {
+  const tracesDeleted = getTraceStore()?.deleteBySession(key) ?? 0;
+  if (count === 0 && tracesDeleted === 0) {
     return { text: `此頻道無 session 或已是空的。（key=\`${key}\`）` };
   }
-  return { text: `已清空 ${count} 條訊息。（key=\`${key}\`）` };
+  return { text: `已清空 ${count} 條訊息、${tracesDeleted} 筆 trace。（key=\`${key}\`）` };
 }
 
 async function handleCompact(ctx: SkillContext): Promise<SkillResult> {
@@ -136,5 +138,6 @@ function handleDelete(ctx: SkillContext, keyArg: string): SkillResult {
     return { text: `找不到 session \`${key}\`。`, isError: true };
   }
   sm.delete(key);
-  return { text: `已刪除 session \`${key}\`。` };
+  const tracesDeleted = getTraceStore()?.deleteBySession(key) ?? 0;
+  return { text: `已刪除 session \`${key}\`（${tracesDeleted} 筆 trace 一併清除）。` };
 }
