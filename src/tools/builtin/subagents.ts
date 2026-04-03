@@ -5,10 +5,12 @@
  * LLM 可用此 tool 查詢、終止、轉向、等待子 agent。
  */
 
+import { randomUUID } from "node:crypto";
 import type { Tool, ToolContext } from "../types.js";
 import { getSubagentRegistry } from "../../core/subagent-registry.js";
 import { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRegistry, getPlatformSafetyGuard } from "../../core/platform.js";
 import { log } from "../../logger.js";
+import { MessageTrace } from "../../core/message-trace.js";
 
 export const tool: Tool = {
   name: "subagents",
@@ -138,6 +140,10 @@ export const tool: Tool = {
           const provider = getProviderRegistry()?.resolve();
           if (!provider) { registry.fail(runId!, "找不到 provider"); return; }
 
+          // Trace 建立（resume subagent）
+          const resumeTrace = MessageTrace.create(randomUUID(), record!.childSessionKey, record!.accountId, "subagent");
+          resumeTrace.recordInbound({ text: message, attachments: 0 });
+
           let fullText = ""; let turns = 0;
           const loopGen = agentLoop(message, {
             platform: "subagent",
@@ -147,6 +153,7 @@ export const tool: Tool = {
             allowSpawn: false,
             _sessionKeyOverride: record!.childSessionKey,
             signal: record!.abortController.signal,
+            trace: resumeTrace,
           }, { sessionManager, permissionGate, toolRegistry, safetyGuard, eventBus });
 
           try {

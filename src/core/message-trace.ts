@@ -69,6 +69,9 @@ export interface TraceWorkflowEvent {
   detail: string;
 }
 
+/** Trace 分類 */
+export type TraceCategory = "discord" | "subagent" | "cron" | "api";
+
 /** 完整訊息追蹤記錄 */
 export interface MessageTraceEntry {
   traceId: string;
@@ -77,6 +80,11 @@ export interface MessageTraceEntry {
   accountId: string;
   sessionKey?: string;
   ts: string;
+
+  // Classification
+  category?: TraceCategory;
+  parentTraceId?: string;
+  turnIndex?: number;
 
   // Phase 1: Inbound
   inbound: {
@@ -146,6 +154,23 @@ export interface MessageTraceEntry {
   estimatedCostUsd?: number;
   /** Workflow 事件（wisdom/rut/oscillation/sync 等） */
   workflowEvents?: TraceWorkflowEvent[];
+
+  // TurnAuditLog 遷移欄位
+  phase?: {
+    inboundReceivedMs: number;
+    queueWaitMs?: number;
+    agentLoopStartMs?: number;
+    completedMs?: number;
+  };
+  contextBreakdown?: {
+    systemPrompt: number;
+    recall: number;
+    history: number;
+    inboundContext: number;
+    current: number;
+  };
+  toolDurations?: Record<string, number[]>;
+
   error?: string;
   status: "completed" | "aborted" | "error";
 }
@@ -195,13 +220,14 @@ export class MessageTrace {
   private _currentLLMCall: Partial<TraceLLMCall> | null = null;
   private _llmCallStartMs = 0;
 
-  private constructor(traceId: string, channelId: string, accountId: string) {
+  private constructor(traceId: string, channelId: string, accountId: string, category?: TraceCategory) {
     this.traceId = traceId;
     this.entry = {
       traceId,
       channelId,
       accountId,
       ts: new Date().toISOString(),
+      category,
       inbound: {
         receivedAt: Date.now(),
         textPreview: "",
@@ -220,15 +246,21 @@ export class MessageTrace {
     };
   }
 
-  /** 建立新的 trace（使用已存在的 turnId） */
-  static create(traceId: string, channelId: string, accountId: string): MessageTrace {
-    return new MessageTrace(traceId, channelId, accountId);
+  /** 建立新的 trace */
+  static create(traceId: string, channelId: string, accountId: string, category?: TraceCategory): MessageTrace {
+    return new MessageTrace(traceId, channelId, accountId, category);
   }
 
   /** 設定 sessionKey（agent-loop 開始時注入） */
   setSessionKey(sessionKey: string): void {
     this.entry.sessionKey = sessionKey;
   }
+
+  setParentTraceId(id: string): void { this.entry.parentTraceId = id; }
+  setTurnIndex(index: number): void { this.entry.turnIndex = index; }
+  setPhase(phase: MessageTraceEntry["phase"]): void { this.entry.phase = phase; }
+  setContextBreakdown(breakdown: MessageTraceEntry["contextBreakdown"]): void { this.entry.contextBreakdown = breakdown; }
+  setToolDurations(durations: Record<string, number[]>): void { this.entry.toolDurations = durations; }
 
   // ── Phase 1: Inbound ──────────────────────────────────────────────────────
 
@@ -420,7 +452,7 @@ export class MessageTrace {
 
 // ── TraceStore（持久化）─────────────────────────────────────────────────────
 
-const ROLLING_DAYS = 14;
+const ROLLING_DAYS = 30;
 
 export class TraceStore {
   private logDir: string;
@@ -471,6 +503,11 @@ export class TraceStore {
   /** 依 sessionKey 查詢 traces */
   bySession(sessionKey: string, limit = 50): MessageTraceEntry[] {
     return this.recent(limit, e => e.sessionKey === sessionKey);
+  }
+
+  /** 依 parentTraceId 查詢子 traces */
+  byParent(parentTraceId: string, limit = 50): MessageTraceEntry[] {
+    return this.recent(limit, e => e.parentTraceId === parentTraceId);
   }
 
   /** 依 traceId 查詢單筆 */

@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import { Cron } from "croner";
 import type { Client, SendableChannels } from "discord.js";
 import { config, resolveWorkspaceDir } from "./core/config.js";
+import { MessageTrace } from "./core/message-trace.js";
 import type { CronSchedule, CronAction } from "./core/config.js";
 import { runClaudeTurn } from "./acp.js";
 import { log } from "./logger.js";
@@ -478,6 +479,10 @@ async function execSubagent(action: {
   const sessionKey = `cron:${randomUUID()}`;
   let fullText = "";
 
+  // Trace 建立（cron 分類）
+  const cronTrace = MessageTrace.create(randomUUID(), "cron", accountId, "cron");
+  cronTrace.recordInbound({ text: action.task, attachments: 0 });
+
   const gen = agentLoop(action.task, {
     platform: "cron",
     channelId: "cron",              // 語意佔位，session key 由 _sessionKeyOverride 決定
@@ -486,6 +491,7 @@ async function execSubagent(action: {
     turnTimeoutMs: action.timeoutMs ?? 300_000,
     allowSpawn: false,
     _sessionKeyOverride: sessionKey,
+    trace: cronTrace,
   }, {
     sessionManager: getPlatformSessionManager(),
     permissionGate: getPlatformPermissionGate(),

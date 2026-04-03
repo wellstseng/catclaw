@@ -35,7 +35,6 @@ import { initMemoryEngine, type MemoryEngine } from "../memory/engine.js";
 import { initOllamaClient } from "../ollama/client.js";
 import { initRateLimiter, getRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { renameSessions } from "../migration/rename-sessions.js";
-import { initTurnAuditLog, getTurnAuditLog } from "./turn-audit-log.js";
 import { initTraceStore, getTraceStore } from "./message-trace.js";
 import { initContextEngine } from "./context-engine.js";
 import { initSubagentRegistry } from "./subagent-registry.js";
@@ -227,9 +226,8 @@ export async function initPlatform(
   initSubagentRegistry(config.subagents?.maxConcurrent ?? 3);
   log.info("[platform] SubagentRegistry 初始化完成");
 
-  // ── 9.7 Turn Audit Log + Tool Log Store ────────────────────────────────────
+  // ── 9.7 Tool Log Store + Trace Store ────────────────────────────────────────
   const auditDataDir = join(wsDir, "data");
-  initTurnAuditLog(auditDataDir);
   initToolLogStore(auditDataDir);
   initInboundHistoryStore(auditDataDir);
   initSessionSnapshotStore(auditDataDir);
@@ -237,7 +235,6 @@ export async function initPlatform(
 
   // 啟動時執行一次清理，並每 24h 自動滾動（防止日誌無限累積）
   function runDataCleanup() {
-    try { getTurnAuditLog()?.cleanup(); } catch { /* 靜默 */ }
     try { getToolLogStore()?.cleanup(); } catch { /* 靜默 */ }
     try { getSessionSnapshotStore()?.cleanup(); } catch { /* 靜默 */ }
     try { getTraceStore()?.cleanup(); } catch { /* 靜默 */ }

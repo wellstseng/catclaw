@@ -1,6 +1,6 @@
 /**
  * @file skills/builtin/usage.ts
- * @description /usage skill — token 消耗統計（讀 turn-audit JSONL）
+ * @description /usage skill — token 消耗統計（讀 TraceStore）
  *
  * 用法：
  *   /usage              → 今日統計（含 CE 效果）
@@ -9,7 +9,7 @@
  */
 
 import type { Skill } from "../types.js";
-import { getTurnAuditLog, type TurnAuditEntry } from "../../core/turn-audit-log.js";
+import { getTraceStore, type MessageTraceEntry } from "../../core/message-trace.js";
 
 export const skill: Skill = {
   name: "usage",
@@ -18,36 +18,40 @@ export const skill: Skill = {
   trigger: ["/usage"],
 
   async execute({ args }) {
-    const auditLog = getTurnAuditLog();
-    if (!auditLog) return { text: "❌ TurnAuditLog 尚未初始化", isError: true };
+    const traceStore = getTraceStore();
+    if (!traceStore) return { text: "❌ TraceStore 尚未初始化", isError: true };
 
     // 解析 flags
     const daysMatch = args.match(/--days\s+(\d+)/);
     const days = daysMatch ? parseInt(daysMatch[1]!, 10) : 1;
     const bySession = args.includes("--session");
 
-    // 取資料（抓足夠多讓我們自己按天過濾）
+    // 取資料
     const cutoff = Date.now() - days * 86400_000;
-    const entries = auditLog.recent(10000, (e) => new Date(e.ts).getTime() >= cutoff);
+    const entries = traceStore.recent(10000, (e) => new Date(e.ts).getTime() >= cutoff);
 
     if (entries.length === 0) {
-      return { text: `📊 最近 ${days} 天無 audit 記錄` };
+      return { text: `📊 最近 ${days} 天無 trace 記錄` };
     }
 
-    const totalInput = entries.reduce((s, e) => s + (e.inputTokens ?? 0), 0);
-    const totalOutput = entries.reduce((s, e) => s + (e.outputTokens ?? 0), 0);
+    const totalInput = entries.reduce((s, e) => s + (e.totalInputTokens ?? 0), 0);
+    const totalOutput = entries.reduce((s, e) => s + (e.totalOutputTokens ?? 0), 0);
     const totalTurns = entries.length;
-    const ceEntries = entries.filter(e => e.ceApplied.length > 0);
+    const ceEntries = entries.filter(e => (e.contextEngineering?.strategiesApplied?.length ?? 0) > 0);
     const avgTokensSaved = ceEntries.length > 0
       ? Math.round(ceEntries.reduce((s, e) =>
-          s + ((e.tokensBeforeCE ?? 0) - (e.tokensAfterCE ?? 0)), 0) / ceEntries.length)
+          s + ((e.contextEngineering?.tokensBeforeCE ?? 0) - (e.contextEngineering?.tokensAfterCE ?? 0)), 0) / ceEntries.length)
       : 0;
+
+    // 費用統計
+    const totalCost = entries.reduce((s, e) => s + (e.estimatedCostUsd ?? 0), 0);
 
     const lines: string[] = [
       `📊 Token 統計（最近 ${days} 天，共 ${totalTurns} turns）`,
       `  輸入：${totalInput.toLocaleString()} tokens`,
       `  輸出：${totalOutput.toLocaleString()} tokens`,
       `  合計：${(totalInput + totalOutput).toLocaleString()} tokens`,
+      `  預估費用：$${totalCost.toFixed(4)} USD`,
       ``,
       `📉 CE 壓縮（${ceEntries.length} turns 觸發）`,
     ];
@@ -58,7 +62,7 @@ export const skill: Skill = {
       // CE strategy 觸發頻率
       const strategyCounts = new Map<string, number>();
       for (const e of ceEntries) {
-        for (const s of e.ceApplied) {
+        for (const s of e.contextEngineering!.strategiesApplied) {
           strategyCounts.set(s, (strategyCounts.get(s) ?? 0) + 1);
         }
       }
@@ -69,18 +73,32 @@ export const skill: Skill = {
       lines.push(`  （未觸發）`);
     }
 
+    // 分類統計
+    const categoryCounts = new Map<string, number>();
+    for (const e of entries) {
+      const cat = e.category ?? "unknown";
+      categoryCounts.set(cat, (categoryCounts.get(cat) ?? 0) + 1);
+    }
+    if (categoryCounts.size > 1) {
+      lines.push(``, `📂 分類`);
+      for (const [cat, count] of categoryCounts.entries()) {
+        lines.push(`  ${cat}: ${count} turns`);
+      }
+    }
+
     // 依 session 分組
     if (bySession) {
       lines.push(``, `📋 依 Session`);
-      const sessionMap = new Map<string, TurnAuditEntry[]>();
+      const sessionMap = new Map<string, MessageTraceEntry[]>();
       for (const e of entries) {
-        const grp = sessionMap.get(e.sessionKey) ?? [];
+        const key = e.sessionKey ?? e.channelId;
+        const grp = sessionMap.get(key) ?? [];
         grp.push(e);
-        sessionMap.set(e.sessionKey, grp);
+        sessionMap.set(key, grp);
       }
       for (const [key, ses] of sessionMap.entries()) {
-        const inTok = ses.reduce((s, e) => s + (e.inputTokens ?? 0), 0);
-        const outTok = ses.reduce((s, e) => s + (e.outputTokens ?? 0), 0);
+        const inTok = ses.reduce((s, e) => s + (e.totalInputTokens ?? 0), 0);
+        const outTok = ses.reduce((s, e) => s + (e.totalOutputTokens ?? 0), 0);
         const shortKey = key.length > 30 ? `…${key.slice(-27)}` : key;
         lines.push(`  ${shortKey}: ${ses.length} turns | ↑${inTok} ↓${outTok}`);
       }

@@ -18,6 +18,7 @@ import type { Tool, ToolContext } from "../types.js";
 import { getSubagentRegistry } from "../../core/subagent-registry.js";
 import type { SpawnResult, SubagentRunRecord } from "../../core/subagent-registry.js";
 import { log } from "../../logger.js";
+import { MessageTrace } from "../../core/message-trace.js";
 
 // 延遲 import（防止循環依賴）— 由 runChildAgentLoop 動態取得
 async function getAgentLoopDeps() {
@@ -68,6 +69,8 @@ interface ChildRunOpts {
   allowNestedSpawn?: boolean;
   /** 此子 agent 的 runId（注入到 ToolContext.parentRunId，供孫層 spawn 建立 parentId 關聯） */
   parentRunId?: string;
+  /** 父層 traceId（建立 parent-child trace 關聯） */
+  parentTraceId?: string;
 }
 
 // ── ACP Runtime（SUB-6）──────────────────────────────────────────────────────
@@ -204,6 +207,12 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
   let fullText = "";
   let turnCount = 0;
 
+  // ── Trace 建立（subagent 分類）──────────────────────────────────────────
+  const childTraceId = randomUUID();
+  const childTrace = MessageTrace.create(childTraceId, opts.childSessionKey, opts.accountId, "subagent");
+  if (opts.parentTraceId) childTrace.setParentTraceId(opts.parentTraceId);
+  childTrace.recordInbound({ text: opts.task, attachments: 0 });
+
   const childDepth = (opts.parentSpawnDepth ?? 0) + 1;
   // allowNestedSpawn:true + depth < 2 → 允許子 agent spawn（深度限制由 agent-loop 強制）
   const childAllowSpawn = (opts.allowNestedSpawn === true) && childDepth < 2;
@@ -221,6 +230,7 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
     workspaceDir: opts.workspaceDir,
     _sessionKeyOverride: opts.childSessionKey,
     parentRunId: opts.parentRunId,
+    trace: childTrace,
   }, {
     sessionManager,
     permissionGate,
@@ -395,6 +405,7 @@ export const tool: Tool = {
             parentSpawnDepth: ctx.spawnDepth ?? 0,
             allowNestedSpawn,
             parentRunId: record.runId,
+            parentTraceId: ctx.traceId,
           }),
           new Promise<never>((_, reject) => {
             setTimeout(() => reject(new Error("__TIMEOUT__")), timeoutMs + 1000);

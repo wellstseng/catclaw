@@ -15,7 +15,6 @@ import { readFileSync, writeFileSync, readdirSync, unlinkSync, renameSync, exist
 import { dirname, basename, join, join as pathJoin, resolve } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
-import { getTurnAuditLog, type TurnAuditEntry } from "./turn-audit-log.js";
 import { getTraceStore, type MessageTraceEntry } from "./message-trace.js";
 import { getSessionManager } from "./session.js";
 import { getContextEngine } from "./context-engine.js";
@@ -156,42 +155,51 @@ function touchRestart(): boolean {
 // ── API Data Builders ────────────────────────────────────────────────────────
 
 function buildApiData(days = 7) {
-  const auditLog = getTurnAuditLog();
-  if (!auditLog) return { error: "TurnAuditLog not initialized" };
+  const traceStore = getTraceStore();
+  if (!traceStore) return { error: "TraceStore not initialized" };
 
   const cutoff = Date.now() - days * 86400_000;
-  const entries = auditLog.recent(100000, (e) => new Date(e.ts).getTime() >= cutoff);
+  const entries = traceStore.recent(100000, (e) => new Date(e.ts).getTime() >= cutoff);
 
-  const totalInput = entries.reduce((s, e) => s + (e.inputTokens ?? 0), 0);
-  const totalOutput = entries.reduce((s, e) => s + (e.outputTokens ?? 0), 0);
-  const totalCacheRead = entries.reduce((s, e) => s + (e.cacheRead ?? 0), 0);
-  const totalCacheWrite = entries.reduce((s, e) => s + (e.cacheWrite ?? 0), 0);
-  const ceEntries = entries.filter(e => e.ceApplied.length > 0);
+  const totalInput = entries.reduce((s, e) => s + (e.totalInputTokens ?? 0), 0);
+  const totalOutput = entries.reduce((s, e) => s + (e.totalOutputTokens ?? 0), 0);
+  const totalCacheRead = entries.reduce((s, e) => s + (e.totalCacheRead ?? 0), 0);
+  const totalCacheWrite = entries.reduce((s, e) => s + (e.totalCacheWrite ?? 0), 0);
+  const totalCost = entries.reduce((s, e) => s + (e.estimatedCostUsd ?? 0), 0);
+  const ceEntries = entries.filter(e => (e.contextEngineering?.strategiesApplied?.length ?? 0) > 0);
   const avgTokensSaved = ceEntries.length > 0
     ? Math.round(ceEntries.reduce((s, e) =>
-        s + ((e.tokensBeforeCE ?? 0) - (e.tokensAfterCE ?? 0)), 0) / ceEntries.length)
+        s + ((e.contextEngineering?.tokensBeforeCE ?? 0) - (e.contextEngineering?.tokensAfterCE ?? 0)), 0) / ceEntries.length)
     : 0;
 
   // provider 分布統計
   const providerCounts: Record<string, { turns: number; input: number; output: number }> = {};
   for (const e of entries) {
-    const key = e.providerType ?? "unknown";
+    const key = e.llmCalls[0]?.provider ?? "unknown";
     const p = providerCounts[key] ??= { turns: 0, input: 0, output: 0 };
     p.turns++;
-    p.input += e.inputTokens ?? 0;
-    p.output += e.outputTokens ?? 0;
+    p.input += e.totalInputTokens ?? 0;
+    p.output += e.totalOutputTokens ?? 0;
   }
 
-  const dailyMap = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number; ceTokensSaved: number }>();
+  // 分類統計
+  const categoryCounts: Record<string, number> = {};
+  for (const e of entries) {
+    const cat = e.category ?? "unknown";
+    categoryCounts[cat] = (categoryCounts[cat] ?? 0) + 1;
+  }
+
+  const dailyMap = new Map<string, { input: number; output: number; cacheRead: number; cacheWrite: number; ceTokensSaved: number; cost: number }>();
   for (const e of entries) {
     const date = e.ts.slice(0, 10);
-    const d = dailyMap.get(date) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ceTokensSaved: 0 };
-    d.input += e.inputTokens ?? 0;
-    d.output += e.outputTokens ?? 0;
-    d.cacheRead += e.cacheRead ?? 0;
-    d.cacheWrite += e.cacheWrite ?? 0;
-    if (e.ceApplied.length > 0) {
-      d.ceTokensSaved += (e.tokensBeforeCE ?? 0) - (e.tokensAfterCE ?? 0);
+    const d = dailyMap.get(date) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ceTokensSaved: 0, cost: 0 };
+    d.input += e.totalInputTokens ?? 0;
+    d.output += e.totalOutputTokens ?? 0;
+    d.cacheRead += e.totalCacheRead ?? 0;
+    d.cacheWrite += e.totalCacheWrite ?? 0;
+    d.cost += e.estimatedCostUsd ?? 0;
+    if ((e.contextEngineering?.strategiesApplied?.length ?? 0) > 0) {
+      d.ceTokensSaved += (e.contextEngineering?.tokensBeforeCE ?? 0) - (e.contextEngineering?.tokensAfterCE ?? 0);
     }
     dailyMap.set(date, d);
   }
@@ -199,46 +207,51 @@ function buildApiData(days = 7) {
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([date, v]) => ({ date, ...v }));
 
-  const recentTurns: TurnAuditEntry[] = entries.slice(0, 20);
+  const recentTurns: MessageTraceEntry[] = entries.slice(0, 20);
 
   return {
-    totalInput, totalOutput, totalCacheRead, totalCacheWrite,
+    totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCost,
     totalTokens: totalInput + totalOutput,
     totalTurns: entries.length, ceTriggers: ceEntries.length, avgTokensSaved,
-    providerCounts, daily, recentTurns,
+    providerCounts, categoryCounts, daily, recentTurns,
   };
 }
 
 function buildSessionsData() {
-  const auditLog = getTurnAuditLog();
-  if (!auditLog) return { error: "TurnAuditLog not initialized" };
+  const traceStore = getTraceStore();
+  if (!traceStore) return { error: "TraceStore not initialized" };
 
-  const entries = auditLog.recent(100000);
+  const entries = traceStore.recent(100000);
   const sessMap = new Map<string, {
     sessionKey: string; turns: number; inputTokens: number; outputTokens: number;
-    cacheRead: number; cacheWrite: number;
+    cacheRead: number; cacheWrite: number; cost: number;
     firstTs: string; lastTs: string; ceTriggers: number;
+    category?: string;
     providers: Set<string>; models: Set<string>;
-    recentTurns: TurnAuditEntry[];
+    recentTurns: MessageTraceEntry[];
   }>();
 
   for (const e of entries) {
-    const k = e.sessionKey;
+    const k = e.sessionKey ?? e.channelId;
     const s = sessMap.get(k) ?? {
       sessionKey: k, turns: 0, inputTokens: 0, outputTokens: 0,
-      cacheRead: 0, cacheWrite: 0,
+      cacheRead: 0, cacheWrite: 0, cost: 0,
       firstTs: e.ts, lastTs: e.ts, ceTriggers: 0,
+      category: e.category,
       providers: new Set<string>(), models: new Set<string>(),
       recentTurns: [],
     };
     s.turns++;
-    s.inputTokens += e.inputTokens ?? 0;
-    s.outputTokens += e.outputTokens ?? 0;
-    s.cacheRead += e.cacheRead ?? 0;
-    s.cacheWrite += e.cacheWrite ?? 0;
-    if (e.providerType) s.providers.add(e.providerType);
-    if (e.model) s.models.add(e.model);
-    if (e.ceApplied.length > 0) s.ceTriggers++;
+    s.inputTokens += e.totalInputTokens ?? 0;
+    s.outputTokens += e.totalOutputTokens ?? 0;
+    s.cacheRead += e.totalCacheRead ?? 0;
+    s.cacheWrite += e.totalCacheWrite ?? 0;
+    s.cost += e.estimatedCostUsd ?? 0;
+    const provider = e.llmCalls[0]?.provider;
+    const model = e.llmCalls[0]?.model;
+    if (provider) s.providers.add(provider);
+    if (model) s.models.add(model);
+    if ((e.contextEngineering?.strategiesApplied?.length ?? 0) > 0) s.ceTriggers++;
     if (e.ts < s.firstTs) s.firstTs = e.ts;
     if (e.ts > s.lastTs) s.lastTs = e.ts;
     if (s.recentTurns.length < 10) s.recentTurns.push(e);
@@ -637,18 +650,21 @@ async function loadOverview() {
 
     const rows = (d.recentTurns||[]).map(e => {
       const ts = new Date(e.ts).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
-      const inp = e.inputTokens != null ? e.inputTokens.toLocaleString() : '-';
-      const out = (e.outputTokens??0).toLocaleString();
-      const cache = fmtCache(e.cacheRead, e.cacheWrite);
-      const dur = e.durationMs != null ? \`\${(e.durationMs/1000).toFixed(1)}s\` : '-';
-      const sk = (e.sessionKey||'').slice(-16);
-      const mdl = e.model ? \`<span title="\${e.model}">\${e.model.length>18?e.model.slice(0,18)+'…':e.model}</span>\` : '-';
-      const prov = e.providerType || '-';
-      const est = e.estimated ? '~' : '';
-      return \`<tr><td>\${ts}</td><td title="\${e.sessionKey}">\${sk}</td><td>\${prov}</td><td>\${mdl}</td><td>\${est}↑\${inp}</td><td>↓\${out}</td><td>\${cache}</td><td>\${e.ceApplied?.join('+')||'-'}</td><td>\${dur}</td></tr>\`;
+      const inp = e.totalInputTokens != null ? e.totalInputTokens.toLocaleString() : '-';
+      const out = (e.totalOutputTokens??0).toLocaleString();
+      const cache = fmtCache(e.totalCacheRead, e.totalCacheWrite);
+      const dur = e.totalDurationMs != null ? \`\${(e.totalDurationMs/1000).toFixed(1)}s\` : '-';
+      const sk = (e.sessionKey||e.channelId||'').slice(-16);
+      const firstCall = (e.llmCalls||[])[0];
+      const mdl = firstCall?.model ? \`<span title="\${firstCall.model}">\${firstCall.model.length>18?firstCall.model.slice(0,18)+'…':firstCall.model}</span>\` : '-';
+      const prov = firstCall?.provider || '-';
+      const cat = e.category ? \`<span style="font-size:0.7rem;opacity:0.6">[\${e.category}]</span> \` : '';
+      const ceStrats = e.contextEngineering?.strategiesApplied || [];
+      const cost = e.estimatedCostUsd != null ? \`$\${e.estimatedCostUsd.toFixed(4)}\` : '-';
+      return \`<tr><td>\${ts}</td><td title="\${e.sessionKey||e.channelId}">\${cat}\${sk}</td><td>\${prov}</td><td>\${mdl}</td><td>↑\${inp}</td><td>↓\${out}</td><td>\${cache}</td><td>\${ceStrats.join('+')||'-'}</td><td>\${cost}</td><td>\${dur}</td></tr>\`;
     }).join('');
     document.getElementById('turns').innerHTML =
-      \`<table class="tbl"><thead><tr><th>時間</th><th>Session</th><th>Provider</th><th>Model</th><th>輸入</th><th>輸出</th><th>Cache</th><th>CE</th><th>耗時</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+      \`<table class="tbl"><thead><tr><th>時間</th><th>Session</th><th>Provider</th><th>Model</th><th>輸入</th><th>輸出</th><th>Cache</th><th>CE</th><th>Cost</th><th>耗時</th></tr></thead><tbody>\${rows}</tbody></table>\`;
   } catch(e) { console.error(e); }
 }
 

@@ -51,6 +51,8 @@ export interface ToolContext {
    * 子 agent 呼叫 spawn_subagent 時，registry.create 以此為 parentId，實現 cascade abort。
    */
   parentRunId?: string;
+  /** 當前 turn 的 traceId（供子 agent 建立 parentTraceId 關聯） */
+  traceId?: string;
 }
 
 // ── Tool 介面 ─────────────────────────────────────────────────────────────────

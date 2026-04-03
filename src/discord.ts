@@ -404,7 +404,7 @@ async function handleMessage(
     const turnId = randomUUID();
 
     // ── Message Trace 建立 ──────────────────────────────────────────────────
-    const trace = MessageTrace.create(turnId, firstMessage.channelId, firstMessage.author.id);
+    const trace = MessageTrace.create(turnId, firstMessage.channelId, firstMessage.author.id, "discord");
     trace.recordInbound({
       messageId: firstMessage.id,
       text: combinedText,
@@ -478,6 +478,10 @@ async function handleMessage(
         );
         const providerRegistry = getProviderRegistry();
         const provider = providerRegistry.resolve();
+        // Trace 建立（subagent thread 路由）
+        const threadTrace = MessageTrace.create(randomUUID(), firstMessage.channelId, accountId, "subagent");
+        threadTrace.recordInbound({ messageId: firstMessage.id, text: combinedText, attachments: 0 });
+
         const threadGen = agentLoop(combinedText, {
           platform: "discord",
           channelId: firstMessage.channelId,
@@ -487,6 +491,7 @@ async function handleMessage(
           showToolCalls: config.showToolCalls as "all" | "summary" | "none",
           _sessionKeyOverride: boundChildKey,
           allowSpawn: false,
+          trace: threadTrace,
         }, {
           sessionManager: getPlatformSessionManager(),
           permissionGate: getPlatformPermissionGate(),

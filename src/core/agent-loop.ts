@@ -24,7 +24,6 @@ import type { SafetyGuard } from "../safety/guard.js";
 import { eventBus as _eventBusInstance } from "./event-bus.js";
 type EventBus = typeof _eventBusInstance;
 import type { ToolContext } from "../tools/types.js";
-import { getTurnAuditLog } from "./turn-audit-log.js";
 import { getContextEngine } from "./context-engine.js";
 import { getToolLogStore, ToolLogStore } from "./tool-log-store.js";
 import { getSessionSnapshotStore } from "./session-snapshot.js";
@@ -724,7 +723,7 @@ export async function* agentLoop(
 
         const batchResults = await Promise.all(spawnCalls.map(async (call): Promise<SpawnBatchResult> => {
           const params = call.params as Record<string, unknown>;
-          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId };
+          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId };
           const events: SpawnEvent[] = [];
           const hookResult = runBeforeToolCall(
             { id: call.id, name: call.name, params },
@@ -790,6 +789,7 @@ export async function* agentLoop(
           eventBus,
           spawnDepth,
           parentRunId: opts.parentRunId,
+          traceId: trace?.traceId,
         };
 
         // before_tool_call
@@ -995,6 +995,32 @@ export async function* agentLoop(
     });
     trace.recordResponse(fullResponse, Date.now() - turnStartMs);
 
+    // TurnAuditLog 遷移欄位：turnIndex, phase, contextBreakdown, toolDurations
+    const sessionAfterTrace = sessionManager.get(sessionKey) ?? session;
+    trace.setTurnIndex(sessionAfterTrace?.turnCount ?? 0);
+    trace.setPhase({
+      inboundReceivedMs: turnStartMs,
+      completedMs: Date.now(),
+    });
+    const ceBreakdownTrace = contextEngine?.lastBuildBreakdown;
+    if (ceBreakdownTrace) {
+      trace.setContextBreakdown({
+        systemPrompt: ceBreakdownTrace.estimatedTokens, // 近似值
+        recall: 0,
+        history: 0,
+        inboundContext: 0,
+        current: 0,
+      });
+    }
+    if (tracker.toolCalls.length > 0) {
+      trace.setToolDurations(
+        tracker.toolCalls.reduce<Record<string, number[]>>((acc, tc) => {
+          (acc[tc.name] ??= []).push(tc.durationMs);
+          return acc;
+        }, {}),
+      );
+    }
+
     // 如果是 abort 導致的退出（loopCount 沒到但 response 為空），標記
     if (controller.signal.aborted) {
       trace.recordAbort("stop", !!snapshotStore);
@@ -1005,43 +1031,6 @@ export async function* agentLoop(
     if (traceStore) {
       traceStore.append(trace.finalize());
     }
-  }
-
-  // Turn Audit Log 記錄
-  const auditLog = getTurnAuditLog();
-  if (auditLog) {
-    const sessionAfter = sessionManager.get(sessionKey) ?? session;
-    const ceBreakdown = contextEngine?.lastBuildBreakdown;
-    auditLog.append({
-      ts: new Date().toISOString(),
-      platform,
-      sessionKey,
-      channelId,
-      accountId,
-      turnIndex: sessionAfter?.turnCount ?? 0,
-      phase: {
-        inboundReceivedMs: turnStartMs,
-        completedMs: Date.now(),
-      },
-      ceApplied: ceBreakdown?.strategiesApplied ?? [],
-      tokensBeforeCE: ceBreakdown?.tokensBeforeCE,
-      tokensAfterCE: ceBreakdown?.tokensAfterCE,
-      model: lastModel,
-      providerType: lastProviderType,
-      inputTokens: totalInputTokens > 0 ? totalInputTokens : undefined,
-      outputTokens: totalOutputTokens > 0 ? totalOutputTokens : undefined,
-      cacheRead: totalCacheRead > 0 ? totalCacheRead : undefined,
-      cacheWrite: totalCacheWrite > 0 ? totalCacheWrite : undefined,
-      estimated: lastEstimated || undefined,
-      toolCalls: tracker.toolCalls.length,
-      toolLogPath: toolLogPath ?? undefined,
-      startTimeMs: turnStartMs,
-      durationMs: Date.now() - turnStartMs,
-      toolDurations: tracker.toolCalls.reduce<Record<string, number[]>>((acc, tc) => {
-        (acc[tc.name] ??= []).push(tc.durationMs);
-        return acc;
-      }, {}),
-    });
   }
 
   yield { type: "done", text: fullResponse, turnCount: loopCount };
