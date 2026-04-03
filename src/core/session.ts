@@ -169,6 +169,48 @@ export class SessionManager {
     this.eventBus?.emit("session:end", sessionKey);
   }
 
+  /** 清空指定 session 的訊息（保留 session 殼），回傳被清除的訊息數 */
+  clearMessages(sessionKey: string): number {
+    const session = this.sessions.get(sessionKey);
+    if (!session) return 0;
+    const count = session.messages.length;
+    session.messages = [];
+    session.turnCount = 0;
+    this.persist(session);
+    log.info(`[session] clearMessages ${sessionKey}：${count} 條`);
+    return count;
+  }
+
+  /** 清除所有過期 session，回傳清除數量 */
+  purgeExpired(): number {
+    const ttlMs = (this.cfg.ttlHours ?? 168) * 3600_000;
+    const cutoff = Date.now() - ttlMs;
+    let count = 0;
+    for (const [key, session] of this.sessions) {
+      if (session.lastActiveAt < cutoff) {
+        this.delete(key);
+        count++;
+      }
+    }
+    // 同時清理磁碟上的孤兒檔案
+    try {
+      const files = readdirSync(this.persistDir).filter(f => f.endsWith(".json") && !f.startsWith("_"));
+      for (const f of files) {
+        const filePath = join(this.persistDir, f);
+        try {
+          const raw = readFileSync(filePath, "utf-8");
+          const { lastActiveAt, sessionKey } = JSON.parse(raw) as Session;
+          if (lastActiveAt < cutoff && !this.sessions.has(sessionKey)) {
+            unlinkSync(filePath);
+            count++;
+          }
+        } catch { try { unlinkSync(filePath); count++; } catch { /* 靜默 */ } }
+      }
+    } catch { /* 靜默 */ }
+    log.info(`[session] purgeExpired：清除 ${count} 個`);
+    return count;
+  }
+
   list(): Session[] {
     return Array.from(this.sessions.values());
   }

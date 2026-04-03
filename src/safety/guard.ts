@@ -137,8 +137,11 @@ export class SafetyGuard {
     }
 
     switch (toolName) {
-      case "run_command":
-        return this.checkBash(String(params["command"] ?? ""));
+      case "run_command": {
+        const bashResult = this.checkBash(String(params["command"] ?? ""));
+        if (bashResult.blocked) return bashResult;
+        return this.checkBashProtectedPaths(String(params["command"] ?? ""));
+      }
 
       case "read_file":
         return this.checkFilesystem(String(params["path"] ?? ""), "read");
@@ -299,6 +302,51 @@ export class SafetyGuard {
         return { blocked: true, reason: `selfProtect：禁止修改 CatClaw 核心設定 ${abs}` };
       }
     }
+    return { blocked: false };
+  }
+
+  // ── Bash 路徑保護（防止 run_command 繞過 filesystem guard）────────────────
+
+  /**
+   * 掃描 bash 指令是否嘗試操作受保護路徑。
+   * 檢查 ~/ 形式、$HOME 形式、以及展開後的絕對路徑。
+   */
+  private checkBashProtectedPaths(command: string): GuardResult {
+    const home = homedir();
+    const pathForms: Array<{ display: string; variants: string[] }> = [];
+
+    // 建立每個受保護路徑的多種表示形式
+    for (const raw of PROTECTED_WRITE_PATHS_DEFAULT) {
+      const expanded = raw.startsWith("~/")
+        ? resolve(home, raw.slice(2))
+        : resolve(raw);
+      const variants = [expanded];
+      if (raw.startsWith("~/")) {
+        variants.push(raw);                         // ~/.catclaw/catclaw.json
+        variants.push("$HOME/" + raw.slice(2));     // $HOME/.catclaw/catclaw.json
+      }
+      pathForms.push({ display: raw, variants });
+    }
+
+    // 加入 config 額外保護路徑
+    for (const p of this.protectedWritePaths) {
+      const already = pathForms.some(pf => pf.variants.includes(p));
+      if (!already) {
+        pathForms.push({ display: p, variants: [p] });
+      }
+    }
+
+    for (const { display, variants } of pathForms) {
+      for (const v of variants) {
+        if (command.includes(v)) {
+          return {
+            blocked: true,
+            reason: `Bash 指令不可操作受保護路徑：${display}`,
+          };
+        }
+      }
+    }
+
     return { blocked: false };
   }
 

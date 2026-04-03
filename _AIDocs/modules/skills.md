@@ -21,6 +21,7 @@ src/skills/
     rollback.ts     — /rollback
     subagents.ts    — /subagents
     turn-audit.ts   — /turn-audit
+    session-manage.ts — /session（Session 管理）
   builtin-prompt/   — SKILL.md 格式 prompt-type skills
 ```
 
@@ -71,3 +72,17 @@ tier: admin | trigger: `/configure`
 
 直接讀寫 `$CATCLAW_CONFIG_DIR/catclaw.json`，config 的 hot-reload（fs.watch debounce 500ms）自動套用。
 不需要重啟。
+
+## /session skill
+
+tier: standard | trigger: `/session`
+
+### 子命令
+
+| 命令 | 說明 |
+|------|------|
+| `/session` / `/session list` | 列出目前所有 session |
+| `/session clear <key>` | 清空指定 session 的訊息（保留 session） |
+| `/session compact <key>` | 強制觸發 CE 壓縮 |
+| `/session purge` | 批次清除所有過期 session |
+| `/session delete <key>` | 刪除指定 session |

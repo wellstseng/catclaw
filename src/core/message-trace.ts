@@ -61,12 +61,20 @@ export interface TraceLLMCall {
   stopReason?: string;
 }
 
+/** Workflow 事件追蹤 */
+export interface TraceWorkflowEvent {
+  ts: number;
+  type: string;
+  detail: string;
+}
+
 /** 完整訊息追蹤記錄 */
 export interface MessageTraceEntry {
   traceId: string;
   messageId?: string;
   channelId: string;
   accountId: string;
+  sessionKey?: string;
   ts: string;
 
   // Phase 1: Inbound
@@ -135,6 +143,8 @@ export interface MessageTraceEntry {
   totalToolCalls: number;
   /** 預估費用（USD），依 model pricing 計算 */
   estimatedCostUsd?: number;
+  /** Workflow 事件（wisdom/rut/oscillation/sync 等） */
+  workflowEvents?: TraceWorkflowEvent[];
   error?: string;
   status: "completed" | "aborted" | "error";
 }
@@ -212,6 +222,11 @@ export class MessageTrace {
   /** 建立新的 trace（使用已存在的 turnId） */
   static create(traceId: string, channelId: string, accountId: string): MessageTrace {
     return new MessageTrace(traceId, channelId, accountId);
+  }
+
+  /** 設定 sessionKey（agent-loop 開始時注入） */
+  setSessionKey(sessionKey: string): void {
+    this.entry.sessionKey = sessionKey;
   }
 
   // ── Phase 1: Inbound ──────────────────────────────────────────────────────
@@ -334,6 +349,13 @@ export class MessageTrace {
     this.entry.totalToolCalls++;
   }
 
+  // ── Workflow Events ────────────────────────────────────────────────────────
+
+  recordWorkflowEvent(type: string, detail: string): void {
+    if (!this.entry.workflowEvents) this.entry.workflowEvents = [];
+    this.entry.workflowEvents.push({ ts: Date.now(), type, detail });
+  }
+
   // ── Phase 4: Context Engineering ──────────────────────────────────────────
 
   recordCE(opts: {
@@ -443,6 +465,11 @@ export class TraceStore {
       }
     } catch { /* directory may not exist yet */ }
     return results;
+  }
+
+  /** 依 sessionKey 查詢 traces */
+  bySession(sessionKey: string, limit = 50): MessageTraceEntry[] {
+    return this.recent(limit, e => e.sessionKey === sessionKey);
   }
 
   /** 依 traceId 查詢單筆 */

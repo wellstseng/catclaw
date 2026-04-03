@@ -140,7 +140,7 @@ export async function initPlatform(
 
   // ── 6. Session Manager ─────────────────────────────────────────────────────
   const sessionCfg = config.session ?? {
-    ttlHours: config.sessionTtlHours ?? 168,
+    ttlHours: 168,
     maxHistoryTurns: 50,
     compactAfterTurns: 30,
     persistPath: join(wsDir, "data", "sessions-v2"),
@@ -165,13 +165,7 @@ export async function initPlatform(
   }
 
   // ── 9. Memory Engine ───────────────────────────────────────────────────────
-  // HomeClaudeCode：若啟用，root 改指向 ~/.claude/memory
   const memoryConfig = { ...(config.memory ?? {}) };
-  if (config.homeClaudeCode?.enabled) {
-    const claudeRoot = config.homeClaudeCode.path ?? join(homedir(), ".claude", "memory");
-    memoryConfig.root = claudeRoot;
-    log.info(`[platform] HomeClaudeCode 模式：memoryRoot=${claudeRoot}`);
-  }
 
   const defaultMemoryCfg = {
     enabled: true,
@@ -255,7 +249,7 @@ export async function initPlatform(
   // ── 9.8 Token Usage Dashboard（可選）──────────────────────────────────────
   if (config.dashboard?.enabled) {
     const { initDashboard } = await import("./dashboard.js");
-    initDashboard(config.dashboard.port ?? 8088);
+    initDashboard(config.dashboard.port ?? 8088, config.dashboard.token);
   }
 
   // ── 10. Workflow Engine ─────────────────────────────────────────────────────

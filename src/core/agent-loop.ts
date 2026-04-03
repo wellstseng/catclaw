@@ -566,7 +566,35 @@ export async function* agentLoop(
   let lastEstimated = false;
   let turnToolResultTokens = 0; // per-turn 工具結果 token 累計（省 token 用）
 
+  trace?.setSessionKey(sessionKey);
   eventBus.emit("turn:before", { accountId, channelId, sessionKey, prompt, projectId });
+
+  // ── Workflow → Trace bridge（turn 期間記錄 workflow 事件到 trace）──────────
+  const _wfListeners: Array<() => void> = [];
+  if (trace) {
+    const onRut = (warnings: { pattern: string; count: number }[]) => {
+      trace.recordWorkflowEvent("rut", warnings.map(w => `${w.pattern}(×${w.count})`).join(", "));
+    };
+    const onOsc = (atom: string, count: number) => {
+      trace.recordWorkflowEvent("oscillation", `${atom} ×${count}`);
+    };
+    const onSync = (files: string[]) => {
+      trace.recordWorkflowEvent("sync_needed", `${files.length} files`);
+    };
+    const onFileModified = (path: string, tool: string) => {
+      trace.recordWorkflowEvent("file_modified", `${tool}: ${path}`);
+    };
+    eventBus.on("workflow:rut", onRut);
+    eventBus.on("workflow:oscillation", onOsc);
+    eventBus.on("workflow:sync_needed", onSync);
+    eventBus.on("file:modified", onFileModified);
+    _wfListeners.push(
+      () => eventBus.off("workflow:rut", onRut),
+      () => eventBus.off("workflow:oscillation", onOsc),
+      () => eventBus.off("workflow:sync_needed", onSync),
+      () => eventBus.off("file:modified", onFileModified),
+    );
+  }
 
   log.debug(`[agent-loop] ── turn 開始 ── sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
 
@@ -700,9 +728,15 @@ export async function* agentLoop(
           if (opts.showToolCalls !== "none") {
             events.push({ type: "tool_start", name: call.name, id: call.id, params: hookResult.params });
           }
+          eventBus.emit("tool:before", { id: call.id, name: call.name, params: hookResult.params });
           const t0 = Date.now();
           const toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
           const durationMs = Date.now() - t0;
+          if (toolResult.error) {
+            eventBus.emit("tool:error", { id: call.id, name: call.name, params: hookResult.params }, new Error(toolResult.error));
+          } else {
+            eventBus.emit("tool:after", { id: call.id, name: call.name, params: hookResult.params }, toolResult);
+          }
           const rawText = toolResult.error ? `錯誤：${toolResult.error}` : JSON.stringify(toolResult.result ?? null);
           const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens);
           const resultText = truncateToolResult(rawText, tokenCap);
@@ -932,6 +966,9 @@ export async function* agentLoop(
       maxHistoryTurns: opts.sessionMemory.maxHistoryTurns,
     }).catch(() => { /* 靜默 */ });
   }
+
+  // Workflow trace listeners cleanup
+  for (const unsub of _wfListeners) unsub();
 
   // Trace: Post-process + Finalize
   if (trace) {

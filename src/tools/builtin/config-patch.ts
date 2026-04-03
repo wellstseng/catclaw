@@ -33,25 +33,17 @@ const PATCH_WHITELIST = [
   "debounceMs",
   "logLevel",
   "showToolCalls",
-  "showThinking",
-  "fileUploadThreshold",
   "memory.recall.vectorSearch",
   "memory.recall.vectorMinScore",
   "memory.recall.vectorTopK",
   "memory.recall.triggerMatch",
   "rateLimit.*.*",
-  "ollama.thinkMode",
-  "ollama.numPredict",
-  "ollama.timeout",
-  "agents.*.systemPrompt",
-  "providers.*.model",
-  "providers.*.think",
-  "providers.*.numPredict",
-  // V2 三層分離
-  "agentDefaults.model.primary",
-  "agentDefaults.model.fallbacks",
-  "providerRouting.roles.*",
-  "providerRouting.channels.*",
+  // 模型路由
+  "modelRouting.default",
+  "modelRouting.roles.*",
+  "modelRouting.projects.*",
+  "modelRouting.channels.*",
+  "modelRouting.fallbacks",
   "cron.enabled",
   "cron.maxConcurrentRuns",
   "inboundHistory.inject.enabled",
@@ -93,7 +85,13 @@ function setNestedPath(obj: Record<string, unknown>, path: string, value: unknow
 
 function isOwner(accountId: string, raw: Record<string, unknown>): boolean {
   const admin = raw["admin"] as { allowedUserIds?: string[] } | undefined;
-  return admin?.allowedUserIds?.includes(accountId) ?? false;
+  const ids = admin?.allowedUserIds ?? [];
+  // 直接比對 accountId
+  if (ids.includes(accountId)) return true;
+  // accountId 格式 "discord-owner-{discordUserId}" 或 "guest:{discordUserId}" → 提取 Discord ID 比對
+  const match = accountId.match(/(?:discord-owner-|guest:)(\d+)$/);
+  if (match && ids.includes(match[1]!)) return true;
+  return false;
 }
 
 export const tool: Tool = {
@@ -102,9 +100,8 @@ export const tool: Tool = {
     "局部更新 catclaw.json 指定欄位，hot-reload 立即生效，無需重啟。",
     "需要 owner 權限（admin.allowedUserIds）。",
     "可修改的欄位（白名單）：discord guilds/channels 的 allow/requireMention/allowBot/allowFrom；",
-    "debounceMs、logLevel、showToolCalls、showThinking、memory.recall.*、",
-    "ollama.timeout/numPredict、agents.*.systemPrompt、providers.*.model、",
-    "cron.enabled、session.ttlHours 等。",
+    "debounceMs、logLevel、showToolCalls、memory.recall.*、",
+    "modelRouting.*、cron.enabled、session.ttlHours 等。",
     "禁止修改：token、apiKey、secret、password。",
     "value 為 JSON 格式：字串用引號如 \"\\\"info\\\"\"，布林用 true/false，數字直接傳。",
     "若不確定欄位名稱，先用 config_get 查看當前 config 結構。",

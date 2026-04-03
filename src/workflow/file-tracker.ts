@@ -55,32 +55,26 @@ export function getAllSessionStats(): Map<string, Set<string>> {
 // ── EventBus 訂閱 ─────────────────────────────────────────────────────────────
 
 export function initFileTracker(eventBus: EventBus): void {
-  eventBus.on("file:modified", (path, _tool, _accountId) => {
-    // 注意：file:modified 沒有 sessionKey，用 accountId+channelId 組合
-    // 此處用 global 追蹤（S10 多人後可按 sessionKey 細化）
-    // 目前用 "_global" key 暫代
-    const key = "_global";
-    if (!_sessionFiles.has(key)) _sessionFiles.set(key, new Set());
-    _sessionFiles.get(key)!.add(path);
-
-    if (!_editCounts.has(key)) _editCounts.set(key, new Map());
-    const counts = _editCounts.get(key)!;
-    counts.set(path, (counts.get(path) ?? 0) + 1);
-
-    log.debug(`[file-tracker] 記錄修改：${path}（總次數：${counts.get(path)}）`);
-  });
+  let _currentSessionKey = "_global";
 
   eventBus.on("turn:before", (ctx) => {
-    // 確保 sessionKey 有對應的 set
-    const key = ctx.sessionKey;
-    if (!_sessionFiles.has(key)) _sessionFiles.set(key, new Set());
-    if (!_editCounts.has(key)) _editCounts.set(key, new Map());
+    _currentSessionKey = ctx.sessionKey;
+    if (!_sessionFiles.has(ctx.sessionKey)) _sessionFiles.set(ctx.sessionKey, new Set());
+    if (!_editCounts.has(ctx.sessionKey)) _editCounts.set(ctx.sessionKey, new Map());
   });
 
   eventBus.on("file:modified", (path, _tool, _accountId) => {
-    // 也嘗試從 eventBus 最近一次 turn:before context 取 sessionKey
-    // 目前 file:modified 不含 sessionKey，暫用 global
-    void path;
+    // 記錄到 _global + 當前 sessionKey（讓 sync-reminder 可用 sessionKey 查詢）
+    for (const key of ["_global", _currentSessionKey]) {
+      if (!_sessionFiles.has(key)) _sessionFiles.set(key, new Set());
+      _sessionFiles.get(key)!.add(path);
+
+      if (!_editCounts.has(key)) _editCounts.set(key, new Map());
+      const counts = _editCounts.get(key)!;
+      counts.set(path, (counts.get(path) ?? 0) + 1);
+    }
+    const globalCounts = _editCounts.get("_global")!;
+    log.debug(`[file-tracker] 記錄修改：${path}（總次數：${globalCounts.get(path)}，session=${_currentSessionKey.slice(-16)}）`);
   });
 
   eventBus.on("session:end", (sessionId) => {

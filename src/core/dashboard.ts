@@ -6,6 +6,8 @@
  * 端點：GET /  GET /api/usage  GET /api/sessions  GET /api/status
  *        GET /api/logs  POST /api/restart  GET /api/subagents
  *        GET /api/config  POST /api/config
+ *        POST /api/sessions/clear  POST /api/sessions/delete
+ *        POST /api/sessions/compact  POST /api/sessions/purge-expired
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -15,6 +17,8 @@ import { homedir } from "node:os";
 import { log } from "../logger.js";
 import { getTurnAuditLog, type TurnAuditEntry } from "./turn-audit-log.js";
 import { getTraceStore, type MessageTraceEntry } from "./message-trace.js";
+import { getSessionManager } from "./session.js";
+import { getContextEngine } from "./context-engine.js";
 
 // ── Config 備份 ──────────────────────────────────────────────────────────────
 const BACKUP_KEEP = 5;
@@ -313,6 +317,7 @@ canvas { max-height: 200px; }
 .btn-green { background: var(--green); } .btn-green:hover { background: #047857; }
 .btn-red { background: var(--red); } .btn-red:hover { background: #991b1b; }
 .btn-sm { padding: 3px 8px; font-size: 0.72rem; }
+.btn-danger { background: var(--red); border: none; color: white; padding: 2px 7px; border-radius: 4px; cursor: pointer; font-size: 0.72rem; } .btn-danger:hover { background: #991b1b; }
 .msg { font-size: 0.8rem; margin: 6px 0; }
 .msg.ok { color: var(--green2); } .msg.err { color: var(--red2); }
 .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; }
@@ -399,7 +404,7 @@ label.cfg-toggle { min-width: 36px; }
 <!-- Sessions -->
 <div id="pane-sessions" class="pane">
   <div class="card">
-    <h2>Sessions（最近 50）<button class="btn btn-sm" style="float:right" onclick="loadSessions()">↻</button></h2>
+    <h2>Sessions（最近 50）<span style="float:right;display:inline-flex;gap:6px"><button class="btn btn-sm" onclick="purgeExpiredSessions()">🧹 Purge Expired</button><button class="btn btn-sm" onclick="loadSessions()">↻</button></span></h2>
     <div id="sessions-list"></div>
   </div>
 </div>
@@ -452,10 +457,10 @@ label.cfg-toggle { min-width: 36px; }
   </div>
 </div>
 
-<!-- Traces -->
+<!-- Traces（全域搜尋） -->
 <div id="pane-traces" class="pane">
   <div class="card">
-    <h2>Message Lifecycle Traces
+    <h2>Message Lifecycle Traces（全域）
       <button class="btn btn-sm" style="float:right" onclick="loadTraces()">↻</button>
       <select id="trace-limit" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px" onchange="loadTraces()">
         <option value="20">20</option>
@@ -465,10 +470,14 @@ label.cfg-toggle { min-width: 36px; }
     </h2>
     <div id="trace-list" style="margin-top:8px"></div>
   </div>
-  <div class="card" style="margin-top:16px;display:none" id="trace-detail-card">
-    <h2>Trace Detail <span id="trace-detail-id" style="font-size:0.8em;color:var(--fg2)"></span></h2>
-    <div id="trace-detail"></div>
-  </div>
+</div>
+
+<!-- Trace Detail（全域共用，任何 tab 都能開啟） -->
+<div class="card" style="margin:0 20px 20px;display:none" id="trace-detail-card">
+  <h2>Trace Detail <span id="trace-detail-id" style="font-size:0.8em;color:var(--fg2)"></span>
+    <button class="btn btn-sm" style="float:right" onclick="document.getElementById('trace-detail-card').style.display='none'">✕ 關閉</button>
+  </h2>
+  <div id="trace-detail"></div>
 </div>
 
 <!-- Auth Profiles -->
@@ -537,6 +546,15 @@ let tokenChart, ceChart;
 let logTimer = null;
 let logES = null;
 
+// ── Auth token（從 URL query param 提取，自動附加到所有 fetch）──
+const _urlParams = new URLSearchParams(window.location.search);
+const _authToken = _urlParams.get('token') || '';
+function authFetch(url, opts) {
+  const sep = url.includes('?') ? '&' : '?';
+  const authUrl = _authToken ? url + sep + 'token=' + encodeURIComponent(_authToken) : url;
+  return fetch(authUrl, opts);
+}
+
 function fmtK(n) { return n >= 10000 ? (n/1000).toFixed(1)+'k' : n.toLocaleString(); }
 function fmtCache(r, w) {
   if (!r && !w) return '-';
@@ -563,7 +581,7 @@ function refreshAll() { loadOverview(); loadStatus(); }
 // ── 概覽 ─────────────────────────────────────────────────────────────────────
 async function loadStatus() {
   try {
-    const d = await fetch('/api/status').then(r => r.json());
+    const d = await authFetch('/api/status').then(r => r.json());
     document.getElementById('status-grid').innerHTML = [
       ['Uptime', d.uptimeStr], ['Memory', d.memoryMB + ' MB'],
       ['Heap', d.heapUsedMB + ' MB'], ['PID', d.pid],
@@ -574,7 +592,7 @@ async function loadStatus() {
 
 async function loadOverview() {
   try {
-    const d = await fetch('/api/usage').then(r => r.json());
+    const d = await authFetch('/api/usage').then(r => r.json());
     document.getElementById('stats').innerHTML = [
       ['合計 Tokens', (d.totalTokens||0).toLocaleString()],
       ['輸入', (d.totalInput||0).toLocaleString()],
@@ -632,7 +650,7 @@ async function loadOverview() {
 // ── Sessions ─────────────────────────────────────────────────────────────────
 async function loadSessions() {
   try {
-    const d = await fetch('/api/sessions').then(r => r.json());
+    const d = await authFetch('/api/sessions').then(r => r.json());
     if (!d.sessions?.length) { document.getElementById('sessions-list').innerHTML = '<p style="color:#888;font-size:0.8rem">無資料</p>'; return; }
     const rows = d.sessions.map(s => {
       const last = new Date(s.lastTs).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
@@ -640,20 +658,100 @@ async function loadSessions() {
       const cache = fmtCache(s.cacheRead, s.cacheWrite);
       const provs = (s.providers||[]).join(', ') || '-';
       const mdls = (s.models||[]).map(m => m.length>20?m.slice(0,20)+'…':m).join(', ') || '-';
-      const turnsHtml = s.recentTurns.map(e => {
-        const ts2 = new Date(e.ts).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
-        const dur = e.durationMs != null ? \`\${(e.durationMs/1000).toFixed(1)}s\` : '-';
-        const eProv = e.providerType || '-';
-        const eCache = fmtCache(e.cacheRead, e.cacheWrite);
-        const est = e.estimated ? '~' : '';
-        return \`<tr><td>\${ts2}</td><td>\${eProv}</td><td>\${est}\${e.inputTokens??'-'}/\${e.outputTokens??'-'}</td><td>\${eCache}</td><td>\${e.ceApplied?.join('+')||'-'}</td><td>\${dur}</td></tr>\`;
-      }).join('');
-      const detail = \`<details><summary>展開 \${s.turns} turns</summary><table class="tbl"><thead><tr><th>時間</th><th>Provider</th><th>Tokens</th><th>Cache</th><th>CE</th><th>耗時</th></tr></thead><tbody>\${turnsHtml}</tbody></table></details>\`;
-      return \`<tr><td title="\${s.sessionKey}">\${s.sessionKey.slice(-24)}</td><td>\${last}</td><td>\${s.turns}</td><td>\${tok}</td><td>\${cache}</td><td title="\${mdls}">\${provs}</td><td>\${s.ceTriggers}</td><td>\${detail}</td></tr>\`;
+      const skId = 'sess-' + s.sessionKey.replace(/[^a-zA-Z0-9]/g, '_');
+      const colCount = 8;
+      const sk = s.sessionKey.replace(/'/g, "\\\\'");
+      const acts = \`<span style="display:inline-flex;gap:4px"><button class="btn btn-sm" onclick="event.stopPropagation();sessAction('clear','\${sk}')" title="清空訊息">🗑 Clear</button><button class="btn btn-sm" onclick="event.stopPropagation();sessAction('compact','\${sk}')" title="強制 CE 壓縮">📦 Compact</button><button class="btn-danger" onclick="event.stopPropagation();sessAction('delete','\${sk}')" title="刪除 session">✕</button></span>\`;
+      return \`<tr style="cursor:pointer" onclick="toggleSessionRow(this,'\${s.sessionKey}','\${skId}')"><td title="\${s.sessionKey}">\${s.sessionKey.slice(-24)}</td><td>\${last}</td><td>\${s.turns}</td><td>\${tok}</td><td>\${cache}</td><td title="\${mdls}">\${provs}</td><td>\${s.ceTriggers}</td><td>\${acts}</td></tr>
+<tr class="sess-expand" id="row-\${skId}" style="display:none"><td colspan="\${colCount}" style="padding:8px 12px;background:var(--bg4)"><div id="\${skId}" style="font-size:0.8rem;color:var(--fg2)">載入 traces…</div></td></tr>\`;
     }).join('');
     document.getElementById('sessions-list').innerHTML =
-      \`<table class="tbl"><thead><tr><th>Session</th><th>最後活躍</th><th>Turns</th><th>Tokens</th><th>Cache</th><th>Provider</th><th>CE</th><th>詳細</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+      \`<table class="tbl"><thead><tr><th>Session</th><th>最後活躍</th><th>Turns</th><th>Tokens</th><th>Cache</th><th>Provider</th><th>CE</th><th>操作</th></tr></thead><tbody>\${rows}</tbody></table>\`;
   } catch(e) { document.getElementById('sessions-list').innerHTML = '讀取失敗：' + e; }
+}
+
+function toggleSessionRow(headerRow, sessionKey, skId) {
+  const expandRow = document.getElementById('row-' + skId);
+  if (!expandRow) return;
+  const isOpen = expandRow.style.display !== 'none';
+  if (isOpen) {
+    expandRow.style.display = 'none';
+    headerRow.style.background = '';
+  } else {
+    expandRow.style.display = '';
+    headerRow.style.background = 'var(--bg3)';
+    loadSessionTraces(sessionKey, skId);
+  }
+}
+
+async function loadSessionTraces(sessionKey, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  try {
+    const d = await authFetch('/api/traces?limit=50&sessionKey=' + encodeURIComponent(sessionKey)).then(r => r.json());
+    const traces = d.traces || [];
+    if (!traces.length) { el.innerHTML = '<div style="color:var(--fg2)">此 session 無 trace 記錄</div>'; return; }
+    let html = '<table class="tbl"><thead><tr><th>時間</th><th>Duration</th><th>↑ Eff</th><th>↓ Out</th><th>Cache</th><th>Tools</th><th>LLM</th><th>Cost</th><th>Status</th><th>Preview</th><th></th></tr></thead><tbody>';
+    for (const t of traces) {
+      const ts = new Date(t.ts).toLocaleTimeString('zh-TW', {hour12:false});
+      const dur = t.totalDurationMs ? (t.totalDurationMs/1000).toFixed(1)+'s' : '-';
+      const statusIcon = t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
+      const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
+      const prev = (t.inbound?.textPreview ?? '').slice(0, 30);
+      html += '<tr>';
+      html += '<td>' + ts + '</td>';
+      html += '<td>' + dur + '</td>';
+      html += '<td>' + (t.effectiveInputTokens ?? t.totalInputTokens ?? 0).toLocaleString() + '</td>';
+      html += '<td>' + (t.totalOutputTokens ?? 0).toLocaleString() + '</td>';
+      html += '<td style="color:var(--fg2)">' + (t.totalCacheRead??0).toLocaleString() + '/' + (t.totalCacheWrite??0).toLocaleString() + '</td>';
+      html += '<td>' + (t.totalToolCalls ?? 0) + '</td>';
+      html += '<td>' + (t.llmCalls?.length ?? 0) + '</td>';
+      html += '<td style="color:var(--warn)">' + cost + '</td>';
+      html += '<td>' + statusIcon + '</td>';
+      html += '<td style="color:var(--fg2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prev + '</td>';
+      html += '<td><a href="#" style="color:var(--accent);text-decoration:none;font-size:0.78rem" onclick="event.preventDefault();showTraceDetail(\\'' + t.traceId + '\\')">📋 詳情</a></td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML = '載入失敗：' + e; }
+}
+
+// ── Session 操作 ────────────────────────────────────────────────────────────
+async function sessAction(action, sessionKey) {
+  const labels = { clear: '清空訊息', compact: '壓縮', delete: '刪除' };
+  if (action === 'delete' && !confirm('確定刪除 session ' + sessionKey.slice(-24) + '？')) return;
+  try {
+    const r = await authFetch('/api/sessions/' + action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionKey }),
+    });
+    const d = await r.json();
+    if (d.success) {
+      let msg = labels[action] + ' 成功';
+      if (d.clearedMessages != null) msg += '（' + d.clearedMessages + ' 條）';
+      if (d.strategies?.length) msg += '（策略：' + d.strategies.join(', ') + '）';
+      alert(msg);
+      loadSessions();
+    } else {
+      alert('失敗：' + (d.error || '未知錯誤'));
+    }
+  } catch(e) { alert('錯誤：' + e); }
+}
+
+async function purgeExpiredSessions() {
+  if (!confirm('確定清除所有過期 session？')) return;
+  try {
+    const r = await authFetch('/api/sessions/purge-expired', { method: 'POST' });
+    const d = await r.json();
+    if (d.success) {
+      alert('已清除 ' + d.purgedCount + ' 個過期 session');
+      loadSessions();
+    } else {
+      alert('失敗：' + (d.error || '未知錯誤'));
+    }
+  } catch(e) { alert('錯誤：' + e); }
 }
 
 // ── 日誌（SSE 即時串流）──────────────────────────────────────────────────────
@@ -661,7 +759,7 @@ function connectLogStream() {
   if (logES) { logES.close(); logES = null; }
   const el = document.getElementById('log-area');
   el.value = '連線中...';
-  logES = new EventSource('/api/logs/stream');
+  logES = new EventSource('/api/logs/stream' + (_authToken ? '?token=' + encodeURIComponent(_authToken) : ''));
   logES.onmessage = function(e) {
     const data = JSON.parse(e.data);
     if (typeof data === 'string' && data.includes('\\n')) {
@@ -691,7 +789,7 @@ function startLogRefresh() { connectLogStream(); }
 async function doRestart() {
   if (!confirm('確定重啟 Bot？')) return;
   try {
-    const d = await fetch('/api/restart', {method:'POST'}).then(r => r.json());
+    const d = await authFetch('/api/restart', {method:'POST'}).then(r => r.json());
     const el = document.getElementById('ops-msg');
     el.className = 'msg ' + (d.success ? 'ok' : 'err');
     el.textContent = d.success ? '✓ 重啟信號已送出' : '錯誤：' + d.error;
@@ -700,7 +798,7 @@ async function doRestart() {
 
 async function loadSubagents() {
   try {
-    const d = await fetch('/api/subagents').then(r => r.json());
+    const d = await authFetch('/api/subagents').then(r => r.json());
     if (!d.subagents?.length) { document.getElementById('subagents-list').innerHTML = '<p style="color:#888;font-size:0.8rem">無 subagent 記錄</p>'; return; }
     const rows = d.subagents.slice(0, 30).map(s => {
       const badge = s.status === 'running' ? 'badge-run' : s.status === 'completed' ? 'badge-done' : 'badge-err';
@@ -724,7 +822,7 @@ async function loadSubagents() {
 async function killSubagent(runId) {
   if (!confirm('確定強制中止 ' + runId + '？')) return;
   try {
-    const d = await fetch('/api/subagents/kill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId})}).then(r=>r.json());
+    const d = await authFetch('/api/subagents/kill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runId})}).then(r=>r.json());
     const el = document.getElementById('ops-msg');
     el.className = 'msg ' + (d.success ? 'ok' : 'err');
     el.textContent = d.success ? '✓ 已中止 ' + runId : '錯誤：' + d.error;
@@ -735,7 +833,7 @@ async function killSubagent(runId) {
 // ── 排程 ─────────────────────────────────────────────────────────────────────
 async function loadCron() {
   try {
-    const d = await fetch('/api/cron').then(r => r.json());
+    const d = await authFetch('/api/cron').then(r => r.json());
     const jobs = d.jobs || {};
     const entries = Object.entries(jobs);
     if (!entries.length) { document.getElementById('cron-list').innerHTML = '<p style="color:#888;font-size:0.8rem">無 cron job</p>'; return; }
@@ -775,7 +873,7 @@ async function addCronJob() {
   const raw = document.getElementById('cron-add-json').value.trim();
   try { JSON.parse(raw); } catch(e) { showCronMsg('JSON 格式錯誤：' + e, false); return; }
   try {
-    const d = await fetch('/api/cron',{method:'POST',headers:{'Content-Type':'application/json'},body:raw}).then(r=>r.json());
+    const d = await authFetch('/api/cron',{method:'POST',headers:{'Content-Type':'application/json'},body:raw}).then(r=>r.json());
     if (d.success) { showCronMsg('✓ 已新增', true); hideCronAdd(); loadCron(); }
     else showCronMsg('錯誤：' + d.error, false);
   } catch(e) { showCronMsg('失敗：' + e, false); }
@@ -784,7 +882,7 @@ async function addCronJob() {
 async function deleteCronJob(id) {
   if (!confirm('確定刪除 job ' + id + '？')) return;
   try {
-    const d = await fetch('/api/cron/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).then(r=>r.json());
+    const d = await authFetch('/api/cron/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).then(r=>r.json());
     if (d.success) { showCronMsg('✓ 已刪除', true); loadCron(); }
     else showCronMsg('錯誤：' + d.error, false);
   } catch(e) { showCronMsg('失敗：' + e, false); }
@@ -792,7 +890,7 @@ async function deleteCronJob(id) {
 
 async function triggerCronJob(id) {
   try {
-    const d = await fetch('/api/cron/trigger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).then(r=>r.json());
+    const d = await authFetch('/api/cron/trigger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).then(r=>r.json());
     if (d.success) { showCronMsg('✓ 已排入立即執行（下次 tick 生效）', true); loadCron(); }
     else showCronMsg('錯誤：' + d.error, false);
   } catch(e) { showCronMsg('失敗：' + e, false); }
@@ -800,7 +898,7 @@ async function triggerCronJob(id) {
 
 async function toggleCronJob(id, enable) {
   try {
-    const d = await fetch('/api/cron/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enabled:enable})}).then(r=>r.json());
+    const d = await authFetch('/api/cron/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enabled:enable})}).then(r=>r.json());
     if (d.success) { loadCron(); }
     else showCronMsg('錯誤：' + d.error, false);
   } catch(e) { showCronMsg('失敗：' + e, false); }
@@ -817,246 +915,204 @@ let _cfgData = null;
 
 // Schema: 描述 config 結構，驅動表單生成
 const CFG_SCHEMA = [
-  { key:'agentDefaults', label:'V2 Agent Defaults', fields:[
-    {k:'agentDefaults.model.primary',t:'text',l:'Primary Model',d:'主模型（alias 或 provider/model）'},
-    {k:'agentDefaults.model.fallbacks',t:'list',l:'Fallback Models',d:'降級模型清單'},
-    {k:'agentDefaults.systemPrompt',t:'text',l:'System Prompt',d:'Agent 預設 system prompt'},
-  ], dynamic:true, dynamicPath:'agentDefaults.models', entryFields:[
-    {k:'alias',t:'text',l:'Alias',d:'短名稱（如 sonnet, haiku）'},
-  ]},
-  { key:'modelsConfig', label:'V2 Models Config', fields:[
-    {k:'modelsConfig.mode',t:'select',l:'Mode',opts:['merge','replace'],d:'merge=內建+自訂, replace=只用自訂'},
-  ], dynamic:true, dynamicPath:'modelsConfig.providers', entryFields:[
-    {k:'baseUrl',t:'text',l:'Base URL'},
-    {k:'api',t:'select',l:'API Type',opts:['','anthropic-messages','openai-completions','openai-codex-responses','ollama']},
-    {k:'apiKey',t:'pw',l:'API Key'},
-  ]},
   { key:'_basic', label:'基本設定', fields:[
-    {k:'logLevel',t:'select',l:'Log Level',opts:['debug','info','warn','error'],d:'日誌等級'},
-    {k:'turnTimeoutMs',t:'num',l:'Turn Timeout (ms)',d:'單次 turn 最長執行時間'},
-    {k:'turnTimeoutToolCallMs',t:'num',l:'Tool Call Timeout (ms)',d:'含 tool call 的 turn 最長時間'},
-    {k:'debounceMs',t:'num',l:'Debounce (ms)',d:'連續訊息合併延遲'},
-    {k:'fileUploadThreshold',t:'num',l:'File Upload Threshold',d:'回覆超過此字數改上傳檔案'},
-    {k:'showToolCalls',t:'select',l:'Show Tool Calls',opts:['all','summary','none'],d:'Discord 是否顯示 tool 呼叫'},
-    {k:'showThinking',t:'bool',l:'Show Thinking',d:'是否顯示 AI 推理過程'},
-    {k:'streamingReply',t:'bool',l:'串流回覆',d:'逐字串流 vs 完成後一次送出'},
+    {k:'logLevel',t:'select',l:'Log Level',opts:['debug','info','warn','error'],d:'日誌輸出等級，debug 最詳細'},
+    {k:'turnTimeoutMs',t:'num',l:'Turn Timeout (ms)',d:'單次 turn（無 tool call）的最長執行時間，預設 300000（5 分鐘）'},
+    {k:'turnTimeoutToolCallMs',t:'num',l:'Tool Call Timeout (ms)',d:'含 tool call 的 turn 最長時間，預設為 turnTimeoutMs × 1.6'},
+    {k:'debounceMs',t:'num',l:'Debounce (ms)',d:'連續訊息合併延遲，在此毫秒內的連續訊息會合併為一次處理'},
+    {k:'showToolCalls',t:'select',l:'Show Tool Calls',opts:['all','summary','none'],d:'Discord 回覆中是否顯示 tool 呼叫過程'},
   ]},
   { key:'discord', label:'Discord', fields:[
-    {k:'discord.token',t:'pw',l:'Token'},
-    {k:'discord.dm.enabled',t:'bool',l:'DM 啟用'},
-    {k:'admin.allowedUserIds',t:'list',l:'管理員 User IDs'},
+    {k:'discord.token',t:'pw',l:'Token',d:'Discord Bot Token（修改後需重啟才生效）'},
+    {k:'discord.dm.enabled',t:'bool',l:'DM 啟用',d:'是否允許私訊觸發 bot'},
+    {k:'admin.allowedUserIds',t:'list',l:'管理員 User IDs',d:'擁有 owner 權限的 Discord User ID 清單'},
   ]},
-  { key:'providerRouting', label:'Provider Routing', fields:[
-    {k:'providerRouting.failoverChain',t:'list',l:'Failover Chain'},
+  { key:'modelRouting', label:'Model Routing（模型路由）', fields:[
+    {k:'modelRouting.default',t:'text',l:'預設模型',d:'全域預設模型（alias 或 provider/model）。優先級：channel > project > role > default'},
+    {k:'modelRouting.fallbacks',t:'list',l:'降級鏈',d:'預設模型不可用時的備援模型清單，依序嘗試'},
   ], maps:[
-    {k:'providerRouting.channels',l:'Channel → Provider'},
-    {k:'providerRouting.roles',l:'Role → Provider'},
-    {k:'providerRouting.projects',l:'Project → Provider'},
-  ], sub:[
-    {k:'providerRouting.circuitBreaker',l:'Circuit Breaker',fields:[
-      {k:'errorThreshold',t:'num',l:'Error Threshold'},
-      {k:'windowMs',t:'num',l:'Window (ms)'},
-      {k:'cooldownMs',t:'num',l:'Cooldown (ms)'},
-    ]},
+    {k:'modelRouting.channels',l:'Channel → Model（頻道覆蓋，最高優先）'},
+    {k:'modelRouting.roles',l:'Role → Model（角色覆蓋）'},
+    {k:'modelRouting.projects',l:'Project → Model（專案覆蓋）'},
   ]},
   { key:'guilds', label:'Guilds', dynamic:true, dynamicPath:'discord.guilds', entryFields:[
-    {k:'allow',t:'bool',l:'Allow'},
-    {k:'requireMention',t:'bool',l:'Require Mention'},
-    {k:'allowBot',t:'bool',l:'Allow Bot'},
-    {k:'blockGroupMentions',t:'bool',l:'Block Group Mentions'},
-    {k:'allowFrom',t:'list',l:'Allow From (IDs)'},
+    {k:'allow',t:'bool',l:'Allow',d:'是否允許此 guild 使用 bot'},
+    {k:'requireMention',t:'bool',l:'Require Mention',d:'需要 @mention 才觸發回覆'},
+    {k:'allowBot',t:'bool',l:'Allow Bot',d:'是否回應其他 bot 的訊息'},
+    {k:'blockGroupMentions',t:'bool',l:'Block Group Mentions',d:'忽略 @everyone / @here 等群組 mention'},
+    {k:'allowFrom',t:'list',l:'Allow From (IDs)',d:'白名單 User ID，空 = 允許所有人'},
   ], hasChannels:true, channelFields:[
-    {k:'allow',t:'bool',l:'Allow'},
-    {k:'requireMention',t:'bool',l:'Require Mention'},
-    {k:'allowBot',t:'bool',l:'Allow Bot'},
-    {k:'provider',t:'text',l:'Provider'},
-    {k:'boundProject',t:'text',l:'Bound Project'},
-    {k:'blockGroupMentions',t:'bool',l:'Block Group Mentions'},
-    {k:'interruptOnNewMessage',t:'bool',l:'Interrupt On New Message'},
-    {k:'autoThread',t:'bool',l:'Auto Thread'},
-    {k:'allowFrom',t:'list',l:'Allow From (IDs)'},
+    {k:'allow',t:'bool',l:'Allow',d:'是否啟用此頻道'},
+    {k:'requireMention',t:'bool',l:'Require Mention',d:'此頻道需 @mention 才觸發'},
+    {k:'allowBot',t:'bool',l:'Allow Bot',d:'此頻道是否回應 bot 訊息'},
+    {k:'provider',t:'text',l:'Provider',d:'此頻道專用模型（覆蓋 modelRouting）'},
+    {k:'boundProject',t:'text',l:'Bound Project',d:'綁定專案 ID，此頻道只用該專案的記憶和設定'},
+    {k:'blockGroupMentions',t:'bool',l:'Block Group Mentions',d:'忽略群組 mention'},
+    {k:'interruptOnNewMessage',t:'bool',l:'Interrupt On New Message',d:'收到新訊息時中斷目前回覆'},
+    {k:'autoThread',t:'bool',l:'Auto Thread',d:'自動建立 thread 回覆'},
+    {k:'allowFrom',t:'list',l:'Allow From (IDs)',d:'此頻道白名單 User ID'},
   ]},
   { key:'session', label:'Session', fields:[
-    {k:'session.ttlHours',t:'num',l:'TTL (hours)'},
-    {k:'session.maxHistoryTurns',t:'num',l:'Max History Turns'},
-    {k:'session.compactAfterTurns',t:'num',l:'Compact After Turns'},
-    {k:'session.persistPath',t:'text',l:'Persist Path'},
+    {k:'session.ttlHours',t:'num',l:'TTL (hours)',d:'Session 閒置多久後過期（小時），預設 168（7 天）'},
+    {k:'session.maxHistoryTurns',t:'num',l:'Max History Turns',d:'Session 保留的最大對話輪數，預設 50'},
+    {k:'session.compactAfterTurns',t:'num',l:'Compact After Turns',d:'超過此輪數後觸發對話壓縮，預設 30'},
+    {k:'session.persistPath',t:'text',l:'Persist Path',d:'Session 檔案持久化目錄的絕對路徑'},
   ]},
   { key:'memory', label:'Memory', fields:[
     {k:'memory.enabled',t:'bool',l:'啟用',d:'記憶系統總開關'},
-    {k:'memory.root',t:'text',l:'Root Path',d:'記憶 atom 儲存根目錄'},
-    {k:'memory.vectorDbPath',t:'text',l:'Vector DB Path',d:'LanceDB 向量索引路徑'},
+    {k:'memory.root',t:'text',l:'Root Path',d:'記憶 atom 檔案的儲存根目錄'},
+    {k:'memory.vectorDbPath',t:'text',l:'Vector DB Path',d:'LanceDB 向量索引存放路徑'},
     {k:'memory.contextBudget',t:'num',l:'Context Budget (tokens)',d:'每次 turn 注入的記憶 token 上限'},
   ], sub:[
     {k:'memory.contextBudgetRatio',l:'Context Budget Ratio',fields:[
-      {k:'global',t:'num',l:'Global',step:'0.1'},
-      {k:'project',t:'num',l:'Project',step:'0.1'},
-      {k:'account',t:'num',l:'Account',step:'0.1'},
+      {k:'global',t:'num',l:'Global',step:'0.1',d:'全域記憶佔 context budget 的比例（0-1）'},
+      {k:'project',t:'num',l:'Project',step:'0.1',d:'專案記憶佔 context budget 的比例（0-1）'},
+      {k:'account',t:'num',l:'Account',step:'0.1',d:'個人記憶佔 context budget 的比例（0-1）'},
     ]},
     {k:'memory.writeGate',l:'Write Gate',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'dedupThreshold',t:'num',l:'Dedup Threshold',step:'0.01'},
+      {k:'enabled',t:'bool',l:'啟用',d:'寫入前檢查重複和品質'},
+      {k:'dedupThreshold',t:'num',l:'Dedup Threshold',step:'0.01',d:'向量相似度超過此值視為重複（0-1），預設 0.8'},
     ]},
     {k:'memory.recall',l:'Recall',fields:[
-      {k:'triggerMatch',t:'bool',l:'Trigger Match'},
-      {k:'vectorSearch',t:'bool',l:'Vector Search'},
-      {k:'relatedEdgeSpreading',t:'bool',l:'Related Edge Spreading'},
-      {k:'vectorMinScore',t:'num',l:'Vector Min Score',step:'0.01'},
-      {k:'vectorTopK',t:'num',l:'Vector Top K'},
-      {k:'llmSelect',t:'bool',l:'LLM Select'},
-      {k:'llmSelectMax',t:'num',l:'LLM Select Max'},
+      {k:'triggerMatch',t:'bool',l:'Trigger Match',d:'使用 MEMORY.md 的 trigger 關鍵詞匹配 atom'},
+      {k:'vectorSearch',t:'bool',l:'Vector Search',d:'使用向量語意搜尋找相關 atom'},
+      {k:'relatedEdgeSpreading',t:'bool',l:'Related Edge Spreading',d:'命中 atom 後沿 Related 欄位展開關聯 atom'},
+      {k:'vectorMinScore',t:'num',l:'Vector Min Score',step:'0.01',d:'向量搜尋最低相似度門檻（0-1），預設 0.35'},
+      {k:'vectorTopK',t:'num',l:'Vector Top K',d:'向量搜尋最多回傳幾個結果，預設 10'},
+      {k:'llmSelect',t:'bool',l:'LLM Select',d:'用 LLM 從候選 atom 中篩選最相關的'},
+      {k:'llmSelectMax',t:'num',l:'LLM Select Max',d:'LLM 篩選後保留的最大數量，預設 5'},
     ]},
     {k:'memory.extract',l:'Extract',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'perTurn',t:'bool',l:'Per Turn'},
-      {k:'onSessionEnd',t:'bool',l:'On Session End'},
-      {k:'maxItemsPerTurn',t:'num',l:'Max Items Per Turn'},
-      {k:'maxItemsSessionEnd',t:'num',l:'Max Items Session End'},
-      {k:'minNewChars',t:'num',l:'Min New Chars'},
+      {k:'enabled',t:'bool',l:'啟用',d:'自動從對話中萃取知識寫入記憶'},
+      {k:'perTurn',t:'bool',l:'Per Turn',d:'每個 turn 結束後萃取'},
+      {k:'onSessionEnd',t:'bool',l:'On Session End',d:'Session 結束時萃取'},
+      {k:'maxItemsPerTurn',t:'num',l:'Max Items Per Turn',d:'每 turn 最多萃取幾條記憶，預設 3'},
+      {k:'maxItemsSessionEnd',t:'num',l:'Max Items Session End',d:'Session 結束時最多萃取幾條，預設 5'},
+      {k:'minNewChars',t:'num',l:'Min New Chars',d:'對話累積至少多少新字元才觸發萃取，預設 500'},
     ]},
     {k:'memory.consolidate',l:'Consolidate',fields:[
-      {k:'autoPromoteThreshold',t:'num',l:'Auto Promote Threshold'},
-      {k:'suggestPromoteThreshold',t:'num',l:'Suggest Promote Threshold'},
+      {k:'autoPromoteThreshold',t:'num',l:'Auto Promote Threshold',d:'命中超過此次數自動晉升信心等級，預設 20'},
+      {k:'suggestPromoteThreshold',t:'num',l:'Suggest Promote Threshold',d:'命中超過此次數建議晉升，預設 4'},
     ]},
     {k:'memory.consolidate.decay',l:'Decay',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'halfLifeDays',t:'num',l:'Half Life (days)'},
-      {k:'archiveThreshold',t:'num',l:'Archive Threshold',step:'0.01'},
+      {k:'enabled',t:'bool',l:'啟用',d:'記憶衰減機制，長期未使用的 atom 會被歸檔'},
+      {k:'halfLifeDays',t:'num',l:'Half Life (days)',d:'記憶半衰期（天），預設 30'},
+      {k:'archiveThreshold',t:'num',l:'Archive Threshold',step:'0.01',d:'分數低於此值的 atom 被歸檔（0-1），預設 0.3'},
     ]},
     {k:'memory.episodic',l:'Episodic',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'ttlDays',t:'num',l:'TTL (days)'},
+      {k:'enabled',t:'bool',l:'啟用',d:'情境記憶（每次對話的摘要記錄）'},
+      {k:'ttlDays',t:'num',l:'TTL (days)',d:'情境記憶保留天數，過期自動清除'},
     ]},
     {k:'memory.rutDetection',l:'Rut Detection',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'windowSize',t:'num',l:'Window Size'},
-      {k:'minOccurrences',t:'num',l:'Min Occurrences'},
+      {k:'enabled',t:'bool',l:'啟用',d:'偵測 AI 是否陷入重複模式（車轍偵測）'},
+      {k:'windowSize',t:'num',l:'Window Size',d:'檢查最近幾個 turn 的模式'},
+      {k:'minOccurrences',t:'num',l:'Min Occurrences',d:'同一模式出現幾次才觸發警告'},
     ]},
     {k:'memory.oscillation',l:'Oscillation',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
+      {k:'enabled',t:'bool',l:'啟用',d:'偵測 atom 是否在新增/刪除間反覆震盪'},
     ]},
     {k:'memory.sessionMemory',l:'Session Memory',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'intervalTurns',t:'num',l:'Interval Turns'},
-      {k:'maxHistoryTurns',t:'num',l:'Max History Turns'},
-    ]},
-  ]},
-  { key:'ollama', label:'Ollama (Dual Backend)', fields:[
-    {k:'ollama.enabled',t:'bool',l:'啟用'},
-    {k:'ollama.failover',t:'bool',l:'Auto Failover'},
-    {k:'ollama.thinkMode',t:'bool',l:'Think Mode'},
-    {k:'ollama.numPredict',t:'num',l:'Num Predict'},
-    {k:'ollama.timeout',t:'num',l:'Timeout (ms)'},
-  ], sub:[
-    {k:'ollama.primary',l:'Primary',fields:[
-      {k:'host',t:'text',l:'Host'},
-      {k:'model',t:'text',l:'Model'},
-      {k:'embeddingModel',t:'text',l:'Embedding Model'},
-    ]},
-    {k:'ollama.fallback',l:'Fallback',fields:[
-      {k:'host',t:'text',l:'Host'},
-      {k:'model',t:'text',l:'Model'},
+      {k:'enabled',t:'bool',l:'啟用',d:'Session 內的短期記憶摘要'},
+      {k:'intervalTurns',t:'num',l:'Interval Turns',d:'每隔幾個 turn 產生一次摘要'},
+      {k:'maxHistoryTurns',t:'num',l:'Max History Turns',d:'摘要時回看的最大 turn 數'},
     ]},
   ]},
   { key:'safety', label:'Safety', fields:[
-    {k:'safety.enabled',t:'bool',l:'啟用',d:'安全系統總開關（禁止關閉）'},
-    {k:'safety.selfProtect',t:'bool',l:'Self Protect',d:'保護 catclaw.json 等核心設定不被 AI 修改'},
-    {k:'safety.bash.blacklist',t:'list',l:'Bash Blacklist'},
-    {k:'safety.filesystem.protectedPaths',t:'list',l:'Protected Paths'},
-    {k:'safety.filesystem.credentialPatterns',t:'list',l:'Credential Patterns'},
+    {k:'safety.enabled',t:'bool',l:'啟用',d:'安全系統總開關（強烈建議保持啟用）'},
+    {k:'safety.selfProtect',t:'bool',l:'Self Protect',d:'保護 catclaw.json、accounts/ 等核心檔案不被 AI 直接修改'},
+    {k:'safety.bash.blacklist',t:'list',l:'Bash Blacklist',d:'Bash 指令黑名單（正則表達式），匹配的指令會被阻擋'},
+    {k:'safety.filesystem.protectedPaths',t:'list',l:'Protected Paths',d:'額外受保護路徑，AI 不可寫入'},
+    {k:'safety.filesystem.credentialPatterns',t:'list',l:'Credential Patterns',d:'憑證檔案模式（正則），匹配的檔案禁止存取'},
   ], sub:[
     {k:'safety.execApproval',l:'Exec Approval',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'dmUserId',t:'text',l:'DM User ID'},
-      {k:'timeoutMs',t:'num',l:'Timeout (ms)'},
-      {k:'allowedPatterns',t:'list',l:'Allowed Patterns'},
+      {k:'enabled',t:'bool',l:'啟用',d:'高風險指令執行前需要 owner DM 核准'},
+      {k:'dmUserId',t:'text',l:'DM User ID',d:'接收核准請求的 Discord User ID'},
+      {k:'timeoutMs',t:'num',l:'Timeout (ms)',d:'等待核准的逾時時間，預設 60000（1 分鐘）'},
+      {k:'allowedPatterns',t:'list',l:'Allowed Patterns',d:'免核准的指令前綴（如 echo, ls, git status）'},
     ]},
     {k:'safety.toolPermissions',l:'Tool Permissions',fields:[
-      {k:'defaultAllow',t:'bool',l:'Default Allow'},
+      {k:'defaultAllow',t:'bool',l:'Default Allow',d:'無匹配規則時預設允許（false = 白名單模式，true = 黑名單模式）'},
     ]},
   ]},
   { key:'workflow', label:'Workflow', sub:[
     {k:'workflow.guardian',l:'Guardian',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'syncReminder',t:'bool',l:'Sync Reminder'},
-      {k:'fileTracking',t:'bool',l:'File Tracking'},
+      {k:'enabled',t:'bool',l:'啟用',d:'Workflow Guardian：追蹤檔案修改、提醒同步'},
+      {k:'syncReminder',t:'bool',l:'Sync Reminder',d:'在未同步的修改累積時提醒 AI'},
+      {k:'fileTracking',t:'bool',l:'File Tracking',d:'追蹤 tool 產生的檔案修改'},
     ]},
     {k:'workflow.fixEscalation',l:'Fix Escalation',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'retryThreshold',t:'num',l:'Retry Threshold'},
+      {k:'enabled',t:'bool',l:'啟用',d:'同一問題多次修復失敗時升級為精確修正會議'},
+      {k:'retryThreshold',t:'num',l:'Retry Threshold',d:'重試幾次後觸發升級，預設 2'},
     ]},
     {k:'workflow.wisdomEngine',l:'Wisdom Engine',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
+      {k:'enabled',t:'bool',l:'啟用',d:'智慧引擎：從失敗模式中學習，注入防範建議'},
     ]},
     {k:'workflow.aidocs',l:'AIDocs',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'contentGate',t:'bool',l:'Content Gate'},
+      {k:'enabled',t:'bool',l:'啟用',d:'自動維護專案知識庫（_AIDocs/）'},
+      {k:'contentGate',t:'bool',l:'Content Gate',d:'檢查內容是否適合放入 _AIDocs（vs _staging）'},
     ]},
   ]},
   { key:'accounts', label:'Accounts', fields:[
-    {k:'accounts.registrationMode',t:'select',l:'Registration Mode',opts:['open','invite','closed']},
-    {k:'accounts.defaultRole',t:'text',l:'Default Role'},
-    {k:'accounts.pairingEnabled',t:'bool',l:'Pairing Enabled'},
-    {k:'accounts.pairingExpireMinutes',t:'num',l:'Pairing Expire (min)'},
+    {k:'accounts.registrationMode',t:'select',l:'Registration Mode',opts:['open','invite','closed'],d:'帳號註冊模式：open=自由註冊, invite=需邀請, closed=關閉'},
+    {k:'accounts.defaultRole',t:'text',l:'Default Role',d:'新帳號的預設角色（member/developer/admin）'},
+    {k:'accounts.pairingEnabled',t:'bool',l:'Pairing Enabled',d:'允許透過配對碼綁定 Discord 身份'},
+    {k:'accounts.pairingExpireMinutes',t:'num',l:'Pairing Expire (min)',d:'配對碼有效時間（分鐘）'},
   ]},
   { key:'cron', label:'Cron', fields:[
-    {k:'cron.enabled',t:'bool',l:'啟用'},
-    {k:'cron.maxConcurrentRuns',t:'num',l:'Max Concurrent Runs'},
-    {k:'cron.defaultAccountId',t:'text',l:'Default Account ID'},
-    {k:'cron.defaultProvider',t:'text',l:'Default Provider'},
+    {k:'cron.enabled',t:'bool',l:'啟用',d:'排程任務系統總開關'},
+    {k:'cron.maxConcurrentRuns',t:'num',l:'Max Concurrent Runs',d:'同時最多執行幾個 cron job'},
+    {k:'cron.defaultAccountId',t:'text',l:'Default Account ID',d:'Cron job 預設使用的帳號 ID'},
+    {k:'cron.defaultProvider',t:'text',l:'Default Provider',d:'Cron job 預設使用的模型（alias）'},
   ]},
   { key:'contextEngineering', label:'Context Engineering', fields:[
-    {k:'contextEngineering.enabled',t:'bool',l:'啟用'},
+    {k:'contextEngineering.enabled',t:'bool',l:'啟用',d:'Context Engineering 總開關：管理 context window 使用策略'},
   ], sub:[
     {k:'contextEngineering.strategies.compaction',l:'Compaction',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'model',t:'text',l:'Model'},
-      {k:'triggerTurns',t:'num',l:'Trigger Turns'},
-      {k:'preserveRecentTurns',t:'num',l:'Preserve Recent Turns'},
+      {k:'enabled',t:'bool',l:'啟用',d:'對話壓縮：超過觸發輪數後用 LLM 摘要早期對話'},
+      {k:'model',t:'text',l:'Model',d:'用於壓縮的模型（建議用便宜的如 claude-haiku）'},
+      {k:'triggerTurns',t:'num',l:'Trigger Turns',d:'累積幾輪後觸發壓縮'},
+      {k:'preserveRecentTurns',t:'num',l:'Preserve Recent Turns',d:'壓縮時保留最近幾輪不壓縮'},
     ]},
     {k:'contextEngineering.strategies.budgetGuard',l:'Budget Guard',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'maxUtilization',t:'num',l:'Max Utilization',step:'0.01'},
-      {k:'contextWindowTokens',t:'num',l:'Context Window Tokens'},
+      {k:'enabled',t:'bool',l:'啟用',d:'Context 預算守衛：超過上限時自動截斷'},
+      {k:'maxUtilization',t:'num',l:'Max Utilization',step:'0.01',d:'Context window 最大使用率（0-1），預設 0.8'},
+      {k:'contextWindowTokens',t:'num',l:'Context Window Tokens',d:'手動指定 context window 大小（留空自動偵測）'},
     ]},
     {k:'contextEngineering.strategies.slidingWindow',l:'Sliding Window',fields:[
-      {k:'enabled',t:'bool',l:'啟用'},
-      {k:'maxTurns',t:'num',l:'Max Turns'},
+      {k:'enabled',t:'bool',l:'啟用',d:'滑動窗口：只保留最近 N 輪對話（簡單但激進）'},
+      {k:'maxTurns',t:'num',l:'Max Turns',d:'保留的最大輪數'},
     ]},
   ]},
   { key:'inboundHistory', label:'Inbound History', fields:[
-    {k:'inboundHistory.enabled',t:'bool',l:'啟用'},
-    {k:'inboundHistory.fullWindowHours',t:'num',l:'Full Window (hours)'},
-    {k:'inboundHistory.decayWindowHours',t:'num',l:'Decay Window (hours)'},
-    {k:'inboundHistory.bucketBTokenCap',t:'num',l:'Bucket B Token Cap'},
-    {k:'inboundHistory.decayIITokenCap',t:'num',l:'Decay II Token Cap'},
-    {k:'inboundHistory.inject.enabled',t:'bool',l:'Inject Enabled'},
-  ]},
-  { key:'homeClaudeCode', label:'Home Claude Code', fields:[
-    {k:'homeClaudeCode.enabled',t:'bool',l:'啟用'},
-    {k:'homeClaudeCode.path',t:'text',l:'Path'},
+    {k:'inboundHistory.enabled',t:'bool',l:'啟用',d:'記錄頻道的歷史訊息，供 context 注入'},
+    {k:'inboundHistory.fullWindowHours',t:'num',l:'Full Window (hours)',d:'完整保留的時間窗口（小時），此範圍內訊息不衰減'},
+    {k:'inboundHistory.decayWindowHours',t:'num',l:'Decay Window (hours)',d:'衰減窗口（小時），超過 full window 後逐漸降低權重'},
+    {k:'inboundHistory.bucketBTokenCap',t:'num',l:'Bucket B Token Cap',d:'中期歷史的 token 上限'},
+    {k:'inboundHistory.decayIITokenCap',t:'num',l:'Decay II Token Cap',d:'遠期歷史的 token 上限'},
+    {k:'inboundHistory.inject.enabled',t:'bool',l:'Inject Enabled',d:'是否將歷史訊息注入 system prompt'},
   ]},
   { key:'dashboard', label:'Dashboard', fields:[
-    {k:'dashboard.enabled',t:'bool',l:'啟用'},
-    {k:'dashboard.port',t:'num',l:'Port'},
+    {k:'dashboard.enabled',t:'bool',l:'啟用',d:'Dashboard 監控面板開關'},
+    {k:'dashboard.port',t:'num',l:'Port',d:'Dashboard HTTP 服務埠號，預設 8088'},
+    {k:'dashboard.token',t:'pw',l:'Auth Token',d:'存取認證 token，設定後需帶 ?token=xxx 才能進入'},
   ]},
   { key:'toolBudget', label:'Tool Budget', fields:[
-    {k:'toolBudget.resultTokenCap',t:'num',l:'Result Token Cap'},
-    {k:'toolBudget.perTurnTotalCap',t:'num',l:'Per Turn Total Cap'},
-    {k:'toolBudget.toolTimeoutMs',t:'num',l:'Tool Timeout (ms)'},
+    {k:'toolBudget.resultTokenCap',t:'num',l:'Result Token Cap',d:'單次 tool 回傳結果的 token 上限，超過會被截斷'},
+    {k:'toolBudget.perTurnTotalCap',t:'num',l:'Per Turn Total Cap',d:'單 turn 內所有 tool 結果的 token 總上限'},
+    {k:'toolBudget.toolTimeoutMs',t:'num',l:'Tool Timeout (ms)',d:'單次 tool 執行逾時（毫秒）'},
   ]},
   { key:'subagents', label:'Subagents', fields:[
-    {k:'subagents.maxConcurrent',t:'num',l:'Max Concurrent'},
-    {k:'subagents.defaultTimeoutMs',t:'num',l:'Default Timeout (ms)'},
-    {k:'subagents.defaultKeepSession',t:'bool',l:'Default Keep Session'},
+    {k:'subagents.maxConcurrent',t:'num',l:'Max Concurrent',d:'同時最多運行幾個子 agent'},
+    {k:'subagents.defaultTimeoutMs',t:'num',l:'Default Timeout (ms)',d:'子 agent 預設執行逾時（毫秒）'},
+    {k:'subagents.defaultKeepSession',t:'bool',l:'Default Keep Session',d:'子 agent 完成後是否保留 session（可被後續任務復用）'},
   ]},
   { key:'rateLimit', label:'Rate Limit', dynamic:true, dynamicPath:'rateLimit', entryFields:[
-    {k:'requestsPerMinute',t:'num',l:'Requests Per Minute'},
+    {k:'requestsPerMinute',t:'num',l:'Requests Per Minute',d:'該角色每分鐘最多發送幾則訊息'},
   ]},
   { key:'mcpServers', label:'MCP Servers', dynamic:true, dynamicPath:'mcpServers', entryFields:[
-    {k:'command',t:'text',l:'Command'},
-    {k:'args',t:'list',l:'Args'},
-    {k:'tier',t:'select',l:'Tier',opts:['public','standard','elevated','admin','owner']},
+    {k:'command',t:'text',l:'Command',d:'MCP server 啟動指令（如 node, python）'},
+    {k:'args',t:'list',l:'Args',d:'啟動指令的參數列表'},
+    {k:'tier',t:'select',l:'Tier',opts:['public','standard','elevated','admin','owner'],d:'工具權限層級：public=所有人, elevated=需核准, owner=僅管理員'},
   ]},
 ];
 
@@ -1251,7 +1307,7 @@ function collectConfigJSON() {
 
 async function loadCfg() {
   try {
-    const text = await fetch('/api/config').then(r => r.text());
+    const text = await authFetch('/api/config').then(r => r.text());
     _cfgData = JSON.parse(text);
     document.getElementById('cfg-gui').innerHTML = renderConfigGUI(_cfgData);
     showCfgMsg('', true);
@@ -1262,7 +1318,7 @@ async function saveCfg() {
   if (!_cfgData) { showCfgMsg('請先讀取 config', false); return; }
   try {
     const body = JSON.stringify(collectConfigJSON(), null, 2);
-    const d = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body}).then(r=>r.json());
+    const d = await authFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body}).then(r=>r.json());
     showCfgMsg(d.success ? '✓ 已備份並儲存' : '錯誤：' + d.error, d.success);
   } catch(e) { showCfgMsg('儲存失敗：' + e, false); }
 }
@@ -1276,7 +1332,7 @@ function showCfgMsg(msg, ok) {
 // ── Models JSON Viewer ──────────────────────────────────────────────────────
 async function loadModelsJson() {
   try {
-    const d = await fetch('/api/models-json').then(r => r.json());
+    const d = await authFetch('/api/models-json').then(r => r.json());
     const el = document.getElementById('models-json-viewer');
     if (!d.exists) { el.innerHTML = '<span style="color:#f59e0b">models.json 不存在（V1 模式？）</span>'; return; }
     const providers = d.data?.providers || {};
@@ -1304,7 +1360,7 @@ async function loadModelsJson() {
 // ── Auth Profiles ────────────────────────────────────────────────────────────
 async function loadAuthProfiles() {
   try {
-    const d = await fetch('/api/auth-profiles').then(r => r.json());
+    const d = await authFetch('/api/auth-profiles').then(r => r.json());
     // 憑證列表
     const credsHtml = (d.credentials||[]).map(c =>
       \`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:6px;background:#161827;border-radius:4px">
@@ -1341,7 +1397,7 @@ async function addAuthProfile() {
   const cred = document.getElementById('auth-new-cred').value.trim();
   if (!id || !cred) { document.getElementById('auth-msg').className = 'msg err'; document.getElementById('auth-msg').textContent = 'ID 和 Credential 都要填'; return; }
   try {
-    const d = await fetch('/api/auth-profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',id,credential:cred})}).then(r=>r.json());
+    const d = await authFetch('/api/auth-profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',id,credential:cred})}).then(r=>r.json());
     if (d.success) { document.getElementById('auth-new-id').value = ''; document.getElementById('auth-new-cred').value = ''; loadAuthProfiles(); }
     else { document.getElementById('auth-msg').className = 'msg err'; document.getElementById('auth-msg').textContent = d.error; }
   } catch(e) { document.getElementById('auth-msg').className = 'msg err'; document.getElementById('auth-msg').textContent = '失敗：' + e; }
@@ -1350,14 +1406,14 @@ async function addAuthProfile() {
 async function removeAuthProfile(id) {
   if (!confirm(\`確定刪除憑證 \${id}？\`)) return;
   try {
-    await fetch('/api/auth-profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove',id})});
+    await authFetch('/api/auth-profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove',id})});
     loadAuthProfiles();
   } catch(e) { document.getElementById('auth-msg').className = 'msg err'; document.getElementById('auth-msg').textContent = '失敗：' + e; }
 }
 
 async function clearCooldown(providerId, profileId) {
   try {
-    await fetch('/api/auth-profiles/clear-cooldown',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({providerId,profileId})});
+    await authFetch('/api/auth-profiles/clear-cooldown',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({providerId,profileId})});
     loadAuthProfiles();
   } catch(e) { document.getElementById('auth-msg').className = 'msg err'; document.getElementById('auth-msg').textContent = '失敗：' + e; }
 }
@@ -1368,7 +1424,7 @@ async function loadTraces() {
   const el = document.getElementById('trace-list');
   el.innerHTML = '<div style="color:var(--fg2)">載入中…</div>';
   try {
-    const d = await fetch('/api/traces?limit=' + limit).then(r => r.json());
+    const d = await authFetch('/api/traces?limit=' + limit).then(r => r.json());
     if (!d.traces || d.traces.length === 0) { el.innerHTML = '<div style="color:var(--fg2)">無 trace 記錄</div>'; return; }
     let html = '<table style="width:100%;border-collapse:collapse;font-size:0.82rem">';
     html += '<tr style="border-bottom:1px solid var(--border);color:var(--fg2)">';
@@ -1419,10 +1475,11 @@ async function showTraceDetail(traceId) {
   const el = document.getElementById('trace-detail');
   const idEl = document.getElementById('trace-detail-id');
   card.style.display = 'block';
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   idEl.textContent = traceId;
   el.innerHTML = '<div style="color:var(--fg2)">載入中…</div>';
   try {
-    const t = await fetch('/api/traces/' + traceId).then(r => r.json());
+    const t = await authFetch('/api/traces/' + traceId).then(r => r.json());
     let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
 
     // Phase 1: Inbound
@@ -1503,11 +1560,29 @@ async function showTraceDetail(traceId) {
             html += '</div>';
           }
           html += '</div>';
+        } else if (call.stopReason === 'end_turn') {
+          html += '<div style="margin-top:4px;color:var(--fg2);font-size:0.78rem;font-style:italic">💬 最終回覆（無工具呼叫）</div>';
         }
         html += '</div>';
       }
     } else { html += '<div style="color:var(--fg2);font-size:0.82rem">No LLM calls</div>'; }
     html += '</div>';
+
+    // Workflow Events
+    if (t.workflowEvents?.length > 0) {
+      html += '<div class="card" style="background:var(--bg4);margin-top:12px">';
+      html += '<h3 style="color:var(--accent);margin-bottom:6px">⚙ Workflow Events (' + t.workflowEvents.length + ')</h3>';
+      for (const we of t.workflowEvents) {
+        const weTs = new Date(we.ts).toLocaleTimeString('zh-TW', {hour12:false});
+        const typeColor = we.type === 'rut' || we.type === 'oscillation' ? 'var(--warn)' : we.type === 'file_modified' ? 'var(--green2)' : 'var(--accent2)';
+        html += '<div style="padding:2px 0;border-top:1px solid var(--border);font-size:0.82rem">';
+        html += '<span style="color:var(--fg2)">' + weTs + '</span> ';
+        html += '<span style="color:' + typeColor + ';font-weight:bold">' + we.type + '</span> ';
+        html += '<span style="color:var(--fg2)">' + (we.detail || '').replace(/</g,'&lt;') + '</span>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
 
     // Phase 4-7 grid
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">';
@@ -1589,17 +1664,38 @@ setInterval(loadStatus, 30000);
 
 export class DashboardServer {
   private port: number;
+  private token?: string;
 
-  constructor(port = 8088) {
+  constructor(port = 8088, token?: string) {
     this.port = port;
+    this.token = token;
+  }
+
+  /** 檢查認證（token 未設定則全通過） */
+  private checkAuth(req: IncomingMessage, url: string): boolean {
+    if (!this.token) return true;
+    // 1. Query param: ?token=xxx
+    const paramMatch = url.match(/[?&]token=([^&]+)/);
+    if (paramMatch && paramMatch[1] === this.token) return true;
+    // 2. Authorization: Bearer xxx
+    const authHeader = req.headers["authorization"];
+    if (authHeader && authHeader === `Bearer ${this.token}`) return true;
+    return false;
   }
 
   start(): void {
+    const authToken = this.token;
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       const url = req.url ?? "/";
       const method = req.method ?? "GET";
 
-      if (url === "/" || url === "/index.html") {
+      if (!this.checkAuth(req, url)) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unauthorized. Provide ?token=xxx or Authorization: Bearer xxx" }));
+        return;
+      }
+
+      if (url === "/" || url === "/index.html" || url.match(/^\/(\?token=[^&]+)?$/)) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(HTML);
         return;
@@ -2014,12 +2110,99 @@ export class DashboardServer {
           return;
         }
 
-        // /api/traces?limit=N — 列表
+        // /api/traces?limit=N&sessionKey=xxx — 列表（可選 sessionKey 過濾）
         const limitMatch = url.match(/[?&]limit=(\d+)/);
         const limit = limitMatch ? parseInt(limitMatch[1]!, 10) : 50;
-        const entries = traceStore.recent(limit);
+        const skMatch = url.match(/[?&]sessionKey=([^&]+)/);
+        const sessionKeyFilter = skMatch ? decodeURIComponent(skMatch[1]!) : undefined;
+        const entries = sessionKeyFilter
+          ? traceStore.bySession(sessionKeyFilter, limit)
+          : traceStore.recent(limit);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ traces: entries }));
+        return;
+      }
+
+      // ── Session Management API ─────────────────────────────────────────────
+
+      // POST /api/sessions/clear — 清空指定 session 訊息
+      if (url === "/api/sessions/clear" && method === "POST") {
+        const chunks: Buffer[] = [];
+        let sz = 0;
+        req.on("data", (c: Buffer) => { sz += c.length; if (sz < 8192) chunks.push(c); });
+        req.on("end", () => {
+          try {
+            const { sessionKey } = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as { sessionKey?: string };
+            if (!sessionKey) { res.writeHead(400); res.end(JSON.stringify({ error: "missing sessionKey" })); return; }
+            const sm = getSessionManager();
+            const count = sm.clearMessages(sessionKey);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true, clearedMessages: count }));
+          } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
+        });
+        return;
+      }
+
+      // POST /api/sessions/delete — 刪除指定 session
+      if (url === "/api/sessions/delete" && method === "POST") {
+        const chunks: Buffer[] = [];
+        let sz = 0;
+        req.on("data", (c: Buffer) => { sz += c.length; if (sz < 8192) chunks.push(c); });
+        req.on("end", () => {
+          try {
+            const { sessionKey } = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as { sessionKey?: string };
+            if (!sessionKey) { res.writeHead(400); res.end(JSON.stringify({ error: "missing sessionKey" })); return; }
+            const sm = getSessionManager();
+            sm.delete(sessionKey);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true }));
+          } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
+        });
+        return;
+      }
+
+      // POST /api/sessions/compact — 強制觸發 CE 壓縮
+      if (url === "/api/sessions/compact" && method === "POST") {
+        const chunks: Buffer[] = [];
+        let sz = 0;
+        req.on("data", (c: Buffer) => { sz += c.length; if (sz < 8192) chunks.push(c); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { sessionKey } = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as { sessionKey?: string };
+              if (!sessionKey) { res.writeHead(400); res.end(JSON.stringify({ error: "missing sessionKey" })); return; }
+              const sm = getSessionManager();
+              const session = sm.get(sessionKey);
+              if (!session) { res.writeHead(404); res.end(JSON.stringify({ error: "session not found" })); return; }
+              const ce = getContextEngine();
+              if (!ce) { res.writeHead(500); res.end(JSON.stringify({ error: "ContextEngine not initialized" })); return; }
+              const before = session.messages.length;
+              const processed = await ce.build(session.messages, { sessionKey, turnIndex: session.turnCount });
+              if (ce.lastBuildBreakdown.strategiesApplied.length > 0) {
+                sm.replaceMessages(sessionKey, processed);
+              }
+              const after = sm.get(sessionKey)?.messages.length ?? 0;
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({
+                success: true,
+                messagesBefore: before,
+                messagesAfter: after,
+                strategies: ce.lastBuildBreakdown.strategiesApplied,
+              }));
+            } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
+          })();
+        });
+        return;
+      }
+
+      // POST /api/sessions/purge-expired — 批次清除過期 session
+      if (url === "/api/sessions/purge-expired" && method === "POST") {
+        try {
+          const sm = getSessionManager();
+          const count = sm.purgeExpired();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, purgedCount: count }));
+        } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
         return;
       }
 
@@ -2040,8 +2223,9 @@ export class DashboardServer {
 
 let _dashboard: DashboardServer | null = null;
 
-export function initDashboard(port = 8088): DashboardServer {
-  _dashboard = new DashboardServer(port);
+export function initDashboard(port = 8088, token?: string): DashboardServer {
+  _dashboard = new DashboardServer(port, token);
+  if (token) log.info(`[dashboard] 認證已啟用（token 長度 ${token.length}）`);
   _dashboard.start();
   return _dashboard;
 }

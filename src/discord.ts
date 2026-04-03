@@ -561,6 +561,7 @@ async function handleMessage(
       const providerOverride = getChannelProviderOverride(firstMessage.channelId);
       const providerId = providerOverride ?? resolveProvider({
         channelAccess: coreChannelAccess,
+        channelId: firstMessage.channelId,
         role: accountRole,
         projectId: resolvedProjectId,
       });

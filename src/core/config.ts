@@ -173,8 +173,6 @@ export interface AgentDefaultsConfig {
   };
   /** 模型對照表（"provider/model" → alias） */
   models?: Record<string, ModelAliasEntry>;
-  /** system prompt */
-  systemPrompt?: string;
 }
 
 /** catclaw.json models 區塊（自訂 provider + 合併模式） */
@@ -270,6 +268,20 @@ export interface ProviderRoutingConfig {
     windowMs?: number;
     cooldownMs?: number;
   };
+}
+
+/** 統一模型路由設定（優先於 ProviderRoutingConfig） */
+export interface ModelRoutingConfig {
+  /** 全域預設模型（alias 或 provider/model） */
+  default: string;
+  /** 角色覆蓋：role → model alias */
+  roles?: Record<string, string>;
+  /** 專案覆蓋：projectId → model alias */
+  projects?: Record<string, string>;
+  /** 頻道覆蓋（最高優先）：channelId → model alias */
+  channels?: Record<string, string>;
+  /** 降級鏈 */
+  fallbacks?: string[];
 }
 
 /** Session 持久化設定 */
@@ -458,12 +470,10 @@ export interface BridgeConfig {
   admin: AdminConfig;
   turnTimeoutMs: number;
   turnTimeoutToolCallMs: number;
-  sessionTtlHours: number;
   showToolCalls: "all" | "summary" | "none";
   showThinking: boolean;
   debounceMs: number;
   fileUploadThreshold: number;
-  /** 串流輸出（逐步 edit 訊息），預設 true */
   streamingReply: boolean;
   logLevel: LogLevel;
   cron: CronConfig;
@@ -484,8 +494,10 @@ export interface BridgeConfig {
   provider: string;
   /** @deprecated V1 — Provider 設定表 */
   providers: Record<string, ProviderEntry>;
-  /** Provider 路由規則 */
+  /** Provider 路由規則（舊版，modelRouting 優先） */
   providerRouting: ProviderRoutingConfig;
+  /** 統一模型路由（優先於 providerRouting） */
+  modelRouting?: ModelRoutingConfig;
   /** Session 持久化設定 */
   session: SessionConfig;
   /** 記憶系統設定 */
@@ -504,14 +516,12 @@ export interface BridgeConfig {
   contextEngineering?: ContextEngineeringConfig;
   /** Inbound History 設定 */
   inboundHistory?: InboundHistoryConfig;
-  /** HomeClaudeCode 共用記憶策略 */
-  homeClaudeCode?: HomeClaudeCodeConfig;
   /** 多 Agent 設定（用於 --agent <id> 啟動） */
   agents?: AgentsConfig;
   /** Subagent 設定 */
   subagents?: SubagentsConfig;
   /** Token Usage Dashboard 設定 */
-  dashboard?: { enabled: boolean; port: number };
+  dashboard?: { enabled: boolean; port: number; token?: string };
   /** Tool 呼叫 token Budget */
   toolBudget?: {
     /** 單一工具結果 token 上限（預設 8000，0 = 無限制） */
@@ -588,7 +598,6 @@ interface RawConfig {
   admin?: { allowedUserIds?: string[] };
   turnTimeoutMs?: number;
   turnTimeoutToolCallMs?: number;
-  sessionTtlHours?: number;
   showToolCalls?: string | boolean;
   showThinking?: boolean;
   debounceMs?: number;
@@ -611,6 +620,13 @@ interface RawConfig {
     failoverChain?: string[];
     circuitBreaker?: { errorThreshold?: number; windowMs?: number; cooldownMs?: number };
   };
+  modelRouting?: {
+    default?: string;
+    roles?: Record<string, string>;
+    projects?: Record<string, string>;
+    channels?: Record<string, string>;
+    fallbacks?: string[];
+  };
   session?: {
     ttlHours?: number;
     maxHistoryTurns?: number;
@@ -623,9 +639,10 @@ interface RawConfig {
   workflow?: Partial<WorkflowConfig>;
   accounts?: Partial<AccountsConfig>;
   rateLimit?: RateLimitConfig;
+  /** @deprecated 已移除，保留供 JSON 相容 */
   homeClaudeCode?: Partial<HomeClaudeCodeConfig>;
   agents?: AgentsConfig;
-  dashboard?: { enabled?: boolean; port?: number };
+  dashboard?: { enabled?: boolean; port?: number; token?: string };
   toolBudget?: { resultTokenCap?: number; perTurnTotalCap?: number; toolTimeoutMs?: number };
   contextEngineering?: ContextEngineeringConfig;
   inboundHistory?: InboundHistoryConfig;
@@ -699,6 +716,93 @@ export function resolveWorkspaceDirSafe(): string {
 
 export function resolveClaudeBin(): string {
   return process.env.CATCLAW_CLAUDE_BIN ?? "claude";
+}
+
+// ── models-config.json 外部載入 ──────────────────────────────────────────────
+
+interface ModelsConfigFile {
+  mode?: "merge" | "replace";
+  primary?: string;
+  aliases?: Record<string, string>;
+  providers?: Record<string, ModelProviderDefinition & {
+    embeddingModel?: string;
+    defaultModel?: string;
+    thinkMode?: boolean;
+    numPredict?: number;
+    timeout?: number;
+  }>;
+}
+
+/**
+ * 從 CATCLAW_CONFIG_DIR/models-config.json 載入模型設定檔。
+ * 若不存在回傳 null。
+ */
+function loadModelsConfigFile(): ModelsConfigFile | null {
+  try {
+    const dir = resolveCatclawDir();
+    const p = join(dir, "models-config.json");
+    if (!existsSync(p)) return null;
+    return JSON.parse(readFileSync(p, "utf-8")) as ModelsConfigFile;
+  } catch (err) {
+    log.warn(`[config] models-config.json 讀取失敗：${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * 從 models-config.json 合成 agentDefaults（供 provider registry V2）。
+ */
+function synthesizeFromModelsConfig(mcfg: ModelsConfigFile): {
+  agentDefaults: AgentDefaultsConfig;
+  modelsConfig: ModelsConfig;
+  ollamaRaw: Record<string, unknown> | undefined;
+} {
+  // aliases: { sonnet: "anthropic/claude-sonnet-4-6" } → models: { "anthropic/claude-sonnet-4-6": { alias: "sonnet" } }
+  const models: Record<string, ModelAliasEntry> = {};
+  if (mcfg.aliases) {
+    for (const [alias, fullRef] of Object.entries(mcfg.aliases)) {
+      models[fullRef] = { alias };
+    }
+  }
+
+  const agentDefaults: AgentDefaultsConfig = {
+    model: { primary: mcfg.primary ?? "sonnet" },
+    models,
+  };
+
+  // modelsConfig: 只取 provider 的 model catalog 部分
+  const modelsConfigProviders: Record<string, ModelProviderDefinition> = {};
+  if (mcfg.providers) {
+    for (const [id, prov] of Object.entries(mcfg.providers)) {
+      modelsConfigProviders[id] = {
+        baseUrl: prov.baseUrl,
+        api: prov.api,
+        apiKey: prov.apiKey,
+        models: prov.models ?? [],
+      };
+    }
+  }
+  const modelsConfig: ModelsConfig = { mode: mcfg.mode ?? "merge", providers: modelsConfigProviders };
+
+  // ollama: 從 providers.ollama 合成 OllamaConfig raw
+  let ollamaRaw: Record<string, unknown> | undefined;
+  const ollamaProv = mcfg.providers?.["ollama"];
+  if (ollamaProv) {
+    ollamaRaw = {
+      enabled: true,
+      primary: {
+        host: ollamaProv.baseUrl ?? "http://localhost:11434",
+        model: ollamaProv.defaultModel ?? ollamaProv.models?.[0]?.id ?? "qwen3:14b",
+        embeddingModel: ollamaProv.embeddingModel,
+      },
+      failover: false,
+      thinkMode: ollamaProv.thinkMode ?? false,
+      numPredict: ollamaProv.numPredict ?? 8192,
+      timeout: ollamaProv.timeout ?? 120_000,
+    };
+  }
+
+  return { agentDefaults, modelsConfig, ollamaRaw };
 }
 
 /**
@@ -844,6 +948,20 @@ function loadConfig(): BridgeConfig {
 
   const turnTimeoutMs = raw.turnTimeoutMs ?? 300_000;
 
+  // models-config.json 外部載入（優先於 catclaw.json 內的 agentDefaults/modelsConfig/ollama）
+  let resolvedAgentDefaults = raw.agentDefaults as AgentDefaultsConfig | undefined;
+  let resolvedModelsConfig = raw.modelsConfig as ModelsConfig | undefined;
+  let ollamaRaw = raw.ollama;
+
+  const mcfg = loadModelsConfigFile();
+  if (mcfg && !raw.agentDefaults) {
+    const syn = synthesizeFromModelsConfig(mcfg);
+    resolvedAgentDefaults = syn.agentDefaults;
+    resolvedModelsConfig = syn.modelsConfig;
+    if (!raw.ollama) ollamaRaw = syn.ollamaRaw as typeof raw.ollama;
+    log.info(`[config] 從 models-config.json 合成 agentDefaults（primary=${syn.agentDefaults.model?.primary}）`);
+  }
+
   return {
     // ── 既有欄位 ──
     discord: {
@@ -854,7 +972,6 @@ function loadConfig(): BridgeConfig {
     admin: { allowedUserIds: raw.admin?.allowedUserIds ?? [] },
     turnTimeoutMs,
     turnTimeoutToolCallMs: raw.turnTimeoutToolCallMs ?? Math.round(turnTimeoutMs * 1.6),
-    sessionTtlHours: raw.sessionTtlHours ?? 168,
     showToolCalls: parseShowToolCalls(raw.showToolCalls),
     showThinking: raw.showThinking ?? false,
     debounceMs: raw.debounceMs ?? 500,
@@ -871,12 +988,11 @@ function loadConfig(): BridgeConfig {
 
     // ── 平台擴充欄位 ──
 
-    // V2 三層分離
-    agentDefaults: raw.agentDefaults,
-    modelsConfig: raw.modelsConfig,
+    agentDefaults: resolvedAgentDefaults,
+    modelsConfig: resolvedModelsConfig,
     authConfig: raw.authConfig,
 
-    // V1 相容（未設定 providers 時，若有 ANTHROPIC_TOKEN 預設用 claude-oauth；否則 ollama-local）
+    // V1 相容（provider/providers 已廢棄，保留 fallback 以免啟動失敗）
     provider: raw.provider ?? (process.env["ANTHROPIC_TOKEN"] ? "claude-oauth" : "ollama-local"),
     providers: raw.providers ?? (process.env["ANTHROPIC_TOKEN"]
       ? {
@@ -902,6 +1018,13 @@ function loadConfig(): BridgeConfig {
       failoverChain: raw.providerRouting?.failoverChain,
       circuitBreaker: raw.providerRouting?.circuitBreaker,
     },
+    modelRouting: raw.modelRouting?.default ? {
+      default: raw.modelRouting.default,
+      roles: raw.modelRouting.roles,
+      projects: raw.modelRouting.projects,
+      channels: raw.modelRouting.channels,
+      fallbacks: raw.modelRouting.fallbacks,
+    } : undefined,
     session: {
       ttlHours:          raw.session?.ttlHours ?? 168,
       maxHistoryTurns:   raw.session?.maxHistoryTurns ?? 50,
@@ -909,18 +1032,18 @@ function loadConfig(): BridgeConfig {
       persistPath:       raw.session?.persistPath ?? `${workspaceDir}/data/sessions/`,
     },
     memory: defaultMemoryConfig(raw.memory, workspaceDir),
-    ollama: raw.ollama ? {
-      enabled:    raw.ollama.enabled ?? true,
+    ollama: ollamaRaw ? {
+      enabled:    ollamaRaw.enabled ?? true,
       primary: {
-        host:           raw.ollama.primary?.host ?? "http://localhost:11434",
-        model:          raw.ollama.primary?.model ?? "qwen3:8b",
-        embeddingModel: raw.ollama.primary?.embeddingModel,
+        host:           ollamaRaw.primary?.host ?? "http://localhost:11434",
+        model:          ollamaRaw.primary?.model ?? "qwen3:8b",
+        embeddingModel: ollamaRaw.primary?.embeddingModel,
       },
-      fallback:   raw.ollama.fallback,
-      failover:   raw.ollama.failover ?? true,
-      thinkMode:  raw.ollama.thinkMode ?? false,
-      numPredict: raw.ollama.numPredict ?? 8192,
-      timeout:    raw.ollama.timeout ?? 120_000,
+      fallback:   ollamaRaw.fallback,
+      failover:   ollamaRaw.failover ?? true,
+      thinkMode:  ollamaRaw.thinkMode ?? false,
+      numPredict: ollamaRaw.numPredict ?? 8192,
+      timeout:    ollamaRaw.timeout ?? 120_000,
     } : undefined,
     safety: raw.safety ? {
       enabled:     raw.safety.enabled ?? true,
@@ -948,14 +1071,11 @@ function loadConfig(): BridgeConfig {
       admin:            { requestsPerMinute: 120 },
       "platform-owner": { requestsPerMinute: 300 },
     },
-    homeClaudeCode: raw.homeClaudeCode ? {
-      enabled: raw.homeClaudeCode.enabled ?? false,
-      path: raw.homeClaudeCode.path,
-    } : undefined,
     agents: raw.agents,
     dashboard: raw.dashboard?.enabled ? {
       enabled: true,
       port: raw.dashboard.port ?? 8088,
+      token: raw.dashboard.token,
     } : undefined,
     toolBudget: raw.toolBudget,
     contextEngineering: raw.contextEngineering,
@@ -1055,12 +1175,24 @@ export function getChannelAccess(
  */
 export function resolveProvider(opts: {
   channelAccess?: ChannelAccess;
+  channelId?: string;
   role?: string;
   projectId?: string;
 }): string {
-  const { channelAccess, role, projectId } = opts;
-  const routing = config.providerRouting;
+  const { channelAccess, channelId, role, projectId } = opts;
+  const mr = config.modelRouting;
 
+  // 新版 modelRouting（優先）：channel > project > role > default
+  if (mr) {
+    if (channelId && mr.channels?.[channelId]) return mr.channels[channelId];
+    if (channelAccess?.provider) return channelAccess.provider;
+    if (projectId && mr.projects?.[projectId]) return mr.projects[projectId];
+    if (role && mr.roles?.[role]) return mr.roles[role];
+    return mr.roles?.["default"] ?? mr.default;
+  }
+
+  // 舊版 providerRouting（向後相容）
+  const routing = config.providerRouting;
   if (channelAccess?.provider) return channelAccess.provider;
   if (role && routing.roles?.[role]) return routing.roles[role];
   if (projectId && routing.projects?.[projectId]) return routing.projects[projectId];

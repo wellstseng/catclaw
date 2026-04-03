@@ -32,7 +32,6 @@ export interface AccountPreferences {
   language?: string;
   style?: string;
   provider?: string;
-  systemPromptAddition?: string;
 }
 
 export interface Account {

@@ -213,6 +213,14 @@ turn 結束 → markTurnDone(channelId)
 
 ## 對外 API
 
+### `clearMessages(sessionKey): number`
+
+清空指定 session 的訊息記錄（保留 session 本身）。回傳被清除的訊息數量。
+
+### `purgeExpired(): number`
+
+批次清除所有超過 TTL 的過期 session。回傳被清除的 session 數量。
+
 ### `loadSessions()`
 
 啟動時呼叫，從 `<CATCLAW_WORKSPACE>/data/sessions.json` 載入 session 快取。
@@ -238,6 +246,17 @@ turn 結束 → markTurnDone(channelId)
 
 `runTurn()` 攔截 `session_init` event → 存入 `sessionCache` + 持久化 → **不轉發**給 reply handler。
 上層 reply.ts 永遠不會收到 `session_init`。
+
+## Dashboard API 端點（session 管理）
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/sessions/clear` | POST | 清空指定 session 訊息（body: `{ sessionKey }`) |
+| `/api/sessions/delete` | POST | 刪除指定 session（body: `{ sessionKey }`) |
+| `/api/sessions/compact` | POST | 強制觸發 CE 壓縮（body: `{ sessionKey }`) |
+| `/api/sessions/purge-expired` | POST | 批次清除所有過期 session |
+
+Dashboard UI 在 Sessions 分頁提供 per-session 操作按鈕（Clear / Compact / Delete）及全域 Purge Expired 按鈕。
 
 ## 內部函式
 
