@@ -30,6 +30,7 @@ export interface TraceRecall {
 
 /** Inbound History 追蹤 */
 export interface TraceInbound {
+  entriesCount: number;
   bucketA: number;
   bucketB: number;
   tokens: number;

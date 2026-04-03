@@ -409,7 +409,7 @@ label.cfg-toggle { min-width: 36px; }
     <div id="sessions-list"></div>
   </div>
   <div class="card" style="margin-top:12px">
-    <h2>Inbound History（未消費）<button class="btn btn-sm" style="float:right" onclick="loadInboundHistory()">↻</button></h2>
+    <h2>Inbound History（未消費）<span style="float:right;display:inline-flex;gap:6px"><button class="btn btn-sm btn-red" onclick="clearAllInbound()">🗑 全部清除</button><button class="btn btn-sm" onclick="loadInboundHistory()">↻</button></span></h2>
     <div id="inbound-list" style="font-size:0.8rem;color:var(--fg2)">按 ↻ 載入</div>
   </div>
 </div>
@@ -768,12 +768,13 @@ async function loadInboundHistory() {
     if (!channels.length) { el.innerHTML = '<p style="color:#888">無 pending entries</p>'; return; }
     let html = '<table class="tbl"><thead><tr><th>Channel</th><th>Pending</th><th>最新</th><th></th></tr></thead><tbody>';
     for (const ch of channels) {
-      const ts = new Date(ch.lastTs).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
+      const chD = new Date(ch.lastTs);
+      const ts = chD.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}) + '.' + String(chD.getMilliseconds()).padStart(3,'0');
       html += '<tr>';
       html += '<td title="' + ch.channelId + '">' + ch.channelId.slice(-12) + '</td>';
       html += '<td>' + ch.count + '</td>';
       html += '<td>' + ts + '</td>';
-      html += '<td><a href="#" style="color:var(--accent);text-decoration:none;font-size:0.78rem" onclick="event.preventDefault();expandInbound(\\'' + ch.channelId + '\\',this.closest(\\'tr\\'))">展開</a></td>';
+      html += '<td><a href="#" style="color:var(--accent);text-decoration:none;font-size:0.78rem" onclick="event.preventDefault();expandInbound(\\'' + ch.channelId + '\\',this.closest(\\'tr\\'))">展開</a> <a href="#" style="color:var(--red2);text-decoration:none;font-size:0.78rem;margin-left:6px" onclick="event.preventDefault();clearInbound(\\'' + ch.channelId + '\\')">清除</a></td>';
       html += '</tr>';
     }
     html += '</tbody></table>';
@@ -794,7 +795,8 @@ async function expandInbound(channelId, row) {
     else {
       html += '<div style="max-height:200px;overflow-y:auto">';
       for (const e of entries) {
-        const ts = new Date(e.ts).toLocaleTimeString('zh-TW',{hour12:false});
+        const d = new Date(e.ts);
+        const ts = d.toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}) + '.' + String(d.getMilliseconds()).padStart(3,'0');
         html += '<div style="margin:2px 0"><span style="color:var(--fg2)">' + ts + '</span> <b>' + (e.authorName||'?') + '</b>: ' + (e.content||'').slice(0,120) + '</div>';
       }
       html += '</div>';
@@ -805,6 +807,32 @@ async function expandInbound(channelId, row) {
     tr.innerHTML = html;
     row.after(tr);
   } catch(e) { alert('載入失敗：' + e); }
+}
+
+async function clearInbound(channelId) {
+  if (!confirm('清除 channel ' + channelId.slice(-12) + ' 的 inbound entries？')) return;
+  try {
+    const r = await authFetch('/api/inbound-history/clear', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ channelId }),
+    });
+    const d = await r.json();
+    if (d.success) { alert('已清除 ' + d.cleared + ' 筆'); loadInboundHistory(); }
+    else alert('失敗：' + (d.error||''));
+  } catch(e) { alert('錯誤：' + e); }
+}
+
+async function clearAllInbound() {
+  if (!confirm('清除所有 channel 的 inbound entries？')) return;
+  try {
+    const r = await authFetch('/api/inbound-history/clear', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({}),
+    });
+    const d = await r.json();
+    if (d.success) { alert('已清除 ' + d.cleared + ' 筆'); loadInboundHistory(); }
+    else alert('失敗：' + (d.error||''));
+  } catch(e) { alert('錯誤：' + e); }
 }
 
 // ── 日誌（SSE 即時串流）──────────────────────────────────────────────────────
@@ -2191,6 +2219,24 @@ export class DashboardServer {
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ channels }));
         }
+        return;
+      }
+
+      // POST /api/inbound-history/clear — 清除 inbound entries（單 channel 或全部）
+      if (url === "/api/inbound-history/clear" && method === "POST") {
+        const chunks: Buffer[] = [];
+        let sz = 0;
+        req.on("data", (c: Buffer) => { sz += c.length; if (sz < 8192) chunks.push(c); });
+        req.on("end", () => {
+          try {
+            const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as { channelId?: string };
+            const store = getInboundHistoryStore();
+            if (!store) { res.writeHead(500); res.end(JSON.stringify({ error: "InboundHistoryStore not initialized" })); return; }
+            const count = body.channelId ? store.clearChannel(body.channelId) : store.clearAll();
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true, cleared: count }));
+          } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
+        });
         return;
       }
 

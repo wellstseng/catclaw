@@ -350,9 +350,10 @@ async function handleMessage(
       return;
     }
     if (!message.mentions.has(botUser)) {
-      // Inbound History：記錄未被 mention 的訊息，供下次觸發時注入
+      // Inbound History：記錄未被 mention 的訊息，供下次觸發時注入（僅 inject.enabled=true 時才記）
       const inboundStore = getInboundHistoryStore();
-      if (inboundStore && message.content.trim()) {
+      const inboundEnabled = config.inboundHistory?.inject?.enabled ?? false;
+      if (inboundStore && inboundEnabled && message.content.trim()) {
         const entry: InboundEntry = {
           ts: new Date().toISOString(),
           platform: "discord",
@@ -632,10 +633,12 @@ async function handleMessage(
             },
           );
           if (ctx) {
-            inboundContext = ctx;
+            inboundContext = ctx.text;
             trace.recordInboundHistory({
-              bucketA: 0, bucketB: 0,
-              tokens: Math.ceil(ctx.length / 4),
+              entriesCount: ctx.entriesCount,
+              bucketA: ctx.bucketA,
+              bucketB: ctx.bucketB,
+              tokens: Math.ceil(ctx.text.length / 4),
               decayIIApplied: false,
             });
           }

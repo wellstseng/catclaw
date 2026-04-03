@@ -87,7 +87,7 @@ export class InboundHistoryStore {
     channelId: string,
     cfg: InboundHistoryCfg = DEFAULT_CFG,
     ceProvider?: LLMProvider,
-  ): Promise<string | null> {
+  ): Promise<{ text: string; entriesCount: number; bucketA: number; bucketB: number } | null> {
     if (!cfg.inject.enabled) return null;
 
     const entries = this._readAll(channelId);
@@ -137,9 +137,9 @@ export class InboundHistoryStore {
 
     if (parts.length === 0) return null;
 
-    const result = `=== 頻道脈絡（未被處理的訊息） ===\n${parts.join("\n\n")}`;
+    const text = `=== 頻道脈絡（未被處理的訊息） ===\n${parts.join("\n\n")}`;
     log.debug(`[inbound-history] inject channel=${channelId} bucketA=${bucketA.length} bucketB=${bucketB.length}`);
-    return result;
+    return { text, entriesCount: entries.length, bucketA: bucketA.length, bucketB: bucketB.length };
   }
 
   // ── 公開查詢（Dashboard 用） ──────────────────────────────────────────────
@@ -167,6 +167,29 @@ export class InboundHistoryStore {
   /** 讀取指定 channel 的所有 pending entries */
   readEntries(channelId: string): InboundEntry[] {
     return this._readAll(channelId);
+  }
+
+  /** 清除指定 channel 的 pending entries，回傳清除數量 */
+  clearChannel(channelId: string): number {
+    const count = this._readAll(channelId).length;
+    this._clearFile(channelId);
+    return count;
+  }
+
+  /** 清除所有 channel 的 pending entries，回傳清除數量 */
+  clearAll(): number {
+    let count = 0;
+    try {
+      const files = readdirSync(this.storeDir).filter(f => f.endsWith(".jsonl"));
+      for (const f of files) {
+        const entries = this._readAllByFile(join(this.storeDir, f));
+        count += entries.length;
+        if (entries.length > 0) {
+          writeFileSync(join(this.storeDir, f), "", "utf-8");
+        }
+      }
+    } catch { /* 靜默 */ }
+    return count;
   }
 
   // ── 私有輔助 ──────────────────────────────────────────────────────────────
