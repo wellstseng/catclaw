@@ -596,17 +596,23 @@ function fmtCache(r, w) {
   return \`📖\${fmtK(r||0)} / ✏️\${fmtK(w||0)}\`;
 }
 
+let _traceAutoRefresh = null;
 function switchTab(id, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
   el.classList.add('active');
   document.getElementById('pane-' + id).classList.add('active');
+  // 切換 tab 時隱藏 trace detail
+  const detailCard = document.getElementById('trace-detail-card');
+  if (detailCard) detailCard.style.display = 'none';
+  // trace 自動刷新：進入 traces tab 啟動，離開停止
+  if (_traceAutoRefresh) { clearInterval(_traceAutoRefresh); _traceAutoRefresh = null; }
   if (id === 'sessions') { loadSessions(); loadInboundHistory(); }
   if (id === 'logs') connectLogStream();
   if (id !== 'logs') disconnectLogStream();
   if (id === 'ops') { loadSubagents(); }
   if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
-  if (id === 'traces') loadTraces();
+  if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 10000); }
   if (id === 'cron') loadCron();
   if (id === 'config') loadCfg();
 }
