@@ -3,6 +3,7 @@
 > 知識庫變更紀錄（最新在上，超過 8 筆觸發滾動淘汰）
 
 | 日期 | 變更 | 影響文件 |
+| 2026-04-04 | **plan: V5 計畫書 + CATCLAW.md 願景更新** — ①PLAN-V5.md：Claude Code vs CatClaw 全面 Gap Analysis + 6 Phase 實作計畫（Prompt Cache / Coding Discipline / Typed Agent / Task System / Prompt 組裝 / 多人平台）②CATCLAW.md 新增「平台願景」宣言 + 「高精密 Coding 規則」（先讀再改、最小變動、Git 安全協定、操作可逆性意識） | PLAN-V5.md(new), CATCLAW.md, _INDEX.md |
 | 2026-04-04 | **feat: 模型設定統一化** — models-config.json 為唯一真相源（primary/fallbacks/aliases/routing）。Dashboard 新增「模型設定」面板（切換 primary / routing CRUD）。config_get 改讀已解析 config（modelRouting 可查）。auth-profile-store provider 從 profileId fallback。ollama tool_calls 相容 Gemma 4。 | config.ts, dashboard.ts, config-get.ts, auth-profile-store.ts, ollama.ts, registry.ts, configure.ts, 02-CONFIG-REFERENCE.md |
 | 2026-04-03 | **feat: Session 管理功能** — ①Dashboard API 新增 4 端點（POST /api/sessions/clear、/delete、/compact、/purge-expired）②Dashboard UI 每個 session 加 Clear/Compact/Delete 按鈕 + 全域 Purge Expired 按鈕 ③新增 /session skill（list/clear/compact/purge/delete）④SessionManager 新增公開方法 clearMessages()、purgeExpired() | dashboard.ts, session.ts, session-manage.ts(new), modules/session.md, modules/skills.md |
 | 2026-04-02 | **feat: Message Lifecycle Trace** — 訊息全鏈路追蹤系統。7 階段追蹤（Inbound→Context→LLM Loop→CE→Abort→PostProcess→Response）。TraceStore JSONL 持久化（14 天 rolling）。Dashboard Traces 分頁（列表 + 點擊詳細 waterfall 視圖）。API: GET /api/traces, GET /api/traces/:traceId | message-trace.ts(new), agent-loop.ts, discord.ts, platform.ts, dashboard.ts |
