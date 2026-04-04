@@ -42,12 +42,7 @@ const PATCH_WHITELIST: string[] = [
   "memory.recall.vectorTopK",
   "memory.recall.triggerMatch",
   "rateLimit.*.*",
-  // 模型路由
-  "modelRouting.default",
-  "modelRouting.roles.*",
-  "modelRouting.projects.*",
-  "modelRouting.channels.*",
-  "modelRouting.fallbacks",
+  // 模型路由已遷移至 models-config.json，由 Dashboard 管理
   "cron.enabled",
   "cron.maxConcurrentRuns",
   "inboundHistory.inject.enabled",
@@ -87,11 +82,7 @@ const SCHEMA_MAP: Record<string, string> = {
   "cron.enabled":                      "啟用 cron 排程：true | false",
   "session.ttlHours":                  "Session 閒置 TTL（小時），預設 168（7天）",
   "session.maxHistoryTurns":           "Session 最大保留輪數",
-  "modelRouting.default":              "預設模型（alias 或 provider/model 格式）",
-  "modelRouting.roles.*":              "角色綁定模型（alias 或 provider/model 格式）",
-  "modelRouting.channels.*":           "頻道綁定模型（alias 或 provider/model 格式）",
-  "modelRouting.projects.*":           "專案綁定模型（alias 或 provider/model 格式）",
-  "modelRouting.fallbacks":            "降級模型清單（JSON 陣列）",
+  // 模型路由已遷移至 models-config.json，由 Dashboard 或 /configure 管理
 };
 
 // ── 工具函式 ─────────────────────────────────────────────────────────────────

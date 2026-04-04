@@ -38,12 +38,7 @@ const PATCH_WHITELIST = [
   "memory.recall.vectorTopK",
   "memory.recall.triggerMatch",
   "rateLimit.*.*",
-  // 模型路由
-  "modelRouting.default",
-  "modelRouting.roles.*",
-  "modelRouting.projects.*",
-  "modelRouting.channels.*",
-  "modelRouting.fallbacks",
+  // 模型路由已遷移至 models-config.json，由 Dashboard 管理
   "cron.enabled",
   "cron.maxConcurrentRuns",
   "inboundHistory.inject.enabled",
@@ -101,7 +96,7 @@ export const tool: Tool = {
     "需要 owner 權限（admin.allowedUserIds）。",
     "可修改的欄位（白名單）：discord guilds/channels 的 allow/requireMention/allowBot/allowFrom；",
     "debounceMs、logLevel、showToolCalls、memory.recall.*、",
-    "modelRouting.*、cron.enabled、session.ttlHours 等。",
+    "cron.enabled、session.ttlHours 等。模型路由請用 Dashboard 管理。",
     "禁止修改：token、apiKey、secret、password。",
     "value 為 JSON 格式：字串用引號如 \"\\\"info\\\"\"，布林用 true/false，數字直接傳。",
     "若不確定欄位名稱，先用 config_get 查看當前 config 結構。",
