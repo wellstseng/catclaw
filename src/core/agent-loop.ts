@@ -471,12 +471,12 @@ type BeforeToolResult =
   | { blocked: true; reason: string }
   | { blocked: false; params: Record<string, unknown>; warning?: string };
 
-function runBeforeToolCall(
+async function runBeforeToolCall(
   call: { id: string; name: string; params: Record<string, unknown> },
-  ctx: { accountId: string; role?: string; recentCalls: ToolCallRecord[]; readFiles?: Set<string> },
+  ctx: { accountId: string; role?: string; recentCalls: ToolCallRecord[]; readFiles?: Set<string>; sessionKey?: string; channelId?: string; toolTier?: string },
   permissionGate: PermissionGate,
   safetyGuard: SafetyGuard,
-): BeforeToolResult {
+): Promise<BeforeToolResult> {
   // 1. Permission Gate
   const perm = permissionGate.check(ctx.accountId, call.name);
   if (!perm.allowed) return { blocked: true, reason: perm.reason ?? "權限不足" };
@@ -518,11 +518,50 @@ function runBeforeToolCall(
   // 5. Reversibility Assessment
   const reversibility = assessReversibility(call.name, call.params);
   const reversibilityThreshold = config.safety?.reversibility?.threshold ?? 2;
-  if (reversibility.score >= reversibilityThreshold) {
-    return { blocked: false, params: call.params, warning: reversibility.warning };
+  const reversibilityWarning = reversibility.score >= reversibilityThreshold ? reversibility.warning : undefined;
+
+  // 6. External Hooks（PreToolUse）
+  const { getHookRegistry } = await import("../hooks/hook-registry.js");
+  const hookRegistry = getHookRegistry();
+  if (hookRegistry && hookRegistry.count("PreToolUse") > 0) {
+    const hookResult = await hookRegistry.runPreToolUse({
+      event: "PreToolUse",
+      toolName: call.name,
+      toolParams: call.params,
+      accountId: ctx.accountId,
+      sessionKey: ctx.sessionKey ?? "",
+      channelId: ctx.channelId ?? "",
+      toolTier: ctx.toolTier ?? "standard",
+    });
+    if (hookResult.blocked) return { blocked: true, reason: hookResult.reason };
+    return { blocked: false, params: hookResult.params, warning: reversibilityWarning };
   }
 
-  return { blocked: false, params: call.params };
+  return { blocked: false, params: call.params, warning: reversibilityWarning };
+}
+
+// ── PostToolUse Hook Helper ──────────────────────────────────────────────────
+
+async function runPostToolUseHook(
+  toolName: string,
+  toolParams: Record<string, unknown>,
+  toolResult: { result?: unknown; error?: string },
+  durationMs: number,
+  ctx: { accountId: string; sessionKey: string; channelId: string },
+): Promise<{ result?: unknown; error?: string }> {
+  const { getHookRegistry } = await import("../hooks/hook-registry.js");
+  const hookRegistry = getHookRegistry();
+  if (!hookRegistry || hookRegistry.count("PostToolUse") === 0) return toolResult;
+  return hookRegistry.runPostToolUse({
+    event: "PostToolUse",
+    toolName,
+    toolParams,
+    toolResult,
+    durationMs,
+    accountId: ctx.accountId,
+    sessionKey: ctx.sessionKey,
+    channelId: ctx.channelId,
+  });
 }
 
 // ── Agent Loop（主函式）────────────────────────────────────────────────────────
@@ -581,6 +620,15 @@ export async function* agentLoop(
   try {
 
   const session = sessionManager.getOrCreate(sessionKey, accountId, channelId, opts.provider.id);
+
+  // SessionStart hook（首次建立 session 時觸發）
+  if (session.turnCount === 0) {
+    const { getHookRegistry } = await import("../hooks/hook-registry.js");
+    const hookReg = getHookRegistry();
+    if (hookReg && hookReg.count("SessionStart") > 0) {
+      await hookReg.runSessionStart({ event: "SessionStart", sessionKey, accountId, channelId });
+    }
+  }
 
   // Session Snapshot（turn 開始前快照）
   const snapshotStore = getSessionSnapshotStore();
@@ -1029,9 +1077,9 @@ export async function* agentLoop(
           const params = call.params as Record<string, unknown>;
           const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId };
           const events: SpawnEvent[] = [];
-          const hookResult = runBeforeToolCall(
+          const hookResult = await runBeforeToolCall(
             { id: call.id, name: call.name, params },
-            { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls, readFiles },
+            { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls, readFiles, sessionKey, channelId, toolTier: toolRegistry.get(call.name)?.tier },
             permissionGate, safetyGuard,
           );
           if (hookResult.blocked) {
@@ -1047,8 +1095,11 @@ export async function* agentLoop(
           }
           eventBus.emit("tool:before", { id: call.id, name: call.name, params: hookResult.params });
           const t0 = Date.now();
-          const toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
+          let toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
           const durationMs = Date.now() - t0;
+          // PostToolUse hook
+          const postHookResult = await runPostToolUseHook(call.name, hookResult.params, toolResult, durationMs, { accountId, sessionKey, channelId });
+          if (postHookResult.result !== undefined) toolResult = { ...toolResult, result: postHookResult.result };
           if (toolResult.error) {
             eventBus.emit("tool:error", { id: call.id, name: call.name, params: hookResult.params }, new Error(toolResult.error));
           } else {
@@ -1099,9 +1150,9 @@ export async function* agentLoop(
           const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId };
           const events: AgentLoopEvent[] = [];
 
-          const hookResult = runBeforeToolCall(
+          const hookResult = await runBeforeToolCall(
             { id: call.id, name: call.name, params },
-            { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls, readFiles },
+            { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls, readFiles, sessionKey, channelId, toolTier: toolRegistry.get(call.name)?.tier },
             permissionGate, safetyGuard,
           );
           if (hookResult.blocked) {
@@ -1111,8 +1162,11 @@ export async function* agentLoop(
           if (opts.showToolCalls !== "none") events.push({ type: "tool_start", name: call.name, id: call.id, params: hookResult.params });
           eventBus.emit("tool:before", { id: call.id, name: call.name, params: hookResult.params });
           const t0 = Date.now();
-          const toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
+          let toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
           const durationMs = Date.now() - t0;
+          // PostToolUse hook
+          const postHookResult = await runPostToolUseHook(call.name, hookResult.params, toolResult, durationMs, { accountId, sessionKey, channelId });
+          if (postHookResult.result !== undefined) toolResult = { ...toolResult, result: postHookResult.result };
           if (toolResult.error) {
             eventBus.emit("tool:error", { id: call.id, name: call.name, params: hookResult.params }, new Error(toolResult.error));
           } else {
@@ -1163,9 +1217,9 @@ export async function* agentLoop(
         };
 
         // before_tool_call
-        const hookResult = runBeforeToolCall(
+        const hookResult = await runBeforeToolCall(
           { id: call.id, name: call.name, params },
-          { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls },
+          { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls, sessionKey, channelId, toolTier: toolRegistry.get(call.name)?.tier },
           permissionGate,
           safetyGuard,
         );
@@ -1234,8 +1288,11 @@ export async function* agentLoop(
         eventBus.emit("tool:before", { id: call.id, name: call.name, params: hookResult.params });
         const t0 = Date.now();
 
-        const toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
+        let toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
         const durationMs = Date.now() - t0;
+        // PostToolUse hook
+        const postHookResult = await runPostToolUseHook(call.name, hookResult.params, toolResult, durationMs, { accountId, sessionKey, channelId });
+        if (postHookResult.result !== undefined) toolResult = { ...toolResult, result: postHookResult.result };
 
         if (toolResult.error) {
           eventBus.emit("tool:error", { id: call.id, name: call.name, params: hookResult.params }, new Error(toolResult.error));
@@ -1430,6 +1487,15 @@ export async function* agentLoop(
     const traceStore = getTraceStore();
     if (traceStore) {
       traceStore.append(trace.finalize());
+    }
+  }
+
+  // SessionEnd hook
+  {
+    const { getHookRegistry } = await import("../hooks/hook-registry.js");
+    const hookReg = getHookRegistry();
+    if (hookReg && hookReg.count("SessionEnd") > 0) {
+      await hookReg.runSessionEnd({ event: "SessionEnd", sessionKey, accountId, channelId, turnCount: session.turnCount });
     }
   }
 

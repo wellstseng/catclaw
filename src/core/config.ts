@@ -613,6 +613,11 @@ export interface BridgeConfig {
     /** 此 server 所有 tools 的 tier（預設 elevated） */
     tier?: "public" | "standard" | "elevated" | "admin" | "owner";
   }>;
+  /**
+   * Hook 系統：在 agent-loop 關鍵時機點執行外部 shell command。
+   * 參考 Claude Code 的 PreToolUse / PostToolUse hooks 設計。
+   */
+  hooks?: import("../hooks/types.js").HookDefinition[];
 }
 
 // ── 環境變數展開 ──────────────────────────────────────────────────────────────
@@ -722,6 +727,7 @@ interface RawConfig {
     env?: Record<string, string>;
     tier?: "public" | "standard" | "elevated" | "admin" | "owner";
   }>;
+  hooks?: import("../hooks/types.js").HookDefinition[];
 }
 
 // ── 路徑解析 ──────────────────────────────────────────────────────────────────
@@ -1184,6 +1190,7 @@ function loadConfig(): BridgeConfig {
     } : undefined,
     promptAssembler: raw.promptAssembler,
     mcpServers: raw.mcpServers,
+    hooks: Array.isArray(raw.hooks) ? raw.hooks : undefined,
   };
 }
 
@@ -1311,6 +1318,10 @@ function reloadConfig(): void {
     }
     config = newConfig;
     setLogLevel(config.logLevel);
+    // Hook Registry hot-reload
+    import("../hooks/hook-registry.js").then(({ getHookRegistry }) => {
+      getHookRegistry()?.reload(config.hooks ?? []);
+    }).catch(() => { /* hooks 模組尚未初始化 */ });
     log.info("[config] hot-reload 完成");
   } catch (err) {
     log.warn(`[config] hot-reload 失敗，維持舊設定：${err instanceof Error ? err.message : String(err)}`);

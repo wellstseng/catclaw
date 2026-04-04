@@ -282,6 +282,17 @@ export async function initPlatform(
     log.info(`[platform] MCP servers 啟動：${Object.keys(config.mcpServers).join(",")}`);
   }
 
+  // ── 12. Hook Registry ──────────────────────────────────────────────────────
+  if (config.hooks && config.hooks.length > 0) {
+    const { initHookRegistry } = await import("../hooks/hook-registry.js");
+    initHookRegistry(config.hooks);
+    log.info(`[platform] Hook Registry 初始化：${config.hooks.length} 個 hooks`);
+  } else {
+    // 即使無 hooks 也初始化空 registry（讓 getHookRegistry 可用）
+    const { initHookRegistry } = await import("../hooks/hook-registry.js");
+    initHookRegistry([]);
+  }
+
   _ready = true;
   log.info(`[platform] 初始化完成 providers=${Object.keys(config.providers).join(",")}`);
 }

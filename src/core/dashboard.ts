@@ -1798,6 +1798,7 @@ async function loadTraces() {
     html += '<th style="text-align:center;padding:4px">' + tip('CE', 'Context Engineering 策略（compaction 等）') + '</th>';
     html += '<th style="text-align:center;padding:4px">Status</th>';
     html += '<th style="text-align:right;padding:4px">' + tip('Cost', '預估 API 費用（USD）') + '</th>';
+    html += '<th style="text-align:center;padding:4px">' + tip('Ctx', '有完整 Context Snapshot（system prompt + messages）') + '</th>';
     html += '<th style="text-align:left;padding:4px">Preview</th>';
     html += '</tr>';
     for (const t of d.traces) {
@@ -1820,6 +1821,8 @@ async function loadTraces() {
       html += '<td style="padding:4px;text-align:center">' + statusIcon + '</td>';
       const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
       html += '<td style="padding:4px;text-align:right;color:var(--warn)">' + cost + '</td>';
+      const ctxIcon = t.hasContextSnapshot ? '<span title="有 Context Snapshot，點擊查看" style="cursor:pointer">📋</span>' : '';
+      html += '<td style="padding:4px;text-align:center">' + ctxIcon + '</td>';
       html += '<td style="padding:4px;color:var(--fg2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prev + '</td>';
       html += '</tr>';
     }
