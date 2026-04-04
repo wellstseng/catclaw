@@ -9,6 +9,7 @@ export const tool: Tool = {
   name: "memory_recall",
   description: "搜尋記憶庫，取得相關知識片段（全域/專案/個人）",
   tier: "standard",
+  deferred: true,
   resultTokenCap: 2000,
   concurrencySafe: true,
   parameters: {

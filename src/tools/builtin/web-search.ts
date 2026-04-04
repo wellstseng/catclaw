@@ -68,6 +68,7 @@ export const tool: Tool = {
   resultTokenCap: 4000,
   timeoutMs: 15_000,
   concurrencySafe: true,
+  deferred: true,
   parameters: {
     type: "object",
     properties: {

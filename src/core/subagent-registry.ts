@@ -15,7 +15,7 @@ import { log } from "../logger.js";
 
 export type SubagentStatus = "running" | "completed" | "failed" | "killed" | "timeout";
 export type SubagentMode = "run" | "session";
-export type SubagentRuntime = "default" | "coding" | "acp";
+export type SubagentRuntime = "default" | "coding" | "acp" | "explore" | "plan" | "build" | "review" | (string & {});
 
 export interface SubagentRunRecord {
   runId: string;

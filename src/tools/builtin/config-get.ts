@@ -49,6 +49,7 @@ export const tool: Tool = {
     "path=\"discord.guilds\" 回傳所有 guild 設定。",
   ].join(" "),
   tier: "admin",
+  deferred: true,
   resultTokenCap: 1000,
   concurrencySafe: true,
   parameters: {

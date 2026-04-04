@@ -281,6 +281,7 @@ export class ClaudeApiProvider implements LLMProvider {
         maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
         signal: opts.abortSignal,
         temperature: opts.temperature,
+        cacheRetention: "long",
         ...(opts.thinking ? { reasoning: opts.thinking } : {}),
       });
 

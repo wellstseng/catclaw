@@ -75,6 +75,11 @@ export interface Tool {
   timeoutMs?: number;
   /** 是否可安全並行執行（唯讀 tool 設 true，寫入 tool 預設 false） */
   concurrencySafe?: boolean;
+  /**
+   * Deferred tool：不在 LLM tools 參數中注入完整 schema，
+   * 僅在 system prompt 列出名稱+描述。LLM 呼叫 tool_search 後才能使用。
+   */
+  deferred?: boolean;
   /** 執行函式 */
   execute(params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }
@@ -89,6 +94,8 @@ export interface ToolDefinition {
   /** 附帶 tier 供 listAvailable 使用（不傳 LLM，由 agent-loop 過濾） */
   tier: ToolTier;
   type: "tool";
+  /** Deferred tool：不在 tools 參數注入，僅在 system prompt 列出 */
+  deferred?: boolean;
 }
 
 /** 將 Tool 轉成 ToolDefinition（傳給 LLM） */
@@ -99,5 +106,6 @@ export function toDefinition(tool: Tool): ToolDefinition {
     input_schema: tool.parameters,
     tier: tool.tier,
     type: "tool",
+    ...(tool.deferred ? { deferred: true } : {}),
   };
 }

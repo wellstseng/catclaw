@@ -18,6 +18,7 @@ export const tool: Tool = {
   resultTokenCap: 2000,
   timeoutMs: 0,  // 自己管 timeout（params.timeoutMs），不受全域 30s 限制
   tier: "standard",
+  deferred: true,
   parameters: {
     type: "object",
     properties: {

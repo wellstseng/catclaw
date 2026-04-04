@@ -57,7 +57,7 @@ interface ChildRunOpts {
   childSessionKey: string;
   accountId: string;
   providerId?: string;
-  runtime: "default" | "coding" | "acp";
+  runtime: string;
   maxTurns: number;
   timeoutMs: number;
   signal: AbortSignal;
@@ -168,6 +168,7 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
     eventBus,
     getProviderRegistry,
   } = await getAgentLoopDeps();
+  const { getAgentType } = await import("../../core/agent-types.js");
 
   const sessionManager = getPlatformSessionManager();
   const permissionGate = getPlatformPermissionGate();
@@ -181,23 +182,20 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
     : providerRegistry.resolve();
   if (!provider) throw new Error("找不到可用的 provider");
 
-  // system prompt
-  let systemPrompt = `你是一個專門執行子任務的 agent。完成以下任務後請直接回傳結果。\n你沒有 spawn_subagent 工具。`;
+  // Agent Type：取得預定義的 system prompt + tool 白名單
+  const agentType = getAgentType(opts.runtime);
+  let systemPrompt = agentType.systemPrompt;
   if (opts.attachmentsDir) {
     systemPrompt += `\n\n可用附件目錄：${opts.attachmentsDir}`;
   }
 
-  if (opts.runtime === "coding") {
-    systemPrompt = `你是一個程式碼執行 agent。只使用 read_file / write_file / bash 工具。\n不要做社交互動，只做技術任務。`;
-  }
-
-  // 根據 runtime 篩選工具（coding 只用三種）
-  const codingToolNames = new Set(["read_file", "write_file", "run_command"]);
-  const filteredToolRegistry = opts.runtime === "coding"
+  // 根據 agent type 的 allowedTools 篩選工具
+  const allowedToolSet = agentType.allowedTools ? new Set(agentType.allowedTools) : null;
+  const filteredToolRegistry = allowedToolSet
     ? {
         ...toolRegistry,
-        all: () => toolRegistry.all().filter(t => codingToolNames.has(t.name)),
-        get: (name: string) => codingToolNames.has(name) ? toolRegistry.get(name) : undefined,
+        all: () => toolRegistry.all().filter(t => allowedToolSet.has(t.name)),
+        get: (name: string) => allowedToolSet.has(name) ? toolRegistry.get(name) : undefined,
         execute: toolRegistry.execute.bind(toolRegistry),
         register: toolRegistry.register.bind(toolRegistry),
         loadFromDirectory: toolRegistry.loadFromDirectory.bind(toolRegistry),
@@ -257,6 +255,7 @@ export const tool: Tool = {
 - async:true：立即回傳 runId，子 agent 背景執行，完成時推送 Discord 通知。
 多個任務可同時呼叫（同一輪並行執行，時間 = max(A,B)）。`,
   tier: "standard",
+  deferred: true,
   resultTokenCap: 4000,
   timeoutMs: 0,  // 自己管 timeout（params.timeoutMs），不受全域 30s 限制
   parameters: {
@@ -265,7 +264,7 @@ export const tool: Tool = {
       task:       { type: "string",  description: "子 agent 要執行的任務描述" },
       label:      { type: "string",  description: "任務標籤（用於顯示和通知，可選）" },
       provider:   { type: "string",  description: "指定 provider ID（預設繼承父）" },
-      runtime:    { type: "string",  description: "default | coding（精簡工具：read/write/bash）| acp（Claude CLI）" },
+      runtime:    { type: "string",  description: "default | coding | explore（唯讀搜尋）| plan（架構規劃）| build（程式碼建構）| review（程式碼審查）| acp（Claude CLI）" },
       maxTurns:   { type: "number",  description: "最大 turn 數（預設 10）" },
       timeoutMs:  { type: "number",  description: "逾時毫秒（預設 120000）" },
       async:      { type: "boolean", description: "true = 立即回傳 runId，背景執行（預設 false）" },
@@ -298,7 +297,7 @@ export const tool: Tool = {
     const task       = String(params["task"] ?? "").trim();
     const label      = params["label"] ? String(params["label"]) : undefined;
     const providerId = params["provider"] ? String(params["provider"]) : undefined;
-    const runtime    = (params["runtime"] as "default" | "coding" | "acp") ?? "default";
+    const runtime    = String(params["runtime"] ?? "default");
     const maxTurns   = typeof params["maxTurns"] === "number" ? params["maxTurns"] : 10;
     const timeoutMs  = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : 120_000;
     const isAsync          = params["async"] === true;

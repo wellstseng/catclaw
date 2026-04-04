@@ -518,12 +518,19 @@ export async function* agentLoop(
     { role: "user", content: firstUserContent },
   ];
 
-  // ── 3. Tool list（物理過濾）─────────────────────────────────────────────────
-  let toolDefs = permissionGate.listAvailable(accountId);
+  // ── 3. Tool list（物理過濾 + deferred 分離）────────────────────────────────
+  const allToolDefs = permissionGate.listAvailable(accountId);
   // allowSpawn:false → 邏輯面過濾，子 agent 看不到 spawn_subagent
-  if (!allowSpawn) {
-    toolDefs = toolDefs.filter(d => d.name !== "spawn_subagent");
-  }
+  const filteredDefs = !allowSpawn
+    ? allToolDefs.filter(d => d.name !== "spawn_subagent")
+    : allToolDefs;
+
+  // Deferred Tool Loading：eager = 完整 schema 注入 tools 參數；deferred = 僅名稱+描述注入 system prompt
+  let eagerDefs = filteredDefs.filter(d => !d.deferred);
+  const deferredDefs = filteredDefs.filter(d => d.deferred);
+  // 追蹤已載入的 deferred tools（tool_search 後加入）
+  const loadedDeferredNames = new Set<string>();
+  let toolDefs = eagerDefs;
 
   // ── 3b. Memory Recall（可選，供子 agent 等無前置 recall 的情境使用）──────────
   let memoryContextBlock = "";
@@ -553,6 +560,20 @@ export async function* agentLoop(
   if (opts.isGroupChannel && opts.speakerDisplay) {
     const isolation = `[多人頻道] 當前說話者：${opts.speakerDisplay}（${accountId}/${opts.speakerRole ?? "member"}）`;
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${isolation}` : isolation;
+  }
+
+  // ── 4a. Deferred Tool Listing（system prompt 注入 deferred tool 名稱+描述）──
+  if (deferredDefs.length > 0) {
+    const listing = deferredDefs
+      .map(d => `- ${d.name}: ${d.description.split("\n")[0]}`)
+      .join("\n");
+    const deferredBlock = [
+      "The following deferred tools are available via tool_search:",
+      listing,
+      "Call tool_search with the tool name(s) to get full parameter schema before using them.",
+    ].join("\n");
+    systemPrompt = systemPrompt ? `${systemPrompt}\n\n${deferredBlock}` : deferredBlock;
+    log.debug(`[agent-loop] deferred tools: ${deferredDefs.map(d => d.name).join(", ")}`);
   }
 
   // ── 4b. Token Budget Nudge（參考 Claude Code tokenBudget.ts）────────────────
@@ -1081,6 +1102,22 @@ export async function* agentLoop(
           result: toolResult.result,
           error: toolResult.error,
         };
+      }
+
+      // ── Deferred Tool Activation：tool_search 呼叫後，將匹配的 deferred tool 加入 toolDefs ──
+      for (const call of streamResult.toolCalls) {
+        if (call.name !== "tool_search") continue;
+        // 從 tool_search 查詢結果找出匹配的 deferred tool 名稱
+        const query = String((call.params as Record<string, unknown>)["query"] ?? "");
+        const names = query.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+        for (const def of deferredDefs) {
+          if (loadedDeferredNames.has(def.name)) continue;
+          if (names.includes(def.name.toLowerCase()) || names.some(n => def.name.toLowerCase().includes(n) || def.description.toLowerCase().includes(n))) {
+            toolDefs.push(def);
+            loadedDeferredNames.add(def.name);
+            log.debug(`[agent-loop] deferred tool activated: ${def.name}`);
+          }
+        }
       }
 
       // 把 tool results 加入 messages
