@@ -121,8 +121,19 @@ export class SafetyGuard {
       ...(cfg?.filesystem?.credentialPatterns ?? []).map(s => new RegExp(s, "i")),
     ];
 
-    // 工具權限規則
-    this.toolRules = cfg?.toolPermissions?.rules ?? [];
+    // 工具權限規則（支援 shorthand 和標準格式混用）
+    this.toolRules = (cfg?.toolPermissions?.rules ?? []).map(rule => {
+      // 如果 tool 欄位包含括號，展開 shorthand
+      if (rule.tool.includes("(")) {
+        const parsed = SafetyGuard.parseShorthand(rule.tool);
+        return {
+          ...rule,
+          tool: parsed.tool,
+          paramMatch: { ...parsed.paramMatch, ...rule.paramMatch },
+        };
+      }
+      return rule;
+    });
     this.toolDefaultAllow = cfg?.toolPermissions?.defaultAllow ?? true;
   }
 
@@ -214,6 +225,43 @@ export class SafetyGuard {
     if (!pattern.includes("*")) return pattern === toolName;
     const re = new RegExp("^" + pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
     return re.test(toolName);
+  }
+
+  // ── Config shorthand 解析（Claude Code 風格） ─────────────────────────────
+
+  /**
+   * 解析 Claude Code 風格的 shorthand pattern：
+   *   "run_command(git *)" → { tool: "run_command", paramMatch: { command: "^git " } }
+   *   "read_file(*.env)"  → { tool: "read_file", paramMatch: { path: "\\.env$" } }
+   *   "write_*"           → { tool: "write_*" }
+   *
+   * 括號內的 pattern 自動對應到該 tool 的主要參數：
+   *   run_command → command, read_file/write_file/edit_file → path, glob → pattern, grep → pattern
+   */
+  static parseShorthand(shorthand: string): { tool: string; paramMatch?: Record<string, string> } {
+    const match = shorthand.match(/^([a-zA-Z_*]+)\((.+)\)$/);
+    if (!match) return { tool: shorthand };
+
+    const tool = match[1];
+    const paramPattern = match[2];
+
+    // 將 glob-style pattern 轉為 regex
+    const regex = paramPattern
+      .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*");
+
+    // 根據 tool 名稱推斷主要參數
+    const TOOL_PRIMARY_PARAM: Record<string, string> = {
+      run_command: "command",
+      read_file: "path",
+      write_file: "path",
+      edit_file: "path",
+      glob: "pattern",
+      grep: "pattern",
+    };
+
+    const paramKey = TOOL_PRIMARY_PARAM[tool] ?? "command";
+    return { tool, paramMatch: { [paramKey]: regex } };
   }
 
   // ── Bash 指令檢查 ──────────────────────────────────────────────────────────
