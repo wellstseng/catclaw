@@ -127,7 +127,7 @@ export class OpenAICompatProvider implements LLMProvider {
     // 解析 OpenAI SSE 串流
     const events: ProviderEvent[] = [];
     let finalText = "";
-    let finalStopReason: "end_turn" | "tool_use" = "end_turn";
+    let finalStopReason: "end_turn" | "tool_use" | "max_tokens" = "end_turn";
     const toolCalls: ToolCall[] = [];
     let usageInput = 0;
     let usageOutput = 0;
@@ -320,7 +320,7 @@ function processOpenAIChunk(chunk: OpenAIChunk, toolCalls: ToolCall[]): Provider
       return { type: "done", stopReason: "tool_use", text: "" };
     }
     argBuffers.clear();
-    return { type: "done", stopReason: "end_turn", text: "" };
+    return { type: "done", stopReason: choice.finish_reason === "length" ? "max_tokens" : "end_turn", text: "" };
   }
 
   return null;

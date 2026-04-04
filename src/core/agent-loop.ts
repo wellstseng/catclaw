@@ -74,6 +74,7 @@ function toolResultPreview(result: unknown, error?: string): string {
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
 const MAX_LOOPS = 20;
+const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最多自動續接次數
 const DEFAULT_RESULT_TOKEN_CAP = 8000;   // 1 token ≈ 4 chars → 32000 chars
 
 // ── Tool result 截斷 ──────────────────────────────────────────────────────────
@@ -595,6 +596,7 @@ export async function* agentLoop(
 
   const tracker = new TurnTracker();
   let loopCount = 0;
+  let continuationCount = 0;  // Output Token Recovery 續接計數
   const turnStartMs = Date.now();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -715,6 +717,24 @@ export async function* agentLoop(
 
       if (controller.signal.aborted) break;
       if (streamResult.stopReason === "end_turn") break;
+
+      // ── Output Token Recovery：截斷偵測 + 自動續接 ────────────────────────
+      if (streamResult.stopReason === "max_tokens") {
+        continuationCount++;
+        if (continuationCount > MAX_CONTINUATIONS) {
+          log.warn(`[agent-loop] max_tokens 續接已達上限 (${MAX_CONTINUATIONS})，結束 turn`);
+          break;
+        }
+        log.info(`[agent-loop] [loop=${loopCount}] output 被截斷（max_tokens），自動續接 (${continuationCount}/${MAX_CONTINUATIONS})`);
+        // 將截斷的 assistant 回覆加入 messages，再送 user "繼續" 讓 LLM 接著寫
+        const partialText = tracker.getFullResponse();
+        if (partialText) {
+          messages.push({ role: "assistant", content: partialText, tokens: streamResult.usage.output > 0 ? streamResult.usage.output : undefined });
+        }
+        messages.push({ role: "user", content: "繼續" });
+        continue;  // 回到 while loop 頂部，再次呼叫 LLM
+      }
+
       if (streamResult.stopReason !== "tool_use") break;
       if (streamResult.toolCalls.length === 0) break;
 

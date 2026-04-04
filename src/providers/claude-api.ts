@@ -272,7 +272,7 @@ export class ClaudeApiProvider implements LLMProvider {
     const events: ProviderEvent[] = [];
     const toolCalls: ToolCall[] = [];
     let finalText = "";
-    let finalStopReason: "end_turn" | "tool_use" = "end_turn";
+    let finalStopReason: "end_turn" | "tool_use" | "max_tokens" = "end_turn";
     let finalUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number } | undefined;
 
     try {
@@ -359,11 +359,13 @@ export class ClaudeApiProvider implements LLMProvider {
 
       case "done": {
         const msg = event.message;
-        const isToolUse = msg.stopReason === "toolUse";
+        const sr = msg.stopReason === "toolUse" ? "tool_use"
+          : msg.stopReason === "length" ? "max_tokens"
+          : "end_turn";
         const text = msg.content
           .filter((c): c is { type: "text"; text: string } => c.type === "text")
           .map(c => c.text).join("");
-        return { type: "done", stopReason: isToolUse ? "tool_use" : "end_turn", text, usage: msg.usage };
+        return { type: "done", stopReason: sr, text, usage: msg.usage };
       }
 
       case "error":

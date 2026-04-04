@@ -247,7 +247,7 @@ export class CodexOAuthProvider implements LLMProvider {
 
     const events: ProviderEvent[] = [];
     let finalText = "";
-    let finalStopReason: "end_turn" | "tool_use" = "end_turn";
+    let finalStopReason: "end_turn" | "tool_use" | "max_tokens" = "end_turn";
     const toolCalls: ToolCall[] = [];
 
     await parseResponsesApiStream(response.body, (chunk) => {
@@ -397,9 +397,19 @@ function processResponsesChunk(chunk: ResponsesChunk, toolCalls: ToolCall[]): Pr
       return null;
 
     // 完成
-    case "response.completed":
+    case "response.completed": {
       argBuffers.clear();
-      return { type: "done", stopReason: toolCalls.length > 0 ? "tool_use" : "end_turn", text: "" };
+      const status = chunk.response?.status;
+      const sr = toolCalls.length > 0 ? "tool_use"
+        : status === "incomplete" ? "max_tokens"
+        : "end_turn";
+      return { type: "done", stopReason: sr, text: "" };
+    }
+
+    // 截斷（incomplete 也可能單獨事件）
+    case "response.incomplete":
+      argBuffers.clear();
+      return { type: "done", stopReason: "max_tokens", text: "" };
 
     // 失敗
     case "response.failed":

@@ -100,7 +100,7 @@ export type ProviderEvent =
   | { type: "thinking_delta";      thinking: string }
   | { type: "tool_use";            id: string; name: string; params: object }
   | { type: "tool_result_needed";  stopReason: "tool_use"; toolCalls: ToolCall[] }
-  | { type: "done";                stopReason: "end_turn" | "tool_use"; text: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number } }
+  | { type: "done";                stopReason: "end_turn" | "tool_use" | "max_tokens"; text: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number } }
   | { type: "error";               message: string };
 
 /** Provider 回傳的 token 用量（必填，無法取得時用估算值） */
@@ -124,7 +124,7 @@ export interface ProviderUsage {
 
 export interface StreamResult {
   events: AsyncIterable<ProviderEvent>;
-  stopReason: "end_turn" | "tool_use";
+  stopReason: "end_turn" | "tool_use" | "max_tokens";
   toolCalls: ToolCall[];
   text: string;
   /** 實際 token 用量（無法取得時為估算值，input/output 由字元數 ÷4 估算） */

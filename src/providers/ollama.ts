@@ -44,6 +44,7 @@ interface OllamaChunk {
     tool_calls?: Array<{ function: { name: string; arguments: object } }>;
   };
   done: boolean;
+  done_reason?: string;  // "stop" | "length" | "load"
   prompt_eval_count?: number;
   eval_count?: number;
 }
@@ -165,7 +166,7 @@ export class OllamaProvider implements LLMProvider {
     // 解析 NDJSON 串流
     const events: ProviderEvent[] = [];
     let finalText = "";
-    let finalStopReason: "end_turn" | "tool_use" = "end_turn";
+    let finalStopReason: "end_turn" | "tool_use" | "max_tokens" = "end_turn";
     const toolCalls: ToolCall[] = [];
     let promptEvalCount = 0;
     let evalCount = 0;
@@ -194,6 +195,10 @@ export class OllamaProvider implements LLMProvider {
       if (chunk.done) {
         promptEvalCount = chunk.prompt_eval_count ?? 0;
         evalCount = chunk.eval_count ?? 0;
+        // Ollama done_reason: "stop" = 正常結束, "length" = num_predict 截斷
+        if (chunk.done_reason === "length" && finalStopReason !== "tool_use") {
+          finalStopReason = "max_tokens";
+        }
         events.push({ type: "done", stopReason: finalStopReason, text: finalText });
       }
     });
