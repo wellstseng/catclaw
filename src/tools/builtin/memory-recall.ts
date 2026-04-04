@@ -10,6 +10,7 @@ export const tool: Tool = {
   description: "搜尋記憶庫，取得相關知識片段（全域/專案/個人）",
   tier: "standard",
   resultTokenCap: 2000,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

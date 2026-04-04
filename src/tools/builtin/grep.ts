@@ -58,6 +58,7 @@ export const tool: Tool = {
   description: "在檔案內容中搜尋正規表達式。支援 -i（大小寫不敏感）和 glob 檔案過濾。",
   tier: "elevated",
   resultTokenCap: 2000,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

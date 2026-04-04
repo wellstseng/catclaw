@@ -14,6 +14,7 @@ export const tool: Tool = {
   description: "讀取檔案內容",
   tier: "elevated",
   resultTokenCap: 4000,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

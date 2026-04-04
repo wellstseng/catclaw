@@ -48,6 +48,7 @@ export const tool: Tool = {
   ].join(" "),
   tier: "admin",
   resultTokenCap: 1000,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

@@ -59,6 +59,7 @@ export const tool: Tool = {
   tier: "elevated",
   resultTokenCap: 8000,
   timeoutMs: 20_000,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

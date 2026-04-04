@@ -393,6 +393,8 @@ export async function* agentLoop(
   const platform = opts.platform ?? "discord";
   const spawnDepth = opts.spawnDepth ?? 0;
   const trace = opts.trace;
+  // Post-compact recovery：追蹤最近編輯的檔案（最多 5 個），壓縮後重新注入
+  const recentlyEditedFiles: string[] = [];
   // allowSpawn: depth ≥ 2 強制 false（最多 3 層）；opts.allowSpawn 明確 false 也關閉
   const allowSpawn = opts.allowSpawn !== false && spawnDepth < 2;
 
@@ -580,6 +582,30 @@ export async function* agentLoop(
       }
       messages = repairToolPairing(messages);
       log.info(`[agent-loop:autoCompact] 壓縮後 messages=${messages.length} tokens≈${contextEngine.estimateTokens(messages)}`);
+
+      // Post-compact recovery：注入最近編輯檔案的內容摘要
+      if (recentlyEditedFiles.length > 0) {
+        const { existsSync, readFileSync } = await import("node:fs");
+        const recoveryParts: string[] = [];
+        for (const filePath of recentlyEditedFiles) {
+          if (!existsSync(filePath)) continue;
+          try {
+            const content = readFileSync(filePath, "utf-8");
+            const lines = content.split("\n");
+            const preview = lines.length > 50
+              ? lines.slice(0, 30).join("\n") + `\n... (共 ${lines.length} 行，已截斷)`
+              : content;
+            recoveryParts.push(`=== ${filePath} ===\n${preview}`);
+          } catch { /* 讀取失敗跳過 */ }
+        }
+        if (recoveryParts.length > 0) {
+          messages.push({
+            role: "user",
+            content: `[壓縮後恢復] 以下是你最近編輯的檔案，供你參考：\n\n${recoveryParts.join("\n\n")}`,
+          });
+          log.info(`[agent-loop:postCompact] 恢復了 ${recoveryParts.length} 個最近編輯檔案`);
+        }
+      }
     }
   }
 
@@ -636,6 +662,16 @@ export async function* agentLoop(
       () => eventBus.off("file:modified", onFileModified),
     );
   }
+
+  // Post-compact recovery：追蹤檔案修改（獨立於 trace）
+  const _onFileEditForRecovery = (path: string) => {
+    const idx = recentlyEditedFiles.indexOf(path);
+    if (idx !== -1) recentlyEditedFiles.splice(idx, 1);
+    recentlyEditedFiles.push(path);
+    if (recentlyEditedFiles.length > 5) recentlyEditedFiles.shift();
+  };
+  eventBus.on("file:modified", _onFileEditForRecovery);
+  _wfListeners.push(() => eventBus.off("file:modified", _onFileEditForRecovery));
 
   log.debug(`[agent-loop] ── turn 開始 ── sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
 
@@ -823,9 +859,70 @@ export async function* agentLoop(
         }
       }
 
+      // ── Batch Partition：concurrencySafe tool 並行，其餘串行 ──────────────
       const serialCalls = spawnCalls.length > 1 ? otherCalls : streamResult.toolCalls;
+      const concurrentCalls = serialCalls.filter(tc => toolRegistry.get(tc.name)?.concurrencySafe === true);
+      const sequentialCalls = serialCalls.filter(tc => toolRegistry.get(tc.name)?.concurrencySafe !== true);
 
-      for (const call of serialCalls) {
+      // 並行執行 concurrencySafe tools（read_file, glob, grep 等）
+      if (concurrentCalls.length > 1) {
+        type BatchResult = {
+          toolResult: { tool_use_id: string; content: string; is_error: boolean };
+          events: AgentLoopEvent[];
+          toolRecord: { name: string; params: unknown; result: unknown; error?: string; durationMs: number };
+          fileModified?: { path: string; tool: string };
+        };
+        const batchResults = await Promise.all(concurrentCalls.map(async (call): Promise<BatchResult> => {
+          const params = call.params as Record<string, unknown>;
+          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId };
+          const events: AgentLoopEvent[] = [];
+
+          const hookResult = runBeforeToolCall(
+            { id: call.id, name: call.name, params },
+            { accountId, role: opts.speakerRole, recentCalls: tracker.toolCalls },
+            permissionGate, safetyGuard,
+          );
+          if (hookResult.blocked) {
+            events.push({ type: "tool_blocked", name: call.name, reason: hookResult.reason });
+            return { toolResult: { tool_use_id: call.id, content: `錯誤：${hookResult.reason}`, is_error: true }, events, toolRecord: { name: call.name, params, result: null, error: hookResult.reason, durationMs: 0 } };
+          }
+          if (opts.showToolCalls !== "none") events.push({ type: "tool_start", name: call.name, id: call.id, params: hookResult.params });
+          eventBus.emit("tool:before", { id: call.id, name: call.name, params: hookResult.params });
+          const t0 = Date.now();
+          const toolResult = await toolRegistry.execute(call.name, hookResult.params, toolCtx);
+          const durationMs = Date.now() - t0;
+          if (toolResult.error) {
+            eventBus.emit("tool:error", { id: call.id, name: call.name, params: hookResult.params }, new Error(toolResult.error));
+          } else {
+            eventBus.emit("tool:after", { id: call.id, name: call.name, params: hookResult.params }, toolResult);
+          }
+          const rawText = toolResult.error ? `錯誤：${toolResult.error}` : JSON.stringify(toolResult.result ?? null);
+          const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
+          const resultText = truncateToolResult(rawText, tokenCap);
+          events.push({ type: "tool_result", name: call.name, id: call.id, result: toolResult.result, error: toolResult.error });
+          return {
+            toolResult: { tool_use_id: call.id, content: resultText, is_error: Boolean(toolResult.error) },
+            events,
+            toolRecord: { name: call.name, params: hookResult.params, result: toolResult.result, error: toolResult.error, durationMs },
+            fileModified: toolResult.fileModified && toolResult.modifiedPath ? { path: toolResult.modifiedPath, tool: call.name } : undefined,
+          };
+        }));
+
+        for (const batch of batchResults) {
+          for (const evt of batch.events) yield evt;
+          toolResults.push(batch.toolResult);
+          turnToolResultTokens += Math.ceil(batch.toolResult.content.length / 4);
+          tracker.recordToolCall(batch.toolRecord.name, batch.toolRecord.params, batch.toolRecord.result, batch.toolRecord.error, batch.toolRecord.durationMs);
+          trace?.recordToolCall({ name: batch.toolRecord.name, durationMs: batch.toolRecord.durationMs, error: batch.toolRecord.error, resultPreview: toolResultPreview(batch.toolRecord.result, batch.toolRecord.error), paramsPreview: toolParamsPreview(batch.toolRecord.name, batch.toolRecord.params) });
+          if (batch.fileModified) eventBus.emit("file:modified", batch.fileModified.path, batch.fileModified.tool, accountId);
+        }
+        log.debug(`[agent-loop] batch-partition: ${concurrentCalls.length} 個 concurrencySafe tool 已並行完成`);
+      } else {
+        // 單個 concurrencySafe tool 歸入 sequential
+        sequentialCalls.unshift(...concurrentCalls);
+      }
+
+      for (const call of sequentialCalls) {
         const params = call.params as Record<string, unknown>;
         const toolCtx: ToolContext = {
           accountId,
