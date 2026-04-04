@@ -258,6 +258,7 @@ export const tool: Tool = {
 多個任務可同時呼叫（同一輪並行執行，時間 = max(A,B)）。`,
   tier: "standard",
   resultTokenCap: 4000,
+  timeoutMs: 0,  // 自己管 timeout（params.timeoutMs），不受全域 30s 限制
   parameters: {
     type: "object",
     properties: {

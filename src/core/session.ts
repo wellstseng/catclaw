@@ -18,7 +18,7 @@ import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { log } from "../logger.js";
 import type { Message } from "../providers/base.js";
-import type { SessionConfig } from "./config.js";
+import { config, type SessionConfig } from "./config.js";
 
 type SessionEventBus = {
   emit(event: "session:end", sessionId: string): boolean;
@@ -50,7 +50,8 @@ export interface TurnRequest {
 // ── SessionManager ────────────────────────────────────────────────────────────
 
 const TURN_QUEUE_MAX_DEPTH  = 5;
-const TURN_QUEUE_TIMEOUT_MS = 60_000;
+// 佇列排隊超時：至少 120s，但不超過 turnTimeoutMs（預設 300s）
+const TURN_QUEUE_TIMEOUT_MS_DEFAULT = 120_000;
 const MAX_HISTORY_TURNS_DEFAULT = 50;
 
 export class SessionManager {
@@ -240,17 +241,18 @@ export class SessionManager {
       queue.push(entry);
       this.queues.set(sessionKey, queue);
 
-      // 超時自動移出
+      // 超時自動移出（跟隨 turnTimeoutMs，至少 120s）
+      const queueTimeoutMs = Math.max(config.turnTimeoutMs ?? 300_000, TURN_QUEUE_TIMEOUT_MS_DEFAULT);
       const timeoutId = setTimeout(() => {
         const q = this.queues.get(sessionKey);
         if (q) {
           const idx = q.indexOf(entry);
           if (idx >= 0) {
             q.splice(idx, 1);
-            reject(new Error("TIMEOUT: 排隊超過 60s，自動移出"));
+            reject(new Error(`TIMEOUT: 排隊超過 ${Math.round(queueTimeoutMs / 1000)}s，自動移出`));
           }
         }
-      }, TURN_QUEUE_TIMEOUT_MS);
+      }, queueTimeoutMs);
 
       // 若是第一個 → 立即 resolve（不等待）
       if (queue.length === 1) {

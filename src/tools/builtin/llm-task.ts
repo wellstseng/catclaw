@@ -16,6 +16,7 @@ export const tool: Tool = {
 不使用 tools、不累積 session，比 spawn_subagent 更輕量。
 適合：分類、評分、摘要、條件判斷、結構化資料抽取。`,
   resultTokenCap: 2000,
+  timeoutMs: 0,  // 自己管 timeout（params.timeoutMs），不受全域 30s 限制
   tier: "standard",
   parameters: {
     type: "object",
