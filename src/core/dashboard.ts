@@ -8,6 +8,7 @@
  *        GET /api/config  POST /api/config
  *        POST /api/sessions/clear  POST /api/sessions/delete
  *        POST /api/sessions/compact  POST /api/sessions/purge-expired
+ *        POST /api/trigger
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -2982,6 +2983,145 @@ export class DashboardServer {
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: true, purgedCount: count }));
         } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
+        return;
+      }
+
+      // POST /api/trigger — 從外部觸發 CatClaw agent 任務（Remote Dispatch）
+      if (url === "/api/trigger" && method === "POST") {
+        const chunks: Buffer[] = [];
+        let sz = 0;
+        req.on("data", (c: Buffer) => { sz += c.length; if (sz < 131072) chunks.push(c); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as Record<string, unknown>;
+              const task = String(body["task"] ?? "").trim();
+              if (!task) { res.writeHead(400); res.end(JSON.stringify({ error: "task is required" })); return; }
+
+              const channelId = String(body["channelId"] ?? body["channel_id"] ?? "trigger-api");
+              const accountId = String(body["accountId"] ?? body["account_id"] ?? "api-trigger");
+              const providerId = body["provider"] ? String(body["provider"]) : undefined;
+              const runtime = String(body["runtime"] ?? "default");
+              const maxTurns = typeof body["maxTurns"] === "number" ? body["maxTurns"] : 10;
+              const timeoutMs = typeof body["timeoutMs"] === "number" ? body["timeoutMs"] : 120_000;
+              const isAsync = body["async"] !== false; // 預設非同步
+
+              const { getSubagentRegistry } = await import("./subagent-registry.js");
+              const registry = getSubagentRegistry();
+              if (!registry) { res.writeHead(500); res.end(JSON.stringify({ error: "SubagentRegistry not initialized" })); return; }
+
+              // 建立 subagent record
+              const record = registry.create({
+                parentSessionKey: `trigger:${channelId}`,
+                task,
+                label: body["label"] ? String(body["label"]) : `API trigger: ${task.slice(0, 40)}`,
+                mode: "run",
+                runtime,
+                async: true,
+                keepSession: false,
+                discordChannelId: channelId,
+                accountId,
+              });
+
+              // 延遲 import 避免循環依賴
+              const { agentLoop } = await import("./agent-loop.js");
+              const { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRegistry, getPlatformSafetyGuard } = await import("./platform.js");
+              const { eventBus } = await import("./event-bus.js");
+              const { getProviderRegistry } = await import("../providers/registry.js");
+              const { getAgentType } = await import("./agent-types.js");
+
+              const providerRegistry = getProviderRegistry();
+              const provider = providerId
+                ? (providerRegistry.get(providerId) ?? providerRegistry.resolve())
+                : providerRegistry.resolve();
+              if (!provider) { res.writeHead(500); res.end(JSON.stringify({ error: "No provider available" })); return; }
+
+              const agentType = getAgentType(runtime);
+
+              // 背景執行
+              const runFn = async () => {
+                let fullText = "";
+                let turnCount = 0;
+                const loopGen = agentLoop(task, {
+                  platform: "api-trigger",
+                  channelId: record.childSessionKey,
+                  accountId,
+                  provider,
+                  systemPrompt: agentType.systemPrompt,
+                  signal: record.abortController.signal,
+                  turnTimeoutMs: timeoutMs as number,
+                  allowSpawn: false,
+                  _sessionKeyOverride: record.childSessionKey,
+                }, {
+                  sessionManager: getPlatformSessionManager(),
+                  permissionGate: getPlatformPermissionGate(),
+                  toolRegistry: getPlatformToolRegistry(),
+                  safetyGuard: getPlatformSafetyGuard(),
+                  eventBus,
+                });
+                for await (const event of loopGen) {
+                  if (event.type === "text_delta") fullText += event.text;
+                  if (event.type === "done") { turnCount = event.turnCount; break; }
+                  if (event.type === "error") throw new Error(event.message);
+                }
+                registry.complete(record.runId, fullText, turnCount);
+                log.info(`[trigger-api] completed runId=${record.runId} turns=${turnCount}`);
+              };
+
+              if (isAsync) {
+                // 非同步：立即回傳 runId
+                runFn().catch(err => {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  registry.fail(record.runId, msg);
+                  log.warn(`[trigger-api] failed runId=${record.runId}: ${msg}`);
+                });
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: true, runId: record.runId, sessionKey: record.childSessionKey }));
+              } else {
+                // 同步：等待完成
+                try {
+                  await runFn();
+                  const rec = registry.get(record.runId);
+                  res.writeHead(200, { "Content-Type": "application/json" });
+                  res.end(JSON.stringify({ success: true, runId: record.runId, result: rec?.result ?? "", turns: rec?.turns ?? 0 }));
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  res.writeHead(500, { "Content-Type": "application/json" });
+                  res.end(JSON.stringify({ success: false, runId: record.runId, error: msg }));
+                }
+              }
+            } catch (err) {
+              res.writeHead(400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: String(err) }));
+            }
+          })();
+        });
+        return;
+      }
+
+      // GET /api/trigger/:runId — 查詢 trigger 任務狀態
+      if (url.startsWith("/api/trigger/") && method === "GET") {
+        void (async () => {
+          try {
+            const runId = url.split("/api/trigger/")[1]?.split("?")[0] ?? "";
+            const { getSubagentRegistry } = await import("./subagent-registry.js");
+            const registry = getSubagentRegistry();
+            const rec = registry?.get(runId);
+            if (!rec) { res.writeHead(404); res.end(JSON.stringify({ error: "runId not found" })); return; }
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              runId: rec.runId,
+              status: rec.status,
+              result: rec.result,
+              turns: rec.turns,
+              createdAt: rec.createdAt,
+              endedAt: rec.endedAt,
+              label: rec.label,
+            }));
+          } catch (err) {
+            res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+          }
+        })();
         return;
       }
 

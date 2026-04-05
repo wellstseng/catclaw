@@ -26,6 +26,8 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   /** 此 server 所有 tools 的預設 tier（預設 elevated） */
   tier?: ToolTier;
+  /** 是否以 deferred 模式註冊（預設 true，不注入完整 schema 到 LLM context） */
+  deferred?: boolean;
 }
 
 interface JsonRpcRequest {
@@ -212,6 +214,7 @@ export class McpClient {
 
   private _registerTools(): void {
     const tier = this.cfg.tier ?? "elevated";
+    const deferred = this.cfg.deferred !== false; // 預設 true
     for (const mcpTool of this.tools) {
       const toolName = `mcp_${this.serverName}_${mcpTool.name}`;
       const client = this;
@@ -220,6 +223,7 @@ export class McpClient {
         name: toolName,
         description: mcpTool.description ?? `MCP tool ${mcpTool.name} from ${this.serverName}`,
         tier,
+        deferred,
         parameters: (mcpTool.inputSchema ?? { type: "object", properties: {} }) as import("../tools/types.js").JsonSchema,
         async execute(params) {
           try {
