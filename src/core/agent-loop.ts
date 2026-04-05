@@ -35,6 +35,7 @@ import { getSessionNote, checkAndSaveNote } from "../memory/session-memory.js";
 import { config } from "./config.js";
 import type { MessageTrace } from "./message-trace.js";
 import { getTraceStore } from "./message-trace.js";
+import { isPlanMode, PLAN_MODE_BLOCKED_TOOLS } from "../skills/builtin/plan.js";
 
 // ── Tool trace helpers ──────────────────────────────────────────────────────
 
@@ -716,8 +717,14 @@ export async function* agentLoop(
     ? allToolDefs.filter(d => d.name !== "spawn_subagent")
     : allToolDefs;
 
+  // Plan Mode：過濾寫入/執行類工具
+  const planActive = isPlanMode(opts.channelId);
+  const planFiltered = planActive
+    ? filteredDefs.filter(d => !PLAN_MODE_BLOCKED_TOOLS.has(d.name))
+    : filteredDefs;
+
   // Deferred Tool Loading：eager = 完整 schema 注入 tools 參數；deferred = 僅名稱+描述注入 system prompt
-  let eagerDefs = filteredDefs.filter(d => !d.deferred);
+  let eagerDefs = planFiltered.filter(d => !d.deferred);
   const deferredDefs = filteredDefs.filter(d => d.deferred);
   // 追蹤已載入的 deferred tools（tool_search 後加入）
   const loadedDeferredNames = new Set<string>();
@@ -751,6 +758,18 @@ export async function* agentLoop(
   if (opts.isGroupChannel && opts.speakerDisplay) {
     const isolation = `[多人頻道] 當前說話者：${opts.speakerDisplay}（${accountId}/${opts.speakerRole ?? "member"}）`;
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${isolation}` : isolation;
+  }
+  // Plan Mode：注入行為約束到 system prompt
+  if (planActive) {
+    const planNotice = [
+      "## 🗺️ Plan Mode 已啟用",
+      "你目前處於規劃模式。在此模式下：",
+      "- 只進行分析、規劃、閱讀程式碼",
+      "- 不執行任何修改操作（write_file, edit_file, run_command 等已被移除）",
+      "- 可使用 read_file, glob, grep, web_search 等唯讀工具",
+      "- 提供詳細的實作計畫、步驟、風險評估",
+    ].join("\n");
+    systemPrompt = systemPrompt ? `${systemPrompt}\n\n${planNotice}` : planNotice;
   }
 
   // ── 4a. Deferred Tool Listing（system prompt 注入 deferred tool 名稱+描述）──

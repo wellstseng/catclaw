@@ -399,6 +399,7 @@ label.cfg-toggle { min-width: 36px; }
   <div class="tab" onclick="switchTab('tasks',this)">Tasks</div>
   <div class="tab" onclick="switchTab('auth',this)">Auth Profiles</div>
   <div class="tab" onclick="switchTab('config',this)">Config</div>
+  <div class="tab" onclick="switchTab('chat',this)" style="color:var(--accent);font-weight:600">💬 Chat</div>
 </div>
 
 <!-- 概覽 -->
@@ -587,6 +588,25 @@ label.cfg-toggle { min-width: 36px; }
     <p style="font-size:0.72rem;color:var(--fg3);margin:0">🔒 敏感欄位顯示 ***，儲存時自動保留原值</p>
   </div>
   <div id="cfg-gui"></div>
+</div>
+
+<!-- Chat -->
+<div id="pane-chat" class="pane">
+  <div style="display:flex;flex-direction:column;height:calc(100vh - 140px)">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label style="font-size:0.78rem;color:var(--fg2)">Session:</label>
+      <input id="chat-session" value="dashboard-chat" style="flex:1;max-width:220px;padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem" />
+      <button class="btn btn-sm btn-red" onclick="clearChatSession()">🗑 清除 Session</button>
+      <span id="chat-status" style="font-size:0.72rem;color:var(--fg3)">就緒</span>
+    </div>
+    <div id="chat-messages" style="flex:1;overflow-y:auto;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:0.85rem;line-height:1.6">
+      <div style="color:var(--fg3);text-align:center;padding:40px 0">在下方輸入訊息開始對話</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <textarea id="chat-input" rows="2" placeholder="輸入訊息..." style="flex:1;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--fg);font-size:0.85rem;resize:vertical;font-family:inherit" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <button class="btn btn-green" onclick="sendChat()" style="align-self:flex-end;height:38px;padding:0 20px">送出</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -2133,6 +2153,124 @@ async function loadAndShowContext(traceId) {
   } catch (e) { container.innerHTML = '<div style="color:var(--red2)">載入失敗：' + e + '</div>'; }
 }
 
+// ── Dashboard Chat ──────────────────────────────────────────────────────────
+let _chatBusy = false;
+
+function appendChatMsg(role, text) {
+  const el = document.getElementById('chat-messages');
+  // 移除初始提示
+  const placeholder = el.querySelector('div[style*="text-align:center"]');
+  if (placeholder) placeholder.remove();
+
+  const div = document.createElement('div');
+  div.style.cssText = 'margin-bottom:12px;padding:8px 12px;border-radius:8px;' +
+    (role === 'user'
+      ? 'background:var(--accent);color:#fff;margin-left:20%;text-align:right'
+      : 'background:var(--bg);border:1px solid var(--border);margin-right:20%');
+  div.setAttribute('data-role', role);
+  // 簡易 markdown 渲染
+  div.innerHTML = text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\`\`\`([\s\S]*?)\`\`\`/g, '<pre style="background:var(--bg2);padding:8px;border-radius:4px;overflow-x:auto;text-align:left">$1</pre>')
+    .replace(/\`([^\`]+)\`/g, '<code style="background:var(--bg2);padding:1px 4px;border-radius:3px">$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  if (_chatBusy) return;
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  _chatBusy = true;
+
+  const statusEl = document.getElementById('chat-status');
+  statusEl.textContent = '思考中...';
+  statusEl.style.color = 'var(--accent)';
+
+  appendChatMsg('user', text);
+  const assistantDiv = appendChatMsg('assistant', '');
+
+  const sessionKey = document.getElementById('chat-session').value.trim() || 'dashboard-chat';
+
+  try {
+    const resp = await fetch('/api/chat' + (_authToken ? '?token=' + encodeURIComponent(_authToken) : ''), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, sessionKey }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      assistantDiv.innerHTML = '<span style="color:#f44">錯誤: ' + err + '</span>';
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // 解析 SSE 格式
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === 'text_delta') {
+              fullText += data.text;
+              assistantDiv.innerHTML = fullText
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/\`\`\`([\s\S]*?)\`\`\`/g, '<pre style="background:var(--bg2);padding:8px;border-radius:4px;overflow-x:auto">$1</pre>')
+                .replace(/\`([^\`]+)\`/g, '<code style="background:var(--bg2);padding:1px 4px;border-radius:3px">$1</code>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\\n/g, '<br>');
+              document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+            } else if (data.type === 'tool_call') {
+              statusEl.textContent = '工具: ' + (data.name || '') + '...';
+            } else if (data.type === 'done') {
+              statusEl.textContent = '完成 (' + (data.turns || 0) + ' turns)';
+            } else if (data.type === 'error') {
+              assistantDiv.innerHTML += '<br><span style="color:#f44">⚠ ' + (data.message || 'Unknown error') + '</span>';
+            }
+          } catch {}
+        }
+      }
+    }
+    if (!fullText) assistantDiv.innerHTML = '<span style="color:var(--fg3)">(無文字回應)</span>';
+  } catch (err) {
+    assistantDiv.innerHTML = '<span style="color:#f44">連線錯誤: ' + err.message + '</span>';
+  } finally {
+    _chatBusy = false;
+    statusEl.style.color = 'var(--fg3)';
+    if (statusEl.textContent === '思考中...') statusEl.textContent = '就緒';
+  }
+}
+
+async function clearChatSession() {
+  const sessionKey = document.getElementById('chat-session').value.trim() || 'dashboard-chat';
+  try {
+    await authFetch('/api/sessions/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionKey: 'api-trigger:ch:dashboard-chat-' + sessionKey }),
+    });
+    document.getElementById('chat-messages').innerHTML = '<div style="color:var(--fg3);text-align:center;padding:40px 0">Session 已清除。輸入訊息開始新對話。</div>';
+    document.getElementById('chat-status').textContent = '已清除';
+  } catch (err) {
+    document.getElementById('chat-status').textContent = '清除失敗: ' + err.message;
+  }
+}
+
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 loadOverview();
 loadStatus();
@@ -3122,6 +3260,99 @@ export class DashboardServer {
             res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
           }
         })();
+        return;
+      }
+
+      // POST /api/chat — Dashboard 互動式 Chat（SSE streaming）
+      if (url === "/api/chat" && method === "POST") {
+        const chunks: Buffer[] = [];
+        let sz = 0;
+        req.on("data", (c: Buffer) => { sz += c.length; if (sz < 131072) chunks.push(c); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as Record<string, unknown>;
+              const message = String(body["message"] ?? "").trim();
+              if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: "message is required" })); return; }
+
+              const sessionSuffix = String(body["sessionKey"] ?? "dashboard-chat");
+
+              const { agentLoop } = await import("./agent-loop.js");
+              const { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRegistry, getPlatformSafetyGuard } = await import("./platform.js");
+              const { eventBus } = await import("./event-bus.js");
+              const { getProviderRegistry } = await import("../providers/registry.js");
+              const { assembleSystemPrompt } = await import("./prompt-assembler.js");
+
+              const providerRegistry = getProviderRegistry();
+              const provider = providerRegistry.resolve();
+              if (!provider) { res.writeHead(500); res.end(JSON.stringify({ error: "No provider available" })); return; }
+
+              const sm = getPlatformSessionManager();
+              const pg = getPlatformPermissionGate();
+              const tr = getPlatformToolRegistry();
+              const sg = getPlatformSafetyGuard();
+              if (!sm || !pg || !tr || !sg) {
+                res.writeHead(500); res.end(JSON.stringify({ error: "Platform not initialized" })); return;
+              }
+
+              // SSE headers
+              res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+              });
+
+              const channelId = `dashboard-chat-${sessionSuffix}`;
+              const accountId = "dashboard-user";
+
+              const systemPrompt = assembleSystemPrompt({
+                role: "platform-owner" as any,
+                mode: { thinking: null, compaction: "sliding-window" },
+                modeName: "normal",
+                workspaceDir: undefined,
+              });
+
+              const loopGen = agentLoop(message, {
+                platform: "api-trigger",
+                channelId,
+                accountId,
+                provider,
+                systemPrompt,
+                allowSpawn: true,
+                _sessionKeyOverride: `api-trigger:ch:${channelId}`,
+              }, {
+                sessionManager: sm,
+                permissionGate: pg,
+                toolRegistry: tr,
+                safetyGuard: sg,
+                eventBus,
+              });
+
+              let turnCount = 0;
+              for await (const event of loopGen) {
+                if (event.type === "text_delta") {
+                  res.write(`data: ${JSON.stringify({ type: "text_delta", text: event.text })}\n\n`);
+                } else if (event.type === "tool_result") {
+                  res.write(`data: ${JSON.stringify({ type: "tool_call", name: event.name })}\n\n`);
+                } else if (event.type === "done") {
+                  turnCount = event.turnCount;
+                } else if (event.type === "error") {
+                  res.write(`data: ${JSON.stringify({ type: "error", message: event.message })}\n\n`);
+                }
+              }
+              res.write(`data: ${JSON.stringify({ type: "done", turns: turnCount })}\n\n`);
+              res.end();
+            } catch (err) {
+              try {
+                if (!res.headersSent) {
+                  res.writeHead(500, { "Content-Type": "application/json" });
+                }
+                res.end(JSON.stringify({ error: String(err) }));
+              } catch { /* ignore */ }
+            }
+          })();
+        });
         return;
       }
 

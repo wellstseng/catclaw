@@ -162,10 +162,56 @@ const memoryRulesModule: PromptModule = {
   },
 };
 
+/**
+ * CATCLAW.md 層級繼承（對標 Claude Code 的 3 層 CLAUDE.md 機制）
+ *
+ * 從 workspaceDir 開始往上搜尋 CATCLAW.md，直到根目錄。
+ * 越接近 workspace 的優先序越高（後載入覆寫先載入）。
+ * 返回合併的內容字串。
+ */
+function loadCatclawMdHierarchy(workspaceDir: string): string {
+  const parts: string[] = [];
+  let dir = workspaceDir;
+  const seen = new Set<string>();
+
+  while (dir && !seen.has(dir)) {
+    seen.add(dir);
+    const candidate = join(dir, "CATCLAW.md");
+    if (existsSync(candidate)) {
+      try {
+        const content = readFileSync(candidate, "utf-8").trim();
+        if (content) {
+          parts.push(`<!-- CATCLAW.md: ${candidate} -->\n${content}`);
+        }
+      } catch { /* ignore read errors */ }
+    }
+    const parent = join(dir, "..");
+    if (parent === dir) break; // filesystem root
+    dir = parent;
+  }
+
+  if (parts.length === 0) return "";
+  // Reverse: root-level first, project-level last (project overrides root)
+  parts.reverse();
+  return parts.join("\n\n");
+}
+
+const claudeMdModule: PromptModule = {
+  name: "catclaw-md",
+  priority: 15, // after identity (10), before tools-usage (20)
+  build: (ctx) => {
+    if (!ctx.workspaceDir) return "";
+    const content = loadCatclawMdHierarchy(ctx.workspaceDir);
+    if (!content) return "";
+    return `## Project Instructions (CATCLAW.md)\n\n${content}`;
+  },
+};
+
 // ── Module Registry ──────────────────────────────────────────────────────────
 
 const builtinModules: PromptModule[] = [
   identityModule,
+  claudeMdModule,
   toolsUsageModule,
   codingRulesModule,
   gitRulesModule,
