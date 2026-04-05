@@ -818,6 +818,12 @@ async function handleMessage(
           };
         })(),
         trace,
+        promptBreakdownHints: {
+          memoryContext: systemPromptFromMemory || undefined,
+          channelOverride: channelSystemOverride || undefined,
+          modeExtras: modeExtrasBlock || undefined,
+          assemblerModules: assemblerTrace.modulesActive,
+        },
       }, {
         sessionManager: getPlatformSessionManager(),
         permissionGate: getPlatformPermissionGate(),

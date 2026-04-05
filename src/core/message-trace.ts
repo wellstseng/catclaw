@@ -494,6 +494,7 @@ export class MessageTrace {
   recordContextSnapshot(opts: {
     systemPrompt: string;
     memoryContext?: string;
+    promptBreakdown?: TracePromptBreakdown;
     messagesBeforeCE?: unknown[];
     messagesAfterCE: unknown[];
     ceApplied: boolean;
@@ -505,6 +506,7 @@ export class MessageTrace {
       ts: this.entry.ts,
       systemPrompt: opts.systemPrompt,
       memoryContext: opts.memoryContext || undefined,
+      promptBreakdown: opts.promptBreakdown,
       messagesBeforeCE: opts.messagesBeforeCE,
       messagesAfterCE: opts.messagesAfterCE,
       ceApplied: opts.ceApplied,
@@ -656,6 +658,20 @@ export class TraceStore {
 
 // ── TraceContextStore（context snapshot 持久化）─────────────────────────────
 
+/** Prompt 組裝分類明細 */
+export interface TracePromptBreakdown {
+  /** Memory recall 注入的原始文字 */
+  memoryContext?: string;
+  /** 頻道 system prompt 覆寫 */
+  channelOverride?: string;
+  /** Mode preset 額外 prompt（workspace/prompts/*.md） */
+  modeExtras?: string;
+  /** prompt-assembler 啟用的模組名稱（按 priority 排序） */
+  assemblerModules: string[];
+  /** agent-loop 追加的區塊名稱（memory-context / group-isolation / plan-mode / session-note / deferred-tools / token-nudge） */
+  agentLoopBlocks: string[];
+}
+
 /** Context snapshot 記錄（存獨立 JSON，避免 JSONL 過度膨脹） */
 export interface TraceContextSnapshot {
   traceId: string;
@@ -663,6 +679,8 @@ export interface TraceContextSnapshot {
   systemPrompt: string;
   /** Memory recall 注入的原始文字（未混入 systemPrompt 前） */
   memoryContext?: string;
+  /** Prompt 動態組裝分類明細 */
+  promptBreakdown?: TracePromptBreakdown;
   /** CE 壓縮前的 messages（僅在 CE 觸發時有值） */
   messagesBeforeCE?: unknown[];
   /** 最終送入 LLM 的 messages */

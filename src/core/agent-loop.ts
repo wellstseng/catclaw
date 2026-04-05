@@ -352,6 +352,17 @@ export interface AgentLoopOpts {
     vectorSearch: boolean;
     topK?: number;
   };
+
+  /**
+   * Prompt 組裝分類提示（由 discord.ts 傳入）。
+   * agent-loop 在 recordContextSnapshot 時合併自身區塊產出完整 breakdown。
+   */
+  promptBreakdownHints?: {
+    memoryContext?: string;
+    channelOverride?: string;
+    modeExtras?: string;
+    assemblerModules?: string[];
+  };
 }
 
 /** AgentLoop yield 出的事件 */
@@ -821,27 +832,25 @@ export async function* agentLoop(
   }
 
   // Trace: agent-loop 追加的 system prompt 區塊
-  if (trace) {
-    const blocks: string[] = [];
-    if (memoryContextBlock) blocks.push("memory-context");
-    if (opts.isGroupChannel) blocks.push("group-isolation");
-    if (planActive) blocks.push("plan-mode");
-    if (deferredDefs.length > 0) blocks.push("deferred-tools");
-    // nudge 是否注入
-    if (contextEngine) {
-      const ratio = contextEngine.getContextWindowTokens() > 0
-        ? contextEngine.lastBuildBreakdown.estimatedTokens / contextEngine.getContextWindowTokens()
-        : 0;
-      if (ratio >= 0.60) blocks.push("token-nudge");
-    }
-    trace.appendAgentLoopBlocks(blocks);
+  const _agentLoopBlocks: string[] = [];
+  if (memoryContextBlock) _agentLoopBlocks.push("memory-context");
+  if (opts.isGroupChannel) _agentLoopBlocks.push("group-isolation");
+  if (planActive) _agentLoopBlocks.push("plan-mode");
+  if (deferredDefs.length > 0) _agentLoopBlocks.push("deferred-tools");
+  if (contextEngine) {
+    const ratio = contextEngine.getContextWindowTokens() > 0
+      ? contextEngine.lastBuildBreakdown.estimatedTokens / contextEngine.getContextWindowTokens()
+      : 0;
+    if (ratio >= 0.60) _agentLoopBlocks.push("token-nudge");
   }
+  if (trace) trace.appendAgentLoopBlocks(_agentLoopBlocks);
 
   // ── 4c. Session Note 注入（參考 Claude Code SessionMemory）───────────────────
   if (opts.sessionMemory?.enabled) {
     const note = getSessionNote(opts.sessionMemory.memoryDir, channelId);
     if (note) {
       systemPrompt = note + (systemPrompt ? `\n\n${systemPrompt}` : "");
+      _agentLoopBlocks.push("session-note");
       log.debug(`[agent-loop] session-note 已注入 channelId=${channelId.slice(-8)}`);
     }
   }
@@ -894,9 +903,17 @@ export async function* agentLoop(
   // ── 4e. Trace: Context Snapshot（完整 system prompt + messages）────────────
   if (trace) {
     const ceApplied = (contextEngine?.lastBuildBreakdown?.strategiesApplied?.length ?? 0) > 0;
+    const hints = opts.promptBreakdownHints;
     trace.recordContextSnapshot({
       systemPrompt,
-      memoryContext: memoryContextBlock || undefined,
+      memoryContext: memoryContextBlock || hints?.memoryContext || undefined,
+      promptBreakdown: {
+        memoryContext: (memoryContextBlock || hints?.memoryContext) ? (memoryContextBlock || hints?.memoryContext) : undefined,
+        channelOverride: hints?.channelOverride,
+        modeExtras: hints?.modeExtras,
+        assemblerModules: hints?.assemblerModules ?? [],
+        agentLoopBlocks: _agentLoopBlocks,
+      },
       messagesBeforeCE: ceApplied ? rawHistory as unknown[] : undefined,
       messagesAfterCE: messages as unknown[],
       ceApplied,
