@@ -208,7 +208,7 @@ export interface ProviderEntry {
    * - "codex-oauth"              → CodexOAuthProvider（OpenAI Codex + OAuth 自動刷新）
    * - "ollama"                   → OllamaProvider（/api/chat NDJSON，支援 think 參數）
    */
-  type?: "claude" | "claude-oauth" | "openai" | "openai-compat" | "codex-oauth" | "ollama";
+  type?: "claude" | "claude-oauth" | "openai" | "openai-compat" | "codex-oauth" | "ollama" | "cli-claude" | "cli-gemini" | "cli-codex";
   /**
    * 認證模式（通用欄位）
    * - "token"    → Claude OAuth token（auth-profile.json，sk-ant-oat...）

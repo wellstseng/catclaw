@@ -3,9 +3,10 @@
  * @description read_file — 讀取檔案內容（elevated tier）
  */
 
-import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { resolve, extname } from "node:path";
+import { readFileSync, existsSync, statSync, readdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { resolve, extname, join } from "node:path";
 import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import type { Tool } from "../types.js";
 
 const MAX_FILE_SIZE = 200_000; // 200KB
@@ -13,29 +14,29 @@ const MAX_FILE_SIZE = 200_000; // 200KB
 // ── PDF 讀取（透過 python3 fallback）─────────────────────────────────────────
 
 function readPdf(filePath: string, pages?: string): { text?: string; error?: string } {
-  // 嘗試 pdf-parse（如果有安裝）
-  try {
-    const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string; numpages: number }>;
-    const buf = readFileSync(filePath);
-    // pdf-parse 是 async 的，但我們需要同步。用 python3 fallback。
-  } catch { /* pdf-parse 不可用 */ }
-
-  // Python3 fallback：用 subprocess 呼叫 python3 解析 PDF
-  const pageArg = pages ? `--pages "${pages}"` : "";
-  const script = `
+  // 寫臨時 .py 檔案再執行，避免 shell escape 問題
+  const pyScript = `
 import sys, json
-try:
-    import subprocess
-    result = subprocess.run(
-        ["python3", "-c", """
-import sys
+file_path = sys.argv[1]
+pages_arg = sys.argv[2] if len(sys.argv) > 2 else ""
+
 try:
     from PyPDF2 import PdfReader
+    reader = PdfReader(file_path)
+    if pages_arg:
+        parts = pages_arg.split("-")
+        start = int(parts[0]) - 1
+        end = int(parts[-1]) if len(parts) > 1 else start + 1
+    else:
+        start, end = 0, len(reader.pages)
+    text = ""
+    for i in range(max(0, start), min(end, len(reader.pages))):
+        text += f"--- Page {i+1} ---\\n" + reader.pages[i].extract_text() + "\\n"
+    print(json.dumps({"text": text, "pages": len(reader.pages)}))
 except ImportError:
     try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(sys.argv[1])
-        pages_arg = sys.argv[2] if len(sys.argv) > 2 else ""
+        import fitz
+        doc = fitz.open(file_path)
         if pages_arg:
             parts = pages_arg.split("-")
             start = int(parts[0]) - 1
@@ -43,47 +44,28 @@ except ImportError:
         else:
             start, end = 0, len(doc)
         text = ""
-        for i in range(max(0,start), min(end,len(doc))):
+        for i in range(max(0, start), min(end, len(doc))):
             text += f"--- Page {i+1} ---\\n" + doc[i].get_text() + "\\n"
         print(json.dumps({"text": text, "pages": len(doc)}))
-        sys.exit(0)
     except ImportError:
-        print(json.dumps({"error": "No PDF library available (PyPDF2 or PyMuPDF). Install: pip3 install PyPDF2"}))
-        sys.exit(0)
-reader = PdfReader(sys.argv[1])
-pages_arg = sys.argv[2] if len(sys.argv) > 2 else ""
-if pages_arg:
-    parts = pages_arg.split("-")
-    start = int(parts[0]) - 1
-    end = int(parts[-1]) if len(parts) > 1 else start + 1
-else:
-    start, end = 0, len(reader.pages)
-text = ""
-for i in range(max(0,start), min(end,len(reader.pages))):
-    text += f"--- Page {i+1} ---\\n" + reader.pages[i].extract_text() + "\\n"
-print(json.dumps({"text": text, "pages": len(reader.pages)}))
-""", sys.argv[1]] + ([sys.argv[2]] if len(sys.argv) > 2 else []),
-        capture_output=True, text=True, timeout=30
-    )
-    if result.returncode == 0:
-        data = json.loads(result.stdout)
-        print(json.dumps(data))
-    else:
-        print(json.dumps({"error": result.stderr[:500]}))
+        print(json.dumps({"error": "PDF 解析需要 PyPDF2 或 PyMuPDF。安裝：pip3 install PyPDF2"}))
 except Exception as e:
     print(json.dumps({"error": str(e)[:500]}))
 `;
+  const tmpPy = join(tmpdir(), `catclaw-pdf-${Date.now()}.py`);
   try {
+    writeFileSync(tmpPy, pyScript);
     const args = pages ? [filePath, pages] : [filePath];
     const result = execSync(
-      `python3 -c ${JSON.stringify(script)} ${args.map(a => JSON.stringify(a)).join(" ")}`,
+      `python3 ${JSON.stringify(tmpPy)} ${args.map(a => JSON.stringify(a)).join(" ")}`,
       { encoding: "utf-8", timeout: 30_000 },
     );
     return JSON.parse(result.trim());
   } catch {
-    // 最後 fallback：回報檔案大小和基本資訊
     const stat = statSync(filePath);
     return { text: `[PDF 檔案] 大小：${stat.size} bytes。無法解析文字內容。\n提示：安裝 PyPDF2（pip3 install PyPDF2）可啟用 PDF 文字擷取。` };
+  } finally {
+    try { unlinkSync(tmpPy); } catch { /* ignore */ }
   }
 }
 

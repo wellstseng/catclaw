@@ -124,7 +124,9 @@ export class ProviderRegistry {
 
 // ── ModelApi → Provider type 對應 ────────────────────────────────────────────
 
-function apiToProviderType(api: ModelApi | undefined, provider: string): "claude" | "openai-compat" | "codex-oauth" | "ollama" | null {
+type ProviderType = "claude" | "openai-compat" | "codex-oauth" | "ollama" | "cli-claude" | "cli-gemini" | "cli-codex";
+
+function apiToProviderType(api: ModelApi | undefined, provider: string): ProviderType | null {
   switch (api) {
     case "anthropic-messages": return "claude";
     case "openai-completions": return "openai-compat";
@@ -136,6 +138,8 @@ function apiToProviderType(api: ModelApi | undefined, provider: string): "claude
       if (provider === "openai") return "openai-compat";
       if (provider === "openai-codex") return "codex-oauth";
       if (provider === "ollama" || provider.startsWith("ollama-")) return "ollama";
+      // CLI 後端：provider 名稱 "cli-claude" / "cli-gemini" / "cli-codex"
+      if (provider === "cli-claude" || provider === "cli-gemini" || provider === "cli-codex") return provider;
       return null;
   }
 }
@@ -255,6 +259,13 @@ export async function buildProviderRegistryV2(
         bridgeEntry.type = "codex-oauth";
         const { CodexOAuthProvider } = await import("./codex-oauth.js");
         provider = new CodexOAuthProvider(providerId, bridgeEntry, authStore ?? undefined);
+      } else if (pType === "cli-claude" || pType === "cli-gemini" || pType === "cli-codex") {
+        const backend = pType.replace("cli-", "") as "claude" | "gemini" | "codex";
+        const { CliProvider } = await import("./acp-cli.js");
+        provider = new CliProvider(providerId, {
+          backend,
+          command: providerDef.baseUrl || undefined,  // baseUrl 可覆寫 CLI 路徑
+        });
       } else {
         log.warn(`[provider-registry-v2] 未知 provider type: ${providerName}（api=${providerDef.api}）`);
         continue;
@@ -299,7 +310,7 @@ export async function buildProviderRegistry(
     let provider: LLMProvider | null = null;
 
     // 型別解析優先序：entry.type > wsUrl > id heuristic > field heuristic
-    let providerType: "claude-oauth" | "openai-compat" | "codex-oauth" | "openclaw" | "ollama" | null = null;
+    let providerType: "claude-oauth" | "openai-compat" | "codex-oauth" | "openclaw" | "ollama" | "cli-claude" | "cli-gemini" | "cli-codex" | null = null;
     if (entry.type === "claude")        providerType = "claude-oauth";
     else if (entry.type === "openai")   providerType = "openai-compat";
     else if (entry.type)                providerType = entry.type;
@@ -310,7 +321,15 @@ export async function buildProviderRegistry(
     else if (entry.host || entry.baseUrl) providerType = "openai-compat";
     else if (entry.token)               providerType = "claude-oauth";
 
-    if (providerType === "codex-oauth") {
+    if (providerType === "cli-claude" || providerType === "cli-gemini" || providerType === "cli-codex") {
+      const backend = providerType.replace("cli-", "") as "claude" | "gemini" | "codex";
+      const { CliProvider } = await import("./acp-cli.js");
+      provider = new CliProvider(id, {
+        backend,
+        command: entry.host ?? undefined,  // host 欄位可覆寫 CLI 路徑
+        cwd: entry.baseUrl ?? undefined,   // baseUrl 欄位可覆寫工作目錄
+      });
+    } else if (providerType === "codex-oauth") {
       const { CodexOAuthProvider } = await import("./codex-oauth.js");
       provider = new CodexOAuthProvider(id, entry);
     } else if (providerType === "claude-oauth") {

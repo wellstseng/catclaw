@@ -3306,6 +3306,15 @@ export class DashboardServer {
               const channelId = `dashboard-chat-${sessionSuffix}`;
               const accountId = "dashboard-user";
 
+              // 確保 dashboard-user 帳號存在（首次自動建立）
+              const { getAccountRegistry } = await import("./platform.js");
+              const ar = getAccountRegistry();
+              if (!ar.get(accountId)) {
+                try {
+                  ar.create({ accountId, displayName: "Dashboard", role: "platform-owner", identities: [{ platform: "web", platformId: "dashboard", linkedAt: new Date().toISOString() }] });
+                } catch { /* 已存在或建立失敗，忽略 */ }
+              }
+
               const systemPrompt = assembleSystemPrompt({
                 role: "platform-owner" as any,
                 mode: { thinking: null, compaction: "sliding-window" },
