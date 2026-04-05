@@ -107,6 +107,13 @@ MaxListeners 設為 100（避免大量模組訂閱時的 leak 警告）。
 | `account:created` | accountId | 帳號建立 |
 | `account:linked` | accountId, platform | 身份綁定 |
 
+### 排程 / Skill
+
+| 事件 | Payload | 說明 |
+|------|---------|------|
+| `cron:executed` | jobId | 排程 job 執行完成 |
+| `skill:invoked` | skillName, accountId | Skill 被觸發 |
+
 ## 訂閱者
 
 | 訂閱者 | 監聽事件 |

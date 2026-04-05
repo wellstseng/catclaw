@@ -6,7 +6,7 @@
 
 CatClaw = Codex 版 Claude Code CLI + 多人 AI 開發平台。
 以 Discord 為前端，提供等同 Claude Code 的完整開發能力：multi-turn agent loop、17+ builtin tools、
-21 slash skills、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、
+28 builtin skills（25 TS + 3 prompt）、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、
 帳號/角色/權限系統、Web Dashboard + Trace 追蹤。
 
 ## 架構一句話摘要
@@ -30,9 +30,9 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | Memory Recall | `src/memory/recall.ts` | 全域+專案+個人三層 recall（向量+關鍵字） |
 | Memory Context | `src/memory/context-builder.ts` | ACT-R 衰減 + budget + staleness check |
 | Accounts | `src/accounts/` | 帳號 + 角色 + 權限 + identity linking |
-| Providers | `src/providers/` | LLM Provider 抽象：claude-api / codex-oauth / acp-cli / ollama / openai-compat + failover + circuit-breaker |
+| Providers | `src/providers/` | LLM Provider 抽象：claude-api / codex-oauth / cli-claude / cli-gemini / cli-codex / ollama / openai-compat + failover + circuit-breaker |
 | Tools | `src/tools/` | Tool 註冊 + 17 builtin tools（read/write/edit/glob/grep/run/web/memory/subagent/task...） |
-| Skills | `src/skills/` | Skill registry + 21 builtin skills（status/help/configure/mode/plan/restart/...） |
+| Skills | `src/skills/` | Skill registry + 28 builtin skills（status/help/configure/mode/plan/restart/...） |
 | Hooks | `src/hooks/` | Hook 系統：registry + runner（tool 前後觸發） |
 | Safety | `src/safety/` | 安全攔截：guard + collab-conflict |
 | Workflow | `src/workflow/` | 工作流引擎：rut/oscillation/fix-escalation/sync/wisdom/failure-detector |
@@ -55,6 +55,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [09-PITFALLS.md](09-PITFALLS.md) | 17 項陷阱速查 + 錯誤訊息對照表 | 2026-03-22 |
 | [PLAN.md](PLAN.md) | 初始實作計畫（已完成） | 2026-03-18 |
 | [PLAN-V3.md](PLAN-V3.md) | V3 計畫書：Subagent 編排 | 2026-03-27 |
+| [PLAN-V4.md](PLAN-V4.md) | V4 計畫書：Agent 能力強化 | 2026-03-27 |
 | [PLAN-V5.md](PLAN-V5.md) | V5 計畫書：CatClaw = Codex 版 Claude Code CLI | 2026-04-04 |
 | [_CHANGELOG.md](_CHANGELOG.md) | 知識庫變更紀錄 | rolling |
 
@@ -76,6 +77,11 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/skills.md](modules/skills.md) | `src/skills/` | Skill 系統 | 2026-04-05 |
 | [modules/session.md](modules/session.md) | `src/core/session.ts` | SessionManager | 2026-04-05 |
 | [modules/reply.md](modules/reply.md) | `src/core/reply-handler.ts` | Streaming 回覆 | 2026-04-05 |
+| [modules/accounts.md](modules/accounts.md) | `src/accounts/` | 帳號 + 角色 + 權限 + Identity Linking | 2026-04-05 |
+| [modules/event-bus.md](modules/event-bus.md) | `src/core/event-bus.ts` | 強型別事件匯流排 | 2026-04-05 |
+| [modules/hooks.md](modules/hooks.md) | `src/hooks/` | Hook 系統 | 2026-04-05 |
+| [modules/safety.md](modules/safety.md) | `src/safety/` | 安全攔截 | 2026-04-05 |
+| [modules/workflow.md](modules/workflow.md) | `src/workflow/` | 工作流引擎 | 2026-04-05 |
 | [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn（舊版入口） | 2026-03-22 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務 | 2026-03-22 |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點 | 2026-03-22 |

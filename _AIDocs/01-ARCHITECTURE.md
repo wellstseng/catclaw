@@ -42,7 +42,7 @@ Discord Gateway
       │  ② getChannelAccess() → allowed / requireMention / allowBot / allowFrom
       │  ③ allowBot / allowFrom 過濾
       │  ④ requireMention → strip mention <@id>
-      │  ⑤ downloadAttachments() → /tmp/catclaw-uploads/{msgId}/
+      │  ⑤ downloadAttachments() → /tmp/claude-discord-uploads/{msgId}/
       │  ⑥ text 為空 → 忽略
       ▼
 [discord.ts] debounce(channelId:authorId, debounceMs=500ms)

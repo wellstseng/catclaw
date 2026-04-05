@@ -48,9 +48,9 @@ shutdown(): Promise<void>  // 關閉 vector service
 
 ```typescript
 recall(
-  query: string,
-  paths: { accountId: string; projectId?: string; channelId?: string },
-  opts?: { vectorSearch?: boolean; vectorTopK?: number }
+  prompt: string,
+  ctx: RecallContext,
+  overrides?: { vectorSearch?: boolean; vectorTopK?: number }
 ): Promise<RecallResult>
 ```
 
