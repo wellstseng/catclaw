@@ -1,6 +1,6 @@
 # skills — 內建 Skill 系統
 
-> 更新日期：2026-03-28
+> 更新日期：2026-04-05
 
 ## 檔案結構
 
@@ -8,41 +8,47 @@
 src/skills/
   types.ts          — Skill, SkillContext, SkillResult 型別
   registry.ts       — loadBuiltinSkills(), loadPromptSkills(), matchSkill()
-  builtin/          — TypeScript 執行型 skills
-    account.ts      — /account（帳號管理）
-    configure.ts    — /configure（provider/model 設定）
-    help.ts         — /help
-    migrate.ts      — /migrate
-    project.ts      — /project
-    register.ts     — /register
-    restart.ts      — 重啟
-    stop.ts         — /stop
-    queue.ts        — /queue
-    rollback.ts     — /rollback
-    subagents.ts    — /subagents
-    turn-audit.ts   — /turn-audit
-    session-manage.ts — /session（Session 管理）
-  builtin-prompt/   — SKILL.md 格式 prompt-type skills
+  builtin/          — TypeScript 執行型 skills（25 個）
+  builtin-prompt/   — SKILL.md 格式 prompt-type skills（3 個）
 ```
 
 ## Skill 型別
 
 ```typescript
+type SkillTier = "public" | "standard" | "elevated" | "admin" | "owner";
+
 interface Skill {
   name: string;
   description: string;
-  tier: "admin" | "elevated" | "standard";  // 對應 PermissionGate
+  tier: SkillTier;
   trigger: string[];                          // 觸發字串（前綴匹配）
+
+  /** 前置環境檢查（可選），失敗直接回傳錯誤 */
+  preflight?(ctx: SkillContext): Promise<{ ok: boolean; reason?: string }>;
+
   execute(ctx: SkillContext): Promise<SkillResult>;
 }
+```
 
+## SkillContext 型別
+
+```typescript
 interface SkillContext {
-  authorId: string;
-  guildId?: string;
+  /** trigger 後的剩餘文字（參數） */
+  args: string;
+  /** 原始 Discord 訊息物件 */
+  message: Message;
   channelId: string;
-  args: string;         // trigger 之後的文字
+  authorId: string;
+  /** 平台帳號 ID（如 discord:{discordId}），平台就緒時有值 */
+  accountId?: string;
+  config: BridgeConfig;
 }
+```
 
+## SkillResult 型別
+
+```typescript
 interface SkillResult {
   text: string;
   isError?: boolean;
@@ -54,6 +60,50 @@ interface SkillResult {
 - `loadBuiltinSkills()` — 掃描 `dist/skills/builtin/*.js`，auto-import `export const skill` 或 `export const skills[]`
 - `loadPromptSkills()` — 掃描 `dist/skills/builtin-prompt/**/SKILL.md`
 - `matchSkill(text)` — 前綴匹配 trigger，回傳 `{ skill, args }`
+
+## Builtin Skills（25 個）
+
+### 單一 export（`export const skill`）
+
+| 檔案 | name | 說明 |
+|------|------|------|
+| `account.ts` | account | 帳號管理 |
+| `compact.ts` | compact | Session 壓縮 |
+| `config-manage.ts` | config | 設定管理 |
+| `configure.ts` | configure | Provider/model 設定 |
+| `context.ts` | context | Context 檢視 |
+| `help.ts` | help | 說明 |
+| `migrate.ts` | migrate | 遷移工具 |
+| `mode.ts` | mode | 模式切換 |
+| `plan.ts` | plan | 計畫管理 |
+| `project.ts` | project | 專案管理 |
+| `register.ts` | register | 帳號註冊 |
+| `restart.ts` | restart | 重啟 |
+| `session-manage.ts` | session | Session 管理 |
+| `subagents.ts` | subagents | 子 agent 管理 |
+| `system.ts` | system | System prompt 覆寫 |
+| `think.ts` | think | Thinking 模式開關 |
+| `turn-audit.ts` | turn-audit | Turn 審計 |
+| `usage.ts` | usage | 用量統計 |
+| `use.ts` | use | Provider 手動覆寫 |
+
+### 多重 export（`export const skill` + `export const skills[]`）
+
+| 檔案 | 主 skill | 額外 skills |
+|------|----------|------------|
+| `stop.ts` | stop | queue, rollback, clear |
+| `status.ts` | status | memory |
+
+## Prompt-Type Skills（builtin-prompt/）
+
+以 `SKILL.md` 檔案定義，由 `loadPromptSkills()` 掃描載入。
+不執行 TypeScript，而是將 SKILL.md 內容作為 prompt 注入 LLM。
+
+| 目錄 | 說明 |
+|------|------|
+| `builtin-prompt/commit/SKILL.md` | /commit — Git commit prompt |
+| `builtin-prompt/pr/SKILL.md` | /pr — Pull request prompt |
+| `builtin-prompt/discord/SKILL.md` | /discord — Discord 相關 prompt |
 
 ## /configure skill
 

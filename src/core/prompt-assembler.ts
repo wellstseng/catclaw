@@ -276,11 +276,19 @@ export function registerPromptModule(mod: PromptModule): void {
 
 // ── 組裝器 ───────────────────────────────────────────────────────────────────
 
+/** assembleSystemPrompt 的 trace 輸出 */
+export interface AssembleTraceOutput {
+  modulesActive: string[];
+  modulesSkipped: string[];
+}
+
 export interface AssembleOpts extends PromptContext {
   /** 額外的 system prompt 片段（CATCLAW.md 內容、記憶 context 等） */
   extraBlocks?: string[];
   /** 覆寫使用的模組（null = 使用全部） */
   moduleFilter?: string[];
+  /** 傳入此物件時，組裝完成後寫入模組追蹤資訊 */
+  traceOutput?: AssembleTraceOutput;
 }
 
 /**
@@ -296,6 +304,10 @@ export function assembleSystemPrompt(opts: AssembleOpts): string {
   const activeModules = opts.moduleFilter
     ? allModules.filter(m => opts.moduleFilter!.includes(m.name))
     : allModules;
+
+  const skippedModules = opts.moduleFilter
+    ? allModules.filter(m => !opts.moduleFilter!.includes(m.name))
+    : [];
 
   const parts: string[] = [];
 
@@ -313,6 +325,12 @@ export function assembleSystemPrompt(opts: AssembleOpts): string {
     } catch (err) {
       log.warn(`[prompt-assembler] 模組 ${mod.name} 組裝失敗：${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  // 寫入 trace 輸出
+  if (opts.traceOutput) {
+    opts.traceOutput.modulesActive = activeModules.map(m => m.name);
+    opts.traceOutput.modulesSkipped = skippedModules.map(m => m.name);
   }
 
   log.debug(`[prompt-assembler] 組裝完成：${activeModules.length} 個模組, ${parts.length} 個區段`);

@@ -1,6 +1,8 @@
 # modules/session — Session 快取 + 串行佇列 + 磁碟持久化
 
-> 檔案：`src/session.ts`
+> ⚠️ **舊版參考**：以下內容描述的是 `src/session.ts`（V1 ACP/CLI 架構）。新版 `src/core/session.ts` 採用 `SessionManager` class 設計，詳見文末「新版 SessionManager」段落。
+
+> 檔案：`src/session.ts`（舊版）
 
 ## 職責
 
@@ -268,3 +270,93 @@ Dashboard UI 在 Sessions 分頁提供 per-session 操作按鈕（Clear / Compac
 | `runTurn(...)` | 執行單一 turn，攔截 session_init，錯誤時保留 session，try/finally 清理 active-turn |
 | `markTurnActive(channelId, prompt)` | 寫入 active-turn 追蹤檔（crash recovery 用） |
 | `markTurnDone(channelId)` | 刪除 active-turn 追蹤檔（turn 結束時自動呼叫） |
+
+---
+
+## 新版 SessionManager（`src/core/session.ts`）
+
+> V2 架構。Session = 頻道/帳號的對話上下文（messages history + provider binding）。
+
+### 設計要點
+
+- Session key 格式：`{platform}:ch:{channelId}`（群組）或 `{platform}:dm:{accountId}:{channelId}`（DM）
+- 持久化：atomic write（先寫 `.tmp` 再 `rename`），含 SHA-256 checksum 驗證
+- TTL 清理：啟動時 `cleanExpired()` 掃描刪除過期 session
+- Turn Queue：per-session FIFO 佇列，max depth 5，排隊超時自動移出
+- 全域單例模式：`initSessionManager()` / `getSessionManager()`
+
+### 型別定義
+
+```typescript
+export interface Session {
+  sessionKey: string;
+  accountId: string;
+  channelId: string;
+  providerId: string;
+  messages: Message[];       // 對話歷史（provider base.ts 的 Message 型別）
+  createdAt: number;         // timestamp ms
+  lastActiveAt: number;
+  turnCount: number;
+}
+
+export interface TurnRequest {
+  sessionKey: string;
+  accountId: string;
+  prompt: string;
+  signal?: AbortSignal;
+  enqueuedAt: number;
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+```
+
+### SessionManager API
+
+| 方法 | 說明 |
+|------|------|
+| `init()` | 初始化：建立 persistDir、清除過期、載入所有 session |
+| `getOrCreate(sessionKey, accountId, channelId, providerId)` | 取得或建立 session |
+| `get(sessionKey)` | 取得 session（不存在回傳 undefined） |
+| `addMessages(sessionKey, messages)` | 新增訊息（user + assistant），觸發 compact + persist |
+| `getHistory(sessionKey)` | 取得對話歷史 `Message[]` |
+| `replaceMessages(sessionKey, messages)` | CE 壓縮後寫回精簡版 messages（備份原始至 `_ce_backups/`，保留最近 3 份） |
+| `clearMessages(sessionKey)` | 清空訊息（保留 session 殼），回傳被清除數 |
+| `delete(sessionKey)` | 刪除 session（記憶體 + 磁碟），觸發 `session:end` event |
+| `purgeExpired()` | 批次清除過期 session（含磁碟孤兒檔案），回傳清除數 |
+| `list()` | 回傳所有 session 陣列 |
+
+### Turn Queue API
+
+| 方法 | 說明 |
+|------|------|
+| `enqueueTurn(request)` | 排入 turn queue，回傳 Promise（可開始執行時 resolve）。depth >= 5 → reject |
+| `dequeueTurn(sessionKey)` | 前一個 turn 完成，讓下一個開始 |
+| `getQueueDepth(sessionKey)` | 取得目前佇列深度 |
+| `clearQueue(sessionKey)` | 清除等待佇列（保留正在執行的 position=0），回傳被取消數 |
+
+### Turn Queue 設計
+
+- Max depth: 5（超過 reject `BUSY`）
+- 排隊超時：`Math.max(turnTimeoutMs, 120s)`，超時自動 reject `TIMEOUT`
+- 第一個進入 queue 的 turn 立即 resolve（不排隊）
+- `dequeueTurn()` 由 caller 在 turn 完成後主動呼叫
+
+### 持久化
+
+- 路徑：`{SessionConfig.persistPath}/{safe_key}.json`
+- Atomic write：`writeFileSync(tmp)` → `renameSync()`
+- SHA-256 checksum 寫入 `_checksum` 欄位，載入時驗證（失敗 → 備份 `.bak` 跳過）
+- 舊格式（無 `_checksum`）向下相容
+
+### Compact 機制
+
+`addMessages()` 時自動觸發：messages 超過 `maxHistoryTurns × 2` 時 slice 保留最近 N 輪。
+
+### 工具函式
+
+```typescript
+export function makeSessionKey(channelId, accountId, isDm, platform?): string;
+export function initSessionManager(cfg: SessionConfig, eventBus?): SessionManager;
+export function getSessionManager(): SessionManager;
+export function resetSessionManager(): void;
+```

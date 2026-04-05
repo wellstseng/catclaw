@@ -1,0 +1,109 @@
+# modules/workflow — 工作流引擎
+
+> 檔案：`src/workflow/bootstrap.ts` + `src/workflow/`
+> 更新日期：2026-04-05
+
+## 職責
+
+事件驅動的工作流引擎，訂閱 EventBus 事件，執行偵測 / 提醒 / 自動化。
+
+## 子模組
+
+| 檔案 | 說明 | 訂閱事件 |
+|------|------|---------|
+| `bootstrap.ts` | 統一初始化入口 | — |
+| `file-tracker.ts` | 檔案修改追蹤 | `tool:after` |
+| `sync-reminder.ts` | 未同步提醒 | `file:modified` |
+| `rut-detector.ts` | 重複模式偵測 | `turn:after` |
+| `oscillation-detector.ts` | 擺盪偵測 | `memory:written` |
+| `wisdom-engine.ts` | 經驗累積引擎 | `turn:after` |
+| `failure-detector.ts` | 失敗偵測 → 記錄 failures/ | `tool:error` |
+| `aidocs-manager.ts` | _AIDocs 自動維護 | `file:modified` |
+| `memory-extractor.ts` | 自動記憶萃取 | `turn:after` |
+| `consolidate-scheduler.ts` | 定期整合排程 | timer |
+| `fix-escalation.ts` | 精確修正升級 | 手動觸發 |
+| `types.ts` | 共用型別 | — |
+
+## 初始化
+
+```typescript
+initWorkflow(config, dataDir, memoryDir, projectRoot): void
+```
+
+由 `platform.ts` 步驟 10 呼叫。`config.workflow.enabled = false` 可完全停用。
+
+## WorkflowConfig
+
+```typescript
+interface WorkflowConfig {
+  enabled?: boolean;
+  wisdomEngine?: { enabled?: boolean };
+  fixEscalation?: { enabled?: boolean; retryThreshold?: number; timeoutMs?: number };
+  aidocs?: { enabled?: boolean; contentGate?: boolean };
+  rutDetection?: { enabled?: boolean; windowSize?: number; minOccurrences?: number };
+  oscillation?: { enabled?: boolean };
+}
+```
+
+## 模組說明
+
+### file-tracker
+
+監聽 `tool:after`，偵測 write_file / edit_file / run_command 的檔案修改。
+發出 `file:modified` 事件，記錄修改路徑和時間。
+
+### sync-reminder
+
+監聽 `file:modified`，累積未同步的修改檔案。
+達到閾值時發出 `workflow:sync_needed` 事件。
+
+### rut-detector
+
+監聽 `turn:after`，分析對話模式。
+偵測重複 pattern（同一錯誤出現 N 次）→ 發出 `workflow:rut` 事件。
+
+### oscillation-detector
+
+監聯 `memory:written`，偵測同一 atom 短時間內反覆被修改。
+發出 `workflow:oscillation` 事件。
+
+### wisdom-engine
+
+監聽 `turn:after`，從成功的對話中提取經驗。
+累積到經驗庫（wisdom atoms）。
+
+### failure-detector
+
+監聽 `tool:error`，記錄失敗到 `memory/failures/` 目錄。
+供後續分析和避免重蹈覆轍。
+
+### aidocs-manager
+
+監聽 `file:modified`，偵測核心檔案變更。
+提示更新 _AIDocs 對應文件（contentGate 可停用自動寫入）。
+
+### memory-extractor
+
+監聽 `turn:after`，每 N 輪自動觸發記憶萃取。
+呼叫 MemoryEngine.extract()。
+
+### consolidate-scheduler
+
+定期排程，執行記憶整合：
+- Auto-promote：命中次數達閾值 → 提升 tier
+- Archive：衰減分數低於閾值 → 歸檔
+
+### fix-escalation
+
+手動觸發（`/fix-escalation` skill），精確修正升級協定：
+1. 分析連續失敗的根因
+2. 提出精確修正方案（非表面修復）
+3. 記錄到 atom 防止再犯
+
+## Trace 整合
+
+agent-loop.ts 的 workflow 事件橋接：
+- `workflow:rut` → `trace.recordWorkflowEvent("rut", ...)`
+- `workflow:oscillation` → `trace.recordWorkflowEvent("oscillation", ...)`
+- `workflow:sync_needed` → `trace.recordWorkflowEvent("sync_needed", ...)`
+- `file:modified` → `trace.recordWorkflowEvent("file_modified", ...)`

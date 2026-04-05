@@ -1,6 +1,8 @@
 # modules/reply — Discord 回覆分段 + Typing
 
-> 檔案：`src/reply.ts`
+> ⚠️ **舊版參考**：以下內容描述的是 `src/reply.ts`（V1 ACP/CLI 架構，基於 `AcpEvent` + `createReplyHandler` factory）。新版 `src/core/reply-handler.ts` 採用 async generator 消費 + streaming live-edit 模式，詳見文末「新版 reply-handler」段落。
+
+> 檔案：`src/reply.ts`（舊版）
 
 ## 職責
 
@@ -157,3 +159,87 @@ const MEDIA_RE = /\bMEDIA:\s*`?([^\n`]+)`?/gi;
 ## 型別注意
 
 使用 `SendableChannels`（非 `TextBasedChannel`）避免 `PartialGroupDMChannel` 缺少 `send()` 的 TS 編譯錯誤。
+
+---
+
+## 新版 reply-handler（`src/core/reply-handler.ts`）
+
+> V2 架構。消費 `AgentLoopEvent` async generator，串流回覆到 Discord。
+
+### 兩種回覆模式
+
+| 模式 | 條件 | 行為 |
+|------|------|------|
+| **streaming**（預設） | `bridgeConfig.streamingReply !== false` | 每條訊息建立後 live-edit，體驗類似 ChatGPT 串流 |
+| **chunk**（fallback） | `streamingReply = false`，或 fileMode 觸發時 | 逐段發送新訊息 |
+
+### 重要常數
+
+| 常數 | 值 | 說明 |
+|------|-----|------|
+| `TEXT_LIMIT` | `2000` | Discord 單則訊息字元上限 |
+| `FLUSH_DELAY_MS` | `3000` | chunk 模式：定時 flush 延遲（毫秒） |
+| `EDIT_INTERVAL_MS` | `800` | streaming 模式：最快 edit 間隔（毫秒） |
+| `STREAM_SPLIT_THRESHOLD` | `1900` | streaming 模式：超過此值終結目前段開新訊息 |
+
+### API
+
+#### `handleAgentLoopReply(gen, originalMessage, bridgeConfig, opts?): Promise<void>`
+
+主要 entry point，消費 `AsyncGenerator<AgentLoopEvent>` 並回覆到 Discord。
+
+```typescript
+export async function handleAgentLoopReply(
+  gen: AsyncGenerator<AgentLoopEvent>,
+  originalMessage: Message,
+  bridgeConfig: BridgeConfig,
+  opts?: { threadChannel?: SendableChannels },  // autoThread 模式
+): Promise<void>
+```
+
+**與舊版差異**：舊版 `createReplyHandler()` 回傳 event callback（push 模式），新版直接消費 async generator（pull 模式）。
+
+### Streaming Edit 機制
+
+1. 首次 `text_delta` → `initEditMsg("💭")` 建立 placeholder 訊息
+2. 後續 `text_delta` 累積到 buffer → `scheduleEdit()` 排程 800ms 後 `editMsg.edit(buffer)`
+3. buffer 超過 `STREAM_SPLIT_THRESHOLD`（1900 字） → 終結目前段（最終 edit），重置 editMsg，下次 text_delta 開新訊息
+4. `done` 時 `finalizeStreamEdit()` 做最後一次 edit
+
+**Rate-limit 保護**：`editBusy` flag 防止重疊 edit，`waitEditDone()` 最多等 500ms。
+
+### 送出目標選擇
+
+- `opts.threadChannel` 存在 → 所有回覆 send 到 thread channel（autoThread 模式）
+- 否則：第一段 `originalMessage.reply()`（Discord 引用回覆），後續 `channel.send()`
+
+### Event 處理
+
+| Event | 行為 |
+|-------|------|
+| `text_delta` | streaming：`streamEditTextDelta()`；chunk：累積 buffer + scheduleFlush |
+| `thinking` | `showThinking` 開啟時累積 thinkingBuffer |
+| `tool_start` | `"all"` → finalize + 傳 `🔧 使用工具：{name}`；`"summary"` → 首次傳 `⏳ 處理中...` |
+| `tool_blocked` | toolMode !== "none" → finalize + 傳 `🚫 工具被阻擋：{name} — {reason}` |
+| `done` | finalize → extractMediaTokens → fileMode 分支處理 → 上傳 MEDIA 附件 |
+| `error` | stopTyping → 若 editMsg 空（placeholder）直接 edit 為錯誤訊息；否則 finalize + send |
+
+### 檔案上傳模式（fileMode）
+
+觸發條件同舊版（`threshold > 0 && totalText.length > threshold`）。
+streaming 模式下觸發時先 `finalizeStreamEdit()` 再切換。
+
+`done` 時的 fileMode 分支：
+- `mediaPaths.length === 0` → 上傳 `response.md` + 前 150 字預覽
+- `mediaPaths.length > 0` → 用 cleanedText 重建 buffer → flush/edit → 再逐一上傳附件
+
+### 工具函式（模組私有）
+
+| 函式 | 說明 |
+|------|------|
+| `countCodeFences(text)` | 計算 ` ``` ` 出現次數 |
+| `closeFenceIfOpen(text)` | 奇數個 fence → 尾端補 ` ``` ` |
+| `extractMediaTokens(raw)` | 解析 `MEDIA: /path` token，支援 Unix + Windows 絕對路徑 |
+| `uploadMediaFile(filePath, originalMessage, isFirst)` | 讀取檔案 → AttachmentBuilder → Discord 附件 |
+| `sendChunk(content, originalMessage, isFirst)` | 發送文字段 |
+| `sendFile(content, fileName, originalMessage, isFirst, preview?)` | 以檔案附件發送 |

@@ -56,7 +56,7 @@ import { getChannelProviderOverride } from "./skills/builtin/use.js";
 import { getChannelSystemOverride } from "./skills/builtin/system.js";
 import { eventBus } from "./core/event-bus.js";
 import { handleAgentLoopReply } from "./core/reply-handler.js";
-import { assembleSystemPrompt, detectIntent, getModulesForIntent } from "./core/prompt-assembler.js";
+import { assembleSystemPrompt, detectIntent, getModulesForIntent, type AssembleTraceOutput } from "./core/prompt-assembler.js";
 import { setDiscordClient, getSubagentThreadBinding } from "./core/subagent-discord-bridge.js";
 import { parseApprovalReply, parseApprovalButtonId, resolveApproval, setApprovalDiscordClient } from "./core/exec-approval.js";
 import { abortRunningTurn } from "./skills/builtin/stop.js";
@@ -612,6 +612,25 @@ async function handleMessage(
               injectedTokens: ctx.tokenCount,
               vectorSearch: !recallResult.degraded,
               degraded: recallResult.degraded,
+              blindSpot: recallResult.blindSpot,
+              hits: recallResult.fragments.map(f => ({
+                name: f.atom.name,
+                layer: f.layer,
+                score: Math.round(f.score * 1000) / 1000,
+                matchedBy: f.matchedBy,
+              })),
+            });
+          } else {
+            // fragments=0 也記錄（含 blindSpot/degraded 狀態）
+            trace.recordMemoryRecall({
+              durationMs: Date.now() - recallStartMs,
+              fragmentCount: 0,
+              atomNames: [],
+              injectedTokens: 0,
+              vectorSearch: !recallResult.degraded,
+              degraded: recallResult.degraded,
+              blindSpot: recallResult.blindSpot,
+              hits: [],
             });
           }
         } catch (err) {
@@ -645,6 +664,8 @@ async function handleMessage(
       const moduleFilter = getModulesForIntent(intent);
       log.debug(`[discord] Intent: ${intent}, modules: ${moduleFilter ? moduleFilter.join(",") : "all"}`);
 
+      const assemblerTrace: AssembleTraceOutput = { modulesActive: [], modulesSkipped: [] };
+      const extraBlocks = [systemPromptFromMemory, channelSystemOverride, modeExtrasBlock].filter((s): s is string => !!s);
       const combinedSystemPrompt = assembleSystemPrompt({
         role: accountRole as any,
         mode: modePreset,
@@ -655,8 +676,23 @@ async function handleMessage(
         accountId,
         speakerRole: accountRole,
         activeMcpServers: ["discord"], // Discord channel 永遠有 Discord context
-        extraBlocks: [systemPromptFromMemory, channelSystemOverride, modeExtrasBlock].filter((s): s is string => !!s),
+        extraBlocks,
         moduleFilter,
+        traceOutput: assemblerTrace,
+      });
+
+      // Trace: Prompt Assembly + Intent + Provider
+      trace.recordPromptAssembly({
+        intent,
+        modulesActive: assemblerTrace.modulesActive,
+        modulesSkipped: assemblerTrace.modulesSkipped,
+        extraBlocks: extraBlocks.map(b => b.slice(0, 40)),
+        agentLoopBlocks: [],  // agent-loop 內追加的區塊由 agent-loop 補填
+      });
+      trace.recordProviderSelection({
+        providerId: provider.id,
+        providerType: provider.name,
+        model: provider.modelId,
       });
 
       // ── Inbound History（注入到 messages 層，非 system prompt）──────────

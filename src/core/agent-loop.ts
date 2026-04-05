@@ -733,6 +733,7 @@ export async function* agentLoop(
   // ── 3b. Memory Recall（可選，供子 agent 等無前置 recall 的情境使用）──────────
   let memoryContextBlock = "";
   if (opts.memoryRecall?.enabled && deps.memoryEngine) {
+    const recallStartMs = Date.now();
     try {
       const recallResult = await deps.memoryEngine.recall(
         prompt,
@@ -743,6 +744,21 @@ export async function* agentLoop(
         const ctx = deps.memoryEngine.buildContext(recallResult.fragments, prompt, recallResult.blindSpot);
         memoryContextBlock = ctx.text;
         log.debug(`[agent-loop] memory recall 注入 ${recallResult.fragments.length} fragments (vectorSearch=${opts.memoryRecall.vectorSearch})`);
+        trace?.recordMemoryRecall({
+          durationMs: Date.now() - recallStartMs,
+          fragmentCount: recallResult.fragments.length,
+          atomNames: recallResult.fragments.map(f => f.atom.name),
+          injectedTokens: ctx.tokenCount,
+          vectorSearch: !recallResult.degraded,
+          degraded: recallResult.degraded,
+          blindSpot: recallResult.blindSpot,
+          hits: recallResult.fragments.map(f => ({
+            name: f.atom.name,
+            layer: f.layer,
+            score: Math.round(f.score * 1000) / 1000,
+            matchedBy: f.matchedBy,
+          })),
+        });
       }
     } catch (err) {
       log.debug(`[agent-loop] memory recall 失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
@@ -804,6 +820,23 @@ export async function* agentLoop(
     }
   }
 
+  // Trace: agent-loop 追加的 system prompt 區塊
+  if (trace) {
+    const blocks: string[] = [];
+    if (memoryContextBlock) blocks.push("memory-context");
+    if (opts.isGroupChannel) blocks.push("group-isolation");
+    if (planActive) blocks.push("plan-mode");
+    if (deferredDefs.length > 0) blocks.push("deferred-tools");
+    // nudge 是否注入
+    if (contextEngine) {
+      const ratio = contextEngine.getContextWindowTokens() > 0
+        ? contextEngine.lastBuildBreakdown.estimatedTokens / contextEngine.getContextWindowTokens()
+        : 0;
+      if (ratio >= 0.60) blocks.push("token-nudge");
+    }
+    trace.appendAgentLoopBlocks(blocks);
+  }
+
   // ── 4c. Session Note 注入（參考 Claude Code SessionMemory）───────────────────
   if (opts.sessionMemory?.enabled) {
     const note = getSessionNote(opts.sessionMemory.memoryDir, channelId);
@@ -863,6 +896,7 @@ export async function* agentLoop(
     const ceApplied = (contextEngine?.lastBuildBreakdown?.strategiesApplied?.length ?? 0) > 0;
     trace.recordContextSnapshot({
       systemPrompt,
+      memoryContext: memoryContextBlock || undefined,
       messagesBeforeCE: ceApplied ? rawHistory as unknown[] : undefined,
       messagesAfterCE: messages as unknown[],
       ceApplied,

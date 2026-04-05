@@ -18,6 +18,14 @@ import { log } from "../logger.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
+/** 單個 Atom 命中明細 */
+export interface TraceRecallHit {
+  name: string;
+  layer: "global" | "project" | "account";
+  score: number;
+  matchedBy: "trigger" | "vector" | "related";
+}
+
 /** 記憶 Recall 追蹤 */
 export interface TraceRecall {
   durationMs: number;
@@ -26,6 +34,12 @@ export interface TraceRecall {
   injectedTokens: number;
   vectorSearch: boolean;
   degraded: boolean;
+  /** 是否命中 recall cache（60s 內同頻道相似 prompt） */
+  cacheHit?: boolean;
+  /** Blind-Spot：所有層均無命中 */
+  blindSpot?: boolean;
+  /** per-atom 命中明細 */
+  hits?: TraceRecallHit[];
 }
 
 /** Inbound History 追蹤 */
@@ -60,6 +74,23 @@ export interface TraceLLMCall {
   durationMs: number;
   toolCalls: TraceToolCall[];
   stopReason?: string;
+}
+
+/** Prompt 組裝追蹤 */
+export interface TracePromptAssembly {
+  intent: string;
+  modulesActive: string[];
+  modulesSkipped: string[];
+  extraBlocks: string[];
+  /** agent-loop 內追加的區塊（memory-context / plan-mode / deferred-tools / nudge） */
+  agentLoopBlocks: string[];
+}
+
+/** Provider 選擇追蹤 */
+export interface TraceProviderSelection {
+  providerId: string;
+  providerType: string;
+  model?: string;
 }
 
 /** Workflow 事件追蹤 */
@@ -102,6 +133,8 @@ export interface MessageTraceEntry {
     startMs: number;
     endMs: number;
     memoryRecall?: TraceRecall;
+    promptAssembly?: TracePromptAssembly;
+    providerSelection?: TraceProviderSelection;
     systemPromptTokens: number;
     historyTokens: number;
     historyMessageCount: number;
@@ -306,6 +339,25 @@ export class MessageTrace {
     }
   }
 
+  recordPromptAssembly(assembly: TracePromptAssembly): void {
+    if (this.entry.context) {
+      this.entry.context.promptAssembly = assembly;
+    }
+  }
+
+  recordProviderSelection(selection: TraceProviderSelection): void {
+    if (this.entry.context) {
+      this.entry.context.providerSelection = selection;
+    }
+  }
+
+  /** 追加 agent-loop 內的 system prompt 區塊名稱到既有的 promptAssembly */
+  appendAgentLoopBlocks(blocks: string[]): void {
+    if (this.entry.context?.promptAssembly) {
+      this.entry.context.promptAssembly.agentLoopBlocks = blocks;
+    }
+  }
+
   recordInboundHistory(inbound: TraceInbound): void {
     if (this.entry.context) {
       this.entry.context.inboundHistory = inbound;
@@ -441,6 +493,7 @@ export class MessageTrace {
   /** 記錄完整 context snapshot（獨立檔案，lazy-load） */
   recordContextSnapshot(opts: {
     systemPrompt: string;
+    memoryContext?: string;
     messagesBeforeCE?: unknown[];
     messagesAfterCE: unknown[];
     ceApplied: boolean;
@@ -451,6 +504,7 @@ export class MessageTrace {
       traceId: this.traceId,
       ts: this.entry.ts,
       systemPrompt: opts.systemPrompt,
+      memoryContext: opts.memoryContext || undefined,
       messagesBeforeCE: opts.messagesBeforeCE,
       messagesAfterCE: opts.messagesAfterCE,
       ceApplied: opts.ceApplied,
@@ -607,6 +661,8 @@ export interface TraceContextSnapshot {
   traceId: string;
   ts: string;
   systemPrompt: string;
+  /** Memory recall 注入的原始文字（未混入 systemPrompt 前） */
+  memoryContext?: string;
   /** CE 壓縮前的 messages（僅在 CE 觸發時有值） */
   messagesBeforeCE?: unknown[];
   /** 最終送入 LLM 的 messages */

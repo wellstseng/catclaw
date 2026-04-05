@@ -206,3 +206,190 @@ CLI 不回傳真實 token 數，用字數 ÷ 4 估算（`estimated: true`）。
 ```
 
 走 `FailoverProvider` + `CircuitBreaker`，第一個失敗自動 fallback。
+
+## CircuitBreaker（circuit-breaker.ts）
+
+Provider 健康狀態追蹤，防止持續呼叫已故障的 provider。
+
+### 狀態機
+
+```
+closed → （windowMs 內失敗 ≥ errorThreshold）→ open
+open → （冷卻 cooldownMs 後）→ half-open
+half-open → 成功 → closed
+half-open → 失敗 → open
+```
+
+### 設定（CircuitBreakerConfig）
+
+| 參數 | 預設 | 說明 |
+|------|------|------|
+| `errorThreshold` | 3 | 觸發開路的錯誤次數門檻 |
+| `windowMs` | 60,000 | 計算錯誤次數的時間窗口（ms） |
+| `cooldownMs` | 30,000 | 開路後的冷卻時間（ms） |
+
+### API
+
+| 方法 | 說明 |
+|------|------|
+| `isAvailable(): boolean` | 是否允許呼叫（closed/half-open → true，open 未冷卻 → false） |
+| `recordSuccess()` | half-open → closed，清除錯誤記錄 |
+| `recordFailure()` | 計入失敗，達門檻 → open |
+| `getState(): BreakerState` | 回傳 "closed" / "open" / "half-open" |
+| `getStatus(): BreakerStatus` | 回傳 state + errorCount + lastFailureAt + openedAt |
+| `reset()` | 強制重置到 closed（維運用） |
+
+## FailoverProvider（failover-provider.ts）
+
+將多個 provider 組成 failover 鏈，實作 `LLMProvider` 介面。
+
+### 建構
+
+```typescript
+const failover = new FailoverProvider("failover", [
+  { provider: claudeProvider, breaker: new CircuitBreaker("claude-api") },
+  { provider: ollamaProvider, breaker: new CircuitBreaker("ollama") },
+]);
+// 或使用 builder
+const failover = buildFailoverProvider("failover", [claudeProvider, ollamaProvider], breakerCfg?);
+```
+
+### stream() 行為
+
+1. 依序遍歷 chain，`breaker.isAvailable()` 為 false → 跳過
+2. 呼叫 `provider.stream(messages, opts)`
+3. 成功 → `breaker.recordSuccess()` → 回傳 StreamResult
+4. 失敗 → `breaker.recordFailure()` → 嘗試下一個
+5. 4xx（非 429）→ 不計入 breaker，直接 throw（非 provider 故障）
+6. AbortError → 直接 throw（不算失敗）
+7. 全部失敗 → throw Error
+
+### 監控 API
+
+| 方法 | 說明 |
+|------|------|
+| `getStatus(): FailoverStatus` | 回傳 activeProvider + chain 中各 provider 的 BreakerStatus |
+| `resetAll()` | 重置所有 circuit breaker |
+| `resetProvider(id)` | 重置指定 provider 的 breaker |
+
+### LLMProvider 介面實作
+
+| 屬性 | 邏輯 |
+|------|------|
+| `modelId` | 取 chain[0] 的 modelId |
+| `supportsToolUse` | chain 中任一支援 → true |
+| `maxContextTokens` | 取第一個可用 provider 的上限 |
+
+## CodexOAuthProvider（codex-oauth.ts）
+
+OpenAI Codex OAuth Provider，使用 Responses API（`/v1/responses`）。
+
+### 認證流程
+
+1. 讀取 `~/.codex/auth.json`（或自訂 `oauthTokenPath`）
+2. 檢查 `expires_at` → 過期前 5 分鐘觸發 HTTP refresh
+3. 更新 auth.json + 用 `access_token` 作 Bearer header
+
+### 建構子
+
+```typescript
+new CodexOAuthProvider(id, entry, authStore?)
+```
+
+| 屬性 | 預設 |
+|------|------|
+| `baseUrl` | `https://chatgpt.com/backend-api` |
+| `modelId` | `openai-codex/gpt-5.4` |
+| `tokenPath` | `~/.codex/auth.json` |
+| `refreshUrl` | `https://auth.openai.com/oauth/token` |
+| `supportsToolUse` | `true` |
+| `maxContextTokens` | 128,000 |
+
+### auth.json 格式
+
+```json
+{
+  "access_token": "...",
+  "refresh_token": "...",
+  "expires_at": 1234567890,
+  "token_type": "Bearer"
+}
+```
+
+## models-config.ts — 模型目錄管理
+
+### BUILTIN_PROVIDERS 內建目錄
+
+| Provider Key | API | 包含模型 |
+|-------------|-----|---------|
+| `anthropic` | anthropic-messages | claude-opus-4-6, claude-sonnet-4-6, claude-sonnet-4-5, claude-haiku-4-5 |
+| `openai` | openai-completions | gpt-4o, gpt-4o-mini |
+| `openai-codex` | openai-codex-responses | gpt-5.4 |
+
+### ensureModelsJson(workspaceDir, modelsConfig?)
+
+產生 `{CATCLAW_WORKSPACE}/agents/default/models.json`。
+
+合併模式（`modelsConfig.mode`）：
+
+| mode | 行為 |
+|------|------|
+| `merge`（預設） | BUILTIN_PROVIDERS + 自訂合併（自訂的 baseUrl/api 覆寫，models 追加） |
+| `replace` | 只用自訂 providers |
+
+寫入使用 atomic write（先寫 `.tmp` 再 rename），內容相同時不寫入。
+
+### loadModelsJson(workspaceDir)
+
+讀取已生成的 models.json，快取在模組層級變數。
+
+## Provider Registry V2 — 最新 API
+
+### ProviderRegistry class
+
+```typescript
+class ProviderRegistry {
+  constructor(defaultId: string, routing: ProviderRoutingConfig, aliases?: Record<string, ModelAliasEntry>)
+
+  register(provider: LLMProvider): void
+  resolve(opts?: ResolveOpts): LLMProvider    // 路由解析
+  get(id: string): LLMProvider | undefined    // 直接取得（支援 alias 解析）
+  list(): LLMProvider[]
+  initAll(): Promise<void>
+  shutdownAll(): Promise<void>
+}
+```
+
+### ResolveOpts
+
+```typescript
+interface ResolveOpts {
+  channelId?: string;
+  projectId?: string;
+  role?: string;
+}
+```
+
+路由優先序：`channels[channelId]` → `projects[projectId]` → `roles[role]` → `defaultId`
+
+### Alias 解析
+
+`resolve()` 和 `get()` 都支援 alias → `provider/model` 格式解析（透過 `parseModelRef`）。
+
+### buildProviderRegistryV2()
+
+```typescript
+async function buildProviderRegistryV2(
+  agentDefaults: AgentDefaultsConfig,
+  modelsJson: ModelsJsonConfig,
+  authStore: AuthProfileStore | null,
+  routing: ProviderRoutingConfig,
+): Promise<ProviderRegistry>
+```
+
+流程：
+1. 解析 `agentDefaults.model.primary` 為 ModelRef
+2. 收集 primary + fallbacks + models 表中所有 ref
+3. 按 provider 分組，由 `apiToProviderType()` 推斷型別
+4. 建立對應 LLMProvider 實例（ClaudeApiProvider / OllamaProvider / OpenAICompatProvider / CodexOAuthProvider / CliProvider）
+5. 註冊到 ProviderRegistry

@@ -146,14 +146,207 @@ const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
 - DM 也加此前綴，格式統一
 - 讓 Claude 在多人頻道中分辨發言者
 
+## 帳號系統整合
+
+Debounce 觸發後，進入平台路徑（`isPlatformReady()` 為 true 時）：
+
+```typescript
+const { accountId, isGuest } = resolveDiscordIdentity(
+  firstMessage.author.id,
+  config.admin?.allowedUserIds ?? [],
+);
+```
+
+- `resolveDiscordIdentity()` → `discord:{discordId}` 格式的 accountId
+- Guest 帳號自動建立（`ensureGuestAccount(accountId)`）
+- DM 未知使用者 → 觸發配對流程（`getRegistrationManager().createPairingCode()`）
+- 帳號角色取自 `getAccountRegistry().get(accountId).role`
+- 當前專案：頻道綁定（`coreChannelAccess.boundProject`） > 帳號的 `currentProject`
+
+### Permission Gate
+
+Skill 執行前進行 tier 檢查：
+
+```typescript
+const tierCheck = getPlatformPermissionGate().checkTier(accountId, skill.tier);
+```
+
+### Rate Limit
+
+```typescript
+const rateLimiter = getPlatformRateLimiter();
+const rlResult = rateLimiter.check(accountId, accountRole);
+```
+
+每角色有每分鐘上限，超限回傳 `retryAfterMs`。
+
+## Provider 選擇
+
+路由優先序：`/use` 手動覆寫 > 頻道綁定 > 角色/專案路由 > 全域預設
+
+```typescript
+const providerOverride = getChannelProviderOverride(firstMessage.channelId);
+const providerId = providerOverride ?? resolveProvider({ channelAccess, channelId, role, projectId });
+const provider = providerRegistry.get(providerId)
+  ?? providerRegistry.resolve({ role: accountRole, projectId: resolvedProjectId });
+```
+
+## 記憶 Recall 三層（全域+專案+個人）
+
+```typescript
+const memEngine = getPlatformMemoryEngine();
+const recallResult = await memEngine.recall(prompt, {
+  accountId,
+  projectId: resolvedProjectId,
+  channelId: firstMessage.channelId,
+});
+const ctx = memEngine.buildContext(recallResult.fragments, prompt, recallResult.blindSpot);
+systemPromptFromMemory = ctx.text;
+```
+
+Trace 記錄：
+
+```typescript
+trace.recordMemoryRecall({
+  durationMs, fragmentCount, atomNames, injectedTokens, vectorSearch, degraded,
+});
+```
+
+## Prompt Assembler 呼叫
+
+### Context-Aware Intent Detection
+
+```typescript
+const intent = detectIntent(prompt);           // 分析使用者意圖
+const moduleFilter = getModulesForIntent(intent); // 篩選需要啟用的模組
+```
+
+### System Prompt 組裝
+
+```typescript
+const combinedSystemPrompt = assembleSystemPrompt({
+  role, mode, modeName, workspaceDir,
+  isGroupChannel, speakerDisplay, accountId, speakerRole,
+  activeMcpServers: ["discord"],
+  extraBlocks,          // [記憶注入, /system 覆寫, mode extras]
+  moduleFilter,         // intent 過濾後的模組清單
+  traceOutput,          // { modulesActive, modulesSkipped }
+});
+```
+
+額外區塊來源：
+- `systemPromptFromMemory`：記憶 recall 結果
+- `getChannelSystemOverride()`：`/system` 手動覆寫
+- `modePreset.systemPromptExtras`：讀取 `workspace/prompts/{name}.md`
+
+## Inbound History 注入
+
+未被 mention 的訊息會記錄到 `InboundHistoryStore`，下次觸發時注入：
+
+```typescript
+const ctx = await inboundStore.consumeForInjection(channelId, {
+  fullWindowHours, decayWindowHours, bucketBTokenCap, decayIITokenCap,
+  inject: { enabled },
+});
+inboundContext = ctx.text;  // 注入到 messages 層，非 system prompt
+```
+
+配置來自 `config.inboundHistory`。
+
+## AutoThread 機制
+
+若頻道設定 `access.autoThread = true` 且訊息不在 Thread 內：
+
+```typescript
+const replyThread = await firstMessage.startThread({
+  name: combinedText.slice(0, 50) || "對話",
+  autoArchiveDuration: 60,
+});
+effectiveChannelId = replyThread.id;
+```
+
+後續 agent-loop 使用 `effectiveChannelId`，回覆送入新 Thread。
+
+## agent-loop 啟動
+
+```typescript
+const gen = agentLoop(prompt, {
+  platform: "discord",
+  channelId: effectiveChannelId,
+  accountId,
+  isGroupChannel,
+  speakerDisplay,
+  speakerRole,
+  provider,
+  systemPrompt: combinedSystemPrompt || undefined,
+  inboundContext,
+  turnTimeoutMs,
+  showToolCalls,
+  sessionMemory: { enabled, intervalTurns, maxHistoryTurns, memoryDir },
+  execApproval: { enabled, dmUserId, timeoutMs, allowedPatterns, sendDm },
+  imageAttachments,     // base64 圖片附件
+  thinking,             // /think 設定 > mode preset
+  modePreset,
+  trace,
+}, {
+  sessionManager: getPlatformSessionManager(),
+  permissionGate: getPlatformPermissionGate(),
+  toolRegistry: getPlatformToolRegistry(),
+  safetyGuard: getPlatformSafetyGuard(),
+  eventBus,
+});
+```
+
+回傳 `AsyncGenerator`，由 `handleAgentLoopReply()` 消費並回覆 Discord。
+
+### Ack Reaction 狀態機
+
+| 階段 | Reaction |
+|------|----------|
+| queued | ⏳ |
+| thinking（text_delta） | 🤔（移除 ⏳） |
+| tool 執行中 | 🔧（移除 🤔） |
+| done | 移除所有 |
+| error | ❌ |
+
+## Context End Trace
+
+agent-loop 啟動前記錄 context 指標：
+
+```typescript
+trace.recordContextEnd({
+  systemPromptTokens,
+  historyTokens: 0,           // 精確值在 agent-loop CE 之後才知道
+  historyMessageCount: 0,
+  totalContextTokens: sysTokens,
+});
+```
+
+## 其他機制
+
+### Exec-Approval 攔截
+
+DM 中符合「✅/❌ ABCDEF」格式的訊息 → 解析為 exec-approval 回覆，不進入一般處理。
+按鈕互動（`interactionCreate`）亦支援 Task UI + exec-approval。
+
+### Subagent Thread 路由
+
+若頻道是子 agent 綁定的 thread（`getSubagentThreadBinding(channelId)`），直接路由到子 session。
+
+### InterruptOnNewMessage
+
+頻道設定 `interruptOnNewMessage=true` → 新訊息自動 abort 正在執行的 turn + 清空 queue。
+
 ## 對外 API
 
-### `createDiscordClient(): Client`
+### `createBot(): Client`
 
-建立已綁定 `messageCreate` handler 的 Client（尚未 `login`）。
+建立已綁定 `messageCreate` + `interactionCreate` handler 的 Client（尚未 `login`）。
 
 > **重要**：不接收 config 參數。每次 `messageCreate` 都讀全域 `config`，支援 hot-reload。
 > 若 closure 捕獲 config，hot-reload 後新設定不會生效。
+
+`clientReady` 時初始化：`setDiscordClient`、`setApprovalDiscordClient`、`setTaskUiDiscordClient`、`registerTaskUiListener`。
 
 ## 模組層級常數
 
@@ -162,5 +355,6 @@ const prompt = `${firstMessage.author.displayName}: ${combinedText}`;
 | `processedMessages` | `Set<string>` | 已處理 message ID，超過 1000 筆整批清除 |
 | `debounceTimers` | `Map<string, Timer>` | key → setTimeout handle |
 | `debounceBuffers` | `Map<string, string[]>` | key → 累積訊息行 |
+| `debounceImages` | `Map<string, Array<{data, mimeType, name}>>` | key → 累積圖片附件 |
 | `debounceMessages` | `Map<string, Message>` | key → 第一則訊息物件 |
 | `UPLOAD_DIR` | `string` | 附件暫存根目錄（`/tmp/claude-discord-uploads`） |

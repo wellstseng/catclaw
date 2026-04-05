@@ -1,0 +1,145 @@
+# modules/dashboard — Web Dashboard + REST API
+
+> 檔案：`src/core/dashboard.ts` (~3300 行)
+> 更新日期：2026-04-05
+
+## 職責
+
+內建 Web Dashboard：多分頁監控面板 + REST API + 內嵌 HTML/CSS/JS（單檔）。
+
+## 啟動
+
+```typescript
+initDashboard(port: number, token?: string): void
+```
+
+在 `platform.ts` 步驟 9.8 初始化。`config.dashboard.enabled` 控制。
+
+## 認證
+
+Bearer token 認證（可選）：
+- `config.dashboard.token` 設定 → 所有 API 需帶 `?token=xxx` 或 `Authorization: Bearer xxx`
+- 未設定 → 無認證（本地開發用）
+
+## 分頁
+
+| 分頁 | 說明 |
+|------|------|
+| 概覽 | 狀態總覽、provider 狀態、uptime |
+| Sessions | Session 列表 + 操作（Clear/Compact/Delete/Purge） |
+| Traces | Message Lifecycle Trace 列表 + 詳情 |
+| Subagents | 子 agent 列表 + Kill |
+| Tasks | 任務管理面板 |
+| Cron | 排程 job 管理 |
+| Config | catclaw.json 線上編輯 |
+| Logs | PM2 日誌 tail + SSE 即時串流 |
+
+## REST API 端點
+
+### 核心
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/` | GET | Dashboard HTML |
+| `/api/status` | GET | 系統狀態 |
+| `/api/usage` | GET | Token 使用統計 |
+
+### Sessions
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/sessions` | GET | Session 列表 |
+| `/api/sessions/clear` | POST | 清空訊息 `{ sessionKey }` |
+| `/api/sessions/delete` | POST | 刪除 session `{ sessionKey }` |
+| `/api/sessions/compact` | POST | 強制 CE 壓縮 `{ sessionKey }` |
+| `/api/sessions/purge-expired` | POST | 清除過期 sessions |
+
+### Traces
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/traces` | GET | Trace 列表（`?limit=N&session=key`） |
+| `/api/traces/:id` | GET | 單筆 trace 詳情 |
+| `/api/traces/:id/context` | GET | Context snapshot（lazy-load） |
+
+### Inbound History
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/inbound-history` | GET | 頻道歷史 `?channelId=xxx` |
+| `/api/inbound-history/clear` | POST | 清除歷史 `{ channelId }` |
+
+### Subagents
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/subagents` | GET | 子 agent 列表 |
+| `/api/subagents/kill` | POST | 終止子 agent `{ runId }` |
+
+### Tasks
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/tasks` | GET | 任務列表 `?sessionKey=xxx` |
+
+### Cron
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/cron` | GET | 排程 job 列表 |
+| `/api/cron` | POST | 新增 job |
+| `/api/cron/delete` | POST | 刪除 job |
+| `/api/cron/trigger` | POST | 手動觸發 |
+| `/api/cron/toggle` | POST | 啟用/停用 |
+
+### Config
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/config` | GET | 取得設定（敏感欄位遮罩 `***`） |
+| `/api/config` | POST | 更新設定（自動備份 + 敏感欄位還原） |
+| `/api/models-json` | GET | models.json 內容 |
+| `/api/models-config` | GET/POST | models-config.json 讀寫 |
+
+### Auth Profiles
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/auth-profiles` | GET | 憑證列表 |
+| `/api/auth-profiles` | POST | 新增/更新憑證 |
+| `/api/auth-profiles/clear-cooldown` | POST | 清除 cooldown |
+
+### Codex OAuth
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/codex-oauth-start` | POST | 啟動 OAuth flow |
+| `/api/codex-oauth-status` | GET | OAuth 狀態查詢 |
+| `/api/codex-oauth-callback` | POST | 手動 callback |
+
+### Trigger（遠端觸發）
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/trigger` | POST | 遠端觸發 agent loop `{ channelId, prompt }` |
+| `/api/trigger/:traceId` | GET | 查詢觸發結果 |
+
+### Chat
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/chat` | POST | Dashboard 內嵌對話 |
+
+### Logs
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/logs` | GET | PM2 日誌 tail `?lines=N` |
+| `/api/logs/stream` | GET | SSE 即時日誌串流 |
+| `/api/restart` | POST | PM2 重啟 |
+
+## Config 安全
+
+- GET 時敏感欄位（token/apiKey/password/credential）遮罩為 `***`
+- POST 時 `***` 自動還原為原始值（`restoreMasked`）
+- 每次寫入前自動備份（保留最近 5 份 `.bak.{timestamp}`）
