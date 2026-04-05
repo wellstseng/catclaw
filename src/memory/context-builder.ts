@@ -6,8 +6,10 @@
  * R7: Context Budget ≤3000 tokens，三層比例 30/40/30
  * R8: Token Diet：strip metadata fields + ## 行動 / ## 演化日誌 section
  * R13: Section-Level 注入（atom >300 tokens 時分區，保留 top-3 chunks）
+ * R14: Staleness — 掃描 atom 內容中的檔案路徑引用，不存在 → 標記過時
  */
 
+import { existsSync } from "node:fs";
 import { log } from "../logger.js";
 import type { AtomFragment, MemoryLayer } from "./recall.js";
 import { computeActivation } from "./atom.js";
@@ -93,6 +95,44 @@ function selectSections(content: string, query: string, budget: number): string 
   return extracted;
 }
 
+// ── R14: Staleness Check ─────────────────────────────────────────────────────
+
+/**
+ * 掃描 atom content 中的檔案路徑引用，回傳不存在的路徑清單。
+ * 快速 existsSync() 驗證，目標 < 10ms overhead。
+ *
+ * 匹配模式：
+ * - 反引號包裹的絕對路徑：`/path/to/file` 或 `~/path/to/file`
+ * - src/ 開頭的相對路徑：`src/core/agent-loop.ts`
+ * - 明確的檔案路徑模式：path/to/file.ext（含副檔名的）
+ */
+const FILE_PATH_RE = /`([~/][^\s`]+\.\w+)`|`(src\/[^\s`]+)`|\b(src\/[\w/.-]+\.\w+)\b/g;
+
+function checkStaleness(content: string): string[] {
+  const missing: string[] = [];
+  const checked = new Set<string>();
+
+  let match: RegExpExecArray | null;
+  FILE_PATH_RE.lastIndex = 0;
+
+  while ((match = FILE_PATH_RE.exec(content)) !== null) {
+    const path = match[1] ?? match[2] ?? match[3];
+    if (!path || checked.has(path)) continue;
+    checked.add(path);
+
+    // Expand ~ to home dir
+    const resolved = path.startsWith("~")
+      ? path.replace(/^~/, process.env.HOME ?? "/tmp")
+      : path;
+
+    if (!existsSync(resolved)) {
+      missing.push(path);
+    }
+  }
+
+  return missing;
+}
+
 // ── 公開 API ─────────────────────────────────────────────────────────────────
 
 export interface ContextPayload {
@@ -168,7 +208,12 @@ export function buildContext(
       const remaining = layerBudget - layerTokens;
       const selected = selectSections(dieted, prompt, remaining);
 
-      const header = `[${frag.id}]`;
+      // R14: Staleness check
+      const missingPaths = checkStaleness(frag.atom.content);
+      const staleTag = missingPaths.length > 0
+        ? ` [⚠️ stale: ${missingPaths.slice(0, 3).join(", ")}]`
+        : "";
+      const header = `[${frag.id}]${staleTag}`;
       const block = `${header}\n${selected}`;
       const blockTokens = estimateTokens(block);
 
