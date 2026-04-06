@@ -22,7 +22,8 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | Prompt Assembler | `src/core/prompt-assembler.ts` | 模組化 system prompt 組裝 + context-aware intent detection |
 | Context Engine | `src/core/context-engine.ts` | Strategy Pattern：compaction / budget-guard / sliding-window / overflow-hard-stop |
 | Message Trace | `src/core/message-trace.ts` | 7 階段訊息全鏈路追蹤 + TraceStore 持久化 |
-| Dashboard | `src/core/dashboard.ts` | Web dashboard + REST API + trace 視覺化 |
+| Message Pipeline | `src/core/message-pipeline.ts` | 統一訊息管線：Memory Recall / Intent / Assembler / Trace / Inbound / SessionMemory |
+| Dashboard | `src/core/dashboard.ts` | Web dashboard + REST API + trace 視覺化 + Web Chat（跨平台 session 共用） |
 | Reply Handler | `src/core/reply-handler.ts` | Streaming 回覆：分段、code fence 平衡、typing indicator |
 | Session | `src/core/session.ts` | SessionManager：per-channel 串行佇列、磁碟持久化、TTL |
 | Event Bus | `src/core/event-bus.ts` | 強型別事件匯流排 |
@@ -39,7 +40,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | Cron | `src/cron.ts` | 排程服務（cron/every/at），croner 驅動 |
 | MCP | `src/mcp/` | MCP client + Discord MCP server |
 | Vector | `src/vector/` | Ollama embedding + LanceDB 向量搜尋 |
-| Discord Entry | `src/discord.ts` | Discord Client、訊息過濾、debounce、recall、assembler 呼叫、agent-loop 啟動 |
+| Discord Entry | `src/discord.ts` | Discord Client、訊息過濾、debounce、message-pipeline 呼叫、agent-loop 啟動 |
 
 ## 文件清單
 
@@ -89,6 +90,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/task-store.md](modules/task-store.md) | `src/core/task-store.ts` | 任務 CRUD + per-session | 2026-04-06 |
 | [modules/task-ui.md](modules/task-ui.md) | `src/core/task-ui.ts` | Discord 任務按鈕互動 | 2026-04-06 |
 | [modules/mcp-client.md](modules/mcp-client.md) | `src/mcp/client.ts` | MCP server 連線 + tool 自動註冊 | 2026-04-06 |
+| [modules/message-pipeline.md](modules/message-pipeline.md) | `src/core/message-pipeline.ts` | 統一訊息管線 | 2026-04-06 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務 | 2026-03-22 |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點 | 2026-03-22 |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log 系統 | 2026-03-22 |
