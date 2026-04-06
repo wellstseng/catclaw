@@ -50,12 +50,13 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 
 | 文件 | 主題 | 更新日期 |
 |------|------|---------|
+| [WIKI.md](WIKI.md) | 使用者導向綜合指南：快速入門、架構、設定、功能、部署、陷阱、模組索引 | 2026-04-07 |
 | [00-OVERVIEW.md](00-OVERVIEW.md) | 架構全貌：資料流圖、模組關係、常數速查、config 欄位一覽 | 2026-03-22 |
 | [01-ARCHITECTURE.md](01-ARCHITECTURE.md) | 整體架構 + 資料流 + 專案結構（含 Sprint 1-4 新子系統） | 2026-04-05 |
 | [02-CONFIG-REFERENCE.md](02-CONFIG-REFERENCE.md) | config.json + cron-jobs.json 完整範例 + 環境變數 | 2026-03-21 |
 | [04-DEPLOY.md](04-DEPLOY.md) | 部署流程、PM2 管理、hot-reload、健康檢查 | 2026-03-22 |
 | [08-CLAUDE-CLI.md](08-CLAUDE-CLI.md) | Claude CLI 指令格式 + stream-json event 規格（舊版，acp.ts 參考用） | 2026-03-19 |
-| [09-PITFALLS.md](09-PITFALLS.md) | 17 項陷阱速查 + 錯誤訊息對照表 | 2026-03-22 |
+| [09-PITFALLS.md](09-PITFALLS.md) | 21 項陷阱速查 + 錯誤訊息對照表 | 2026-03-22 |
 | [PLAN.md](PLAN.md) | 初始實作計畫（已完成） | 2026-03-18 |
 | [PLAN-V3.md](PLAN-V3.md) | V3 計畫書：Subagent 編排 | 2026-03-27 |
 | [PLAN-V4.md](PLAN-V4.md) | V4 計畫書：Agent 能力強化 | 2026-03-27 |

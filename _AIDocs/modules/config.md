@@ -213,6 +213,7 @@ DM：永遠 `allowBot = false`（硬擋 bot 互敲）。
 - token 變更時只 `log.warn`，不阻止替換（但 Gateway 連線需重啟才更新）
 - 替換全域 `config`（`let` 宣告）
 - 同步更新 `setLogLevel(config.logLevel)`
+- 同步 hot-reload hooks：`getHookRegistry()?.reload(config.hooks ?? [])`
 - parse 失敗 → 維持舊設定，`log.warn`
 
 ## Hot-Reload

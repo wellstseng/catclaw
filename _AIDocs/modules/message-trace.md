@@ -122,6 +122,7 @@ interface MessageTraceEntry {
   contextBreakdown?: { systemPrompt, recall, history, inboundContext, current };
   toolDurations?: Record<string, number[]>;
 
+  error?: string;
   status: "completed" | "aborted" | "error";
 }
 ```

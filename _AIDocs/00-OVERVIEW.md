@@ -1,16 +1,23 @@
 # 00 — CatClaw 全貌
 
-> 版本：v1.0.0 | 最近更新：2026-03-22
+> 版本：v2.0.0 | 最近更新：2026-04-07
 
 ## 是什麼
 
-CatClaw 是一個**輕量 Discord bot**，將 Discord 訊息橋接到 Claude Code CLI，提供專案知識問答能力。
+CatClaw = **Codex 版 Claude Code CLI + 多人 AI 開發平台**。
+以 Discord 為前端，提供等同 Claude Code 的完整開發能力。
 
-- **不依賴 OpenClaw**：直接 spawn `claude -p --output-format stream-json`
-- **Persistent session**：per-channel，`--resume` 延續 + 磁碟持久化
-- **串流回覆**：`--include-partial-messages` + diff 機制
+- **Multi-turn Agent Loop**：tool 迴圈 + output token recovery + auto-compact
+- **多 Provider**：Claude API / Ollama / OpenAI-compat / ACP CLI，failover 自動切換
+- **17+ builtin tools**：file read/write/edit、run_command、search、memory、subagent 等
+- **31 builtin skills**：Discord 指令層（/think、/mode、/use、/stop、/plan 等）
+- **三層記憶引擎**：recall（vector + keyword）、extract、consolidate
+- **Context Engineering**：compaction / budget-guard / sliding-window / overflow-hard-stop
+- **帳號/角色/權限**：identity linking、role-based tool sets、rate limit
+- **Web Dashboard**：Trace 視覺化 + Web Chat + REST API
+- **串流回覆**：live-edit streaming + chunk fallback + code fence 平衡
 - **多人並行**：不同 channel 並行，同 channel 串行
-- **熱重載**：config.json + cron-jobs.json 編輯存檔即生效
+- **熱重載**：catclaw.json + cron-jobs.json 編輯存檔即生效
 
 ---
 
@@ -23,47 +30,52 @@ Discord Gateway
 [discord.ts] handleMessage()
       │  ① bot 自身過濾
       │  ② getChannelAccess() → allowed / requireMention / allowBot / allowFrom
-      │  ③ allowBot / allowFrom 過濾
-      │  ④ requireMention → strip mention <@id>
-      │  ⑤ downloadAttachments() → {tmpdir()}/claude-discord-uploads/{msgId}/
+      │  ③ allowBot / allowFrom / blockGroupMentions 過濾
+      │  ④ requireMention → strip mention <@id>（未 mention → inbound-history 記錄）
+      │  ⑤ downloadAttachments() → 圖片 base64 + 非圖片存 tmpdir
       │  ⑥ text 為空 → 忽略
       ▼
 [discord.ts] debounce(channelId:authorId, debounceMs=500ms)
-      │  多則訊息 \n 合併，記錄第一則 Message
+      │  多則訊息 \n 合併，圖片累積，記錄第一則 Message
       ▼
-[reply.ts] createReplyHandler(firstMessage, config)
-      │  建立 event handler + 啟動 typing indicator（8s 重發）
+    ┌─── skill 攔截？matchSkill(text)
+    │  是 → skill.execute() → reply → 結束
+    │  否 ▼
+[discord.ts] 身份解析 + 權限檢查
+      │  resolveDiscordIdentity() → accountId
+      │  Rate Limit 檢查 → 超限回絕
+      │  Provider 路由（channel override > role > project > default）
       ▼
-[session.ts] enqueue(channelId, prompt, onEvent, opts)
-      │  Promise chain 串行（同 channel 等前一個完成）
-      │  AbortController + setTimeout(turnTimeoutMs)
-      │  TTL 檢查 → 取 sessionId 或 null
+[message-pipeline.ts] runMessagePipeline()
+      │  ① Trace 建立
+      │  ② Memory Recall（vector + keyword）
+      │  ③ Mode Extras 載入
+      │  ④ Intent Detection + Module Filter
+      │  ⑤ System Prompt 組裝（prompt-assembler）
+      │  ⑥ Inbound History 注入
+      │  ⑦ Session Memory opts
       ▼
-[session.ts] runTurn()
-      │  呼叫 runClaudeTurn()，攔截 session_init，記錄 UUID + 持久化
-      │  錯誤時保留 session，下次繼續 --resume
+[agent-loop.ts] agentLoop(prompt, opts, deps)
+      │  SessionManager 取 session → per-channel 串行佇列
+      │  Context 組裝 → Tool list 物理過濾
+      │  LLM Provider HTTP API 呼叫（streaming）
+      │  tool_use → 執行 tool → 結果回填 → 迴圈至 end_turn
+      │  Output Token Recovery（max_tokens 截斷自動續接 ×3）
+      │  Auto-compact（sliding-window / LLM compaction）
+      │  萃取 + 事件通知
       ▼
-[acp.ts] runClaudeTurn(sessionId, text, channelId, signal?)
-      │  spawn: claude -p --output-format stream-json --verbose
-      │          --include-partial-messages --dangerously-skip-permissions
-      │          [--resume <sessionId>] "<prompt>"
-      │  env: CATCLAW_CHANNEL_ID=<channelId>
-      │  stdio: ["ignore", "pipe", "pipe"]
-      │  串流 diff：lastMessageId / lastTextLength / lastThinkingLength / lastToolCount
-      │  Event Queue Pattern (Generator + Promise)
-      │  AbortSignal → SIGTERM → 250ms → SIGKILL
+AgentLoopEvent stream (AsyncGenerator)
+      │  text_delta / thinking / tool_start / tool_blocked / done / error
       ▼
-AcpEvent stream (AsyncGenerator)
-      │  session_init / text_delta / thinking_delta / tool_call / done / error / status
-      ▼
-[reply.ts] onEvent handler
-      │  text_delta → buffer → ≥2000字立即 flush / 否則 3s 定時 flush
+[reply-handler.ts] handleAgentLoopReply()
+      │  streaming 模式：live-edit（EDIT_INTERVAL_MS=800ms）
+      │  chunk fallback：FLUSH_DELAY_MS=3000ms 定時 flush
       │  fileMode → totalText > fileUploadThreshold → 等 done 上傳 response.md
-      │  tool_call → all:顯示工具名 / summary:首次「處理中」/ none:隱藏
+      │  tool_start → all:顯示工具名 / summary:首次「處理中」/ none:隱藏
       │  done → extractMediaTokens → flush or sendFile → uploadMediaFile
-      │  error → flush + ⚠️ 發生錯誤：{message}
+      │  error → ⚠️ {message}
       ▼
-Discord 訊息（reply / send / attachment upload）
+Discord 訊息（reply / edit / send / attachment upload）
 ```
 
 ### 獨立排程流程
@@ -77,7 +89,7 @@ startCron(client) [client.ready 後]
 onTimer() [setTimeout 觸發]
       │  collectRunnableJobs(nowMs) ← entry.enabled≠false && nextRunAtMs<=nowMs
       │  worker pool（maxConcurrentRuns 限制）
-      │  runJob() → execMessage() / execCommand() / execClaude()
+      │  runJob() → execMessage() / execCommand() / execClaude() / execSubagent()
       │  成功：更新狀態 / at job 刪除 / 計算 nextRunAtMs
       │  失敗：指數退避 (30s/1m/5m) / 超上限跳下次排程
       │  saveStore() 原子寫入
@@ -90,20 +102,79 @@ armTimer() 重新排程
 ## 模組關係圖
 
 ```
-index.ts
-  ├── config.ts     (全域設定 + hot-reload + getChannelAccess)
-  ├── logger.ts     (log level 控制)
-  ├── discord.ts    (Client + messageCreate + debounce + 附件下載)
-  │     ├── config.ts
-  │     ├── session.ts  (enqueue)
-  │     └── reply.ts    (createReplyHandler)
-  ├── session.ts    (per-channel queue + session 快取 + 磁碟持久化)
-  │     └── acp.ts  (runClaudeTurn)
-  ├── reply.ts      (AcpEvent → Discord 訊息)
-  │     └── acp.ts  (AcpEvent 型別)
-  └── cron.ts       (排程服務)
-        ├── config.ts   (CronSchedule / CronAction 型別 + cron.enabled)
-        └── acp.ts      (runClaudeTurn，供 claude action 使用)
+src/
+├── index.ts                 (啟動入口)
+├── logger.ts                (log level 控制)
+├── discord.ts               (Client + messageCreate + debounce + 附件下載 + skill 攔截)
+├── session.ts               (舊版 ACP session，cron claude-acp 仍用)
+├── reply.ts                 (舊版 AcpEvent → Discord 回覆，cron claude-acp 仍用)
+├── acp.ts                   (Claude CLI spawn，cron claude-acp 仍用)
+├── history.ts               (user message 歷史 DB)
+├── cron.ts                  (排程服務：timer loop + job 持久化)
+├── slash.ts                 (Discord slash commands 註冊)
+├── core/
+│   ├── config.ts            (全域設定 + hot-reload + getChannelAccess + 型別定義)
+│   ├── platform.ts          (子系統初始化工廠)
+│   ├── agent-loop.ts        (核心 Agent Loop：multi-turn tool 迴圈)
+│   ├── message-pipeline.ts  (統一訊息管線：recall/intent/assembler/trace)
+│   ├── prompt-assembler.ts  (模組化 system prompt 組裝)
+│   ├── reply-handler.ts     (AgentLoopEvent → Discord streaming 回覆)
+│   ├── session.ts           (SessionManager：per-channel 佇列 + 持久化)
+│   ├── context-engine.ts    (compaction / budget-guard / sliding-window)
+│   ├── message-trace.ts     (7 階段全鏈路追蹤 + TraceStore)
+│   ├── dashboard.ts         (Web Dashboard + REST API + Web Chat)
+│   ├── event-bus.ts         (強型別事件匯流排)
+│   ├── mode.ts              (模式管理：normal / precise / custom)
+│   ├── rate-limiter.ts      (per-role 速率限制)
+│   ├── exec-approval.ts     (DM 確認核准)
+│   ├── agent-loader.ts      (多 Agent 載入)
+│   ├── agent-registry.ts    (Agent 註冊表)
+│   ├── subagent-registry.ts (Subagent 管理)
+│   ├── subagent-discord-bridge.ts (Subagent ↔ Discord Thread 橋接)
+│   ├── session-snapshot.ts  (Session snapshot 儲存)
+│   ├── task-store.ts        (Task 持久化)
+│   ├── task-ui.ts           (Discord Components v2 Task UI)
+│   └── tool-log-store.ts    (Tool 執行日誌)
+├── providers/               (LLM Provider 抽象層)
+│   ├── registry.ts          (Provider 註冊 + failover 解析)
+│   ├── base.ts              (Provider 介面 + 通用型別)
+│   ├── claude-api.ts        (Claude HTTP API)
+│   ├── ollama.ts            (Ollama 本地 LLM)
+│   ├── openai-compat.ts     (OpenAI 相容 API)
+│   ├── acp-cli.ts           (Claude CLI spawn wrapper)
+│   └── failover-provider.ts (自動 failover)
+├── tools/                   (17+ builtin tools)
+│   ├── registry.ts          (Tool 註冊表)
+│   └── builtin/             (file read/write/edit、run_command、search 等)
+├── skills/                  (31 builtin skills)
+│   ├── registry.ts          (Skill 註冊 + trigger match)
+│   ├── builtin/             (28 TS skills)
+│   └── builtin-prompt/      (3 prompt skills)
+├── memory/                  (三層記憶引擎)
+│   ├── engine.ts            (recall + extract + consolidate 統合)
+│   ├── recall.ts / extract.ts / consolidate.ts
+│   ├── atom.ts / context-builder.ts / session-memory.ts
+│   └── write-gate.ts / episodic.ts / index-manager.ts
+├── accounts/                (帳號/角色/權限)
+│   ├── registry.ts / permission-gate.ts / role-tool-sets.ts
+│   └── identity-linker.ts / registration.ts
+├── safety/                  (安全守衛)
+│   ├── guard.ts / collab-conflict.ts
+├── hooks/                   (Hook 系統)
+│   ├── hook-registry.ts / hook-runner.ts / types.ts
+├── vector/                  (向量搜尋)
+│   ├── embedding.ts / lancedb.ts
+├── ollama/                  (Ollama client)
+│   └── client.ts
+├── workflow/                (工作流自動化)
+│   ├── memory-extractor.ts / sync-reminder.ts / fix-escalation.ts
+│   └── wisdom-engine.ts / rut-detector.ts / oscillation-detector.ts 等
+├── discord/                 (Discord 擴充)
+│   └── inbound-history.ts
+├── mcp/                     (MCP 整合)
+│   ├── client.ts / discord-server.ts
+└── projects/                (專案管理)
+    └── manager.ts
 ```
 
 ---
@@ -115,15 +186,15 @@ index.ts
 | **Session** | Claude CLI 的對話上下文，由 UUID 識別，per-channel（guild 頻道全員共享） |
 | **session_init** | claude 首次輸出的系統事件，包含新建立的 session_id UUID |
 | **--resume** | Claude CLI flag，用 session_id 延續既有對話上下文 |
-| **AcpEvent** | acp.ts 從 claude 串流解析出的事件型別聯集 |
-| **text_delta** | 累積文字的新增部分（diff 結果） |
-| **stream-json diff** | claude --include-partial-messages 輸出累積文字，需 diff lastTextLength 提取 delta |
+| **AgentLoopEvent** | agent-loop.ts 產出的事件型別聯集（text_delta / thinking / tool_start / done / error） |
+| **AcpEvent** | acp.ts 從 claude CLI 串流解析出的事件型別聯集（舊版，cron claude-acp 仍用） |
+| **text_delta** | 累積文字的新增部分 |
 | **debounce** | 同一人 debounceMs（預設500ms）內多則訊息合併為一則 |
 | **per-channel queue** | Promise chain 實作的串行佇列，同 channel 的 turn 依序執行 |
 | **Turn timeout** | AbortController + setTimeout(turnTimeoutMs)，超時自動取消 |
-| **TTL** | Session 閒置超時（sessionTtlHours，預設 168h=7天），超過開新 session |
+| **TTL** | Session 閒置超時（session.ttlHours，預設 168h=7天），超過開新 session |
 | **fileMode** | 回覆超過 fileUploadThreshold 後切換，等 done 時上傳 response.md |
-| **MEDIA token** | Claude 回覆中 `MEDIA: /path` 語法，reply.ts 解析後上傳為 Discord 附件 |
+| **MEDIA token** | Claude 回覆中 `MEDIA: /path` 語法，reply-handler.ts 解析後上傳為 Discord 附件 |
 | **hot-reload** | config.json / cron-jobs.json 變更後無需重啟自動生效 |
 | **selfWriting** | cron.ts 寫入 cron-jobs.json 時的 flag，防止觸發自身的 fs.watch |
 | **signal file** | `signal/RESTART` 檔案，PM2 監聽此目錄變更觸發重啟 |
@@ -136,23 +207,26 @@ index.ts
 
 | 常數 | 值 | 說明 | 所在檔案 |
 |------|-----|------|---------|
-| `TEXT_LIMIT` | 2000 | Discord 訊息字數硬上限 | reply.ts |
-| `FLUSH_DELAY_MS` | 3000ms | 定時 flush 延遲（收到 text_delta 後多久自動送出） | reply.ts |
-| `debounceMs` | 500ms（預設） | 多則訊息合併等待時間，config 可調 | discord.ts/config.ts |
-| `typingInterval` | 8000ms | Typing indicator 重發間隔（Discord 約 10s 自動消失） | reply.ts |
-| `turnTimeoutMs` | 300000ms（預設） | 基礎回應超時（5分鐘），config 可調 | config.ts |
-| `turnTimeoutToolCallMs` | turnTimeoutMs×1.6（預設） | tool_call 延長超時（預設 8 分鐘），config 可調 | config.ts |
-| `sessionTtlHours` | 168h（預設） | Session 閒置超時（7天），config 可調 | config.ts |
-| `fileUploadThreshold` | 4000（預設） | 超過此字數上傳為 .md，0=停用，config 可調 | config.ts |
+| `TEXT_LIMIT` | 2000 | Discord 訊息字數硬上限 | core/reply-handler.ts, reply.ts |
+| `FLUSH_DELAY_MS` | 3000ms | chunk 模式定時 flush 延遲 | core/reply-handler.ts, reply.ts |
+| `EDIT_INTERVAL_MS` | 800ms | streaming 模式最快 edit 間隔 | core/reply-handler.ts |
+| `STREAM_SPLIT_THRESHOLD` | 1900 (TEXT_LIMIT-100) | streaming edit 超過此值拆段 | core/reply-handler.ts |
+| `debounceMs` | 500ms（預設） | 多則訊息合併等待時間，config 可調 | discord.ts / core/config.ts |
+| `typingInterval` | 8000ms | Typing indicator 重發間隔（Discord 約 10s 自動消失） | core/reply-handler.ts |
+| `turnTimeoutMs` | 300000ms（預設） | 基礎回應超時（5分鐘），config 可調 | core/config.ts |
+| `turnTimeoutToolCallMs` | turnTimeoutMs×1.6（預設） | tool_call 延長超時（預設 8 分鐘），config 可調 | core/config.ts |
+| `session.ttlHours` | 168h（預設） | Session 閒置超時（7天），config 可調 | core/config.ts |
+| `fileUploadThreshold` | 4000（預設） | 超過此字數上傳為 .md，0=停用，config 可調 | core/config.ts |
+| `MAX_LOOPS` | 20 | Agent Loop 單次 turn 最大 tool 迴圈數 | core/agent-loop.ts |
+| `MAX_CONTINUATIONS` | 3 | Output Token Recovery 最多自動續接次數 | core/agent-loop.ts |
 | `MIN_TIMER_MS` | 2000ms | cron timer 最短間隔 | cron.ts |
 | `MAX_TIMER_MS` | 60000ms | cron timer 最長間隔 | cron.ts |
 | `BACKOFF_SCHEDULE_MS` | [30000, 60000, 300000] | cron 重試退避：30s / 1min / 5min | cron.ts |
-| `maxConcurrentRuns` | 1（預設） | cron 同時執行 job 上限，config 可調 | config.ts |
+| `maxConcurrentRuns` | 1（預設） | cron 同時執行 job 上限，config 可調 | core/config.ts |
 | processedMessages 上限 | 1000 | 去重 Set 超過此數清空 | discord.ts |
 | UPLOAD_DIR | `tmpdir()/claude-discord-uploads` | 附件暫存根目錄（os.tmpdir()） | discord.ts |
 | SIGTERM delay | 250ms | abort 後等多久若未結束才 SIGKILL | acp.ts |
 | stderrTail | 500 chars | 保留 stderr 最後幾字元用於錯誤診斷 | acp.ts |
-| CODE_FENCE_RESERVE | 8 chars | flush 時預留給 fence 補開/補關的空間 | reply.ts |
 | selfWriting reset delay | 1000ms | cron saveStore 後多久重置 selfWriting flag | cron.ts |
 
 ---
@@ -173,24 +247,25 @@ index.ts
 | `discord.guilds[id].channels[chId].allowBot` | boolean | guild預設 | — | per-channel 覆寫 allowBot |
 | `discord.guilds[id].channels[chId].allowFrom` | string[] | guild預設 | — | per-channel 覆寫 allowFrom |
 | `turnTimeoutMs` | number | `300000` | — | 回應超時毫秒（5分鐘），頂層欄位 |
-| `sessionTtlHours` | number | `168` | — | Session 閒置超時小時（7天），頂層欄位 |
+| `turnTimeoutToolCallMs` | number | `turnTimeoutMs×1.6` | — | tool_call 延長超時（預設 8 分鐘） |
 | `showToolCalls` | "all"/"summary"/"none" | `"all"` | — | 工具呼叫顯示模式（舊版 boolean 相容） |
 | `showThinking` | boolean | `false` | — | 顯示 Claude 推理過程 |
 | `debounceMs` | number | `500` | — | 訊息合併等待毫秒 |
 | `fileUploadThreshold` | number | `4000` | — | 超過此字數上傳 .md，0=停用 |
+| `streamingReply` | boolean | `true` | — | 串流 live-edit 回覆模式（false=chunk fallback） |
 | `logLevel` | "debug"/"info"/"warn"/"error"/"silent" | `"info"` | — | Log 層級 |
 | `cron.enabled` | boolean | `false` | — | 啟用排程服務 |
 | `cron.maxConcurrentRuns` | number | `1` | — | 同時執行 job 上限 |
 | **session** | | | | |
 | `session.ttlHours` | number | `168` | — | Session 閒置 TTL（7 天） |
-| `session.maxHistoryTurns` | number | `100` | — | 最大保留 turn 數 |
+| `session.maxHistoryTurns` | number | `50` | — | 最大保留 turn 數 |
 | `session.compactAfterTurns` | number | `30` | — | 超過此值觸發 CE 壓縮 |
-| `session.persistPath` | string | `"data/sessions.json"` | — | 持久化路徑 |
+| `session.persistPath` | string | `"${workspaceDir}/data/sessions/"` | — | 持久化目錄 |
 | **memory** | | | | |
 | `memory.enabled` | boolean | `true` | — | 記憶系統開關 |
 | `memory.root` | string | `"memory"` | — | 記憶根目錄 |
 | `memory.contextBudget` | number | `3000` | — | 注入 token 上限 |
-| `memory.recall.vectorSearch` | boolean | `false` | — | 啟用向量搜尋 |
+| `memory.recall.vectorSearch` | boolean | `true` | — | 啟用向量搜尋 |
 | `memory.extract.perTurn` | boolean | `true` | — | 每輪自動萃取 |
 | **safety** | | | | |
 | `safety.enabled` | boolean | `true` | — | 安全攔截總開關 |
@@ -207,6 +282,35 @@ index.ts
 | `accounts.defaultRole` | string | `"member"` | — | 新帳號預設角色 |
 | `accounts.pairingEnabled` | boolean | `true` | — | 是否允許配對 |
 | `accounts.pairingExpireMinutes` | number | `10` | — | 配對邀請過期分鐘 |
+| **dashboard** | | | | |
+| `dashboard.enabled` | boolean | `false` | — | Web Dashboard 開關 |
+| `dashboard.port` | number | `3000` | — | Dashboard 監聽 port |
+| `dashboard.token` | string | — | — | Dashboard 認證 token |
+| **agents** | | | | |
+| `agents` | Record | — | — | 多 Agent 入口設定（`agents.<id>` 為 BridgeConfig 子集） |
+| **modes** | | | | |
+| `modes.defaultMode` | string | `"normal"` | — | 預設模式名稱 |
+| `modes.presets` | Record | — | — | 模式定義表（thinking / compaction / systemPromptExtras） |
+| **mcpServers** | | | | |
+| `mcpServers` | Record | — | — | MCP Server 定義（command / args / cwd / env） |
+| **hooks** | | | | |
+| `hooks` | array | — | — | Hook 定義陣列（HookDefinition[]） |
+| **ollama** | | | | |
+| `ollama.enabled` | boolean | `false` | — | Ollama 雙 Backend 開關 |
+| `ollama.primary.host` | string | — | — | 主要 Ollama host |
+| `ollama.primary.model` | string | — | — | 主要 model 名稱 |
+| `ollama.primary.embeddingModel` | string | — | — | Embedding model |
+| `ollama.fallback` | object | — | — | 備援 Ollama（host / model） |
+| **rateLimit** | | | | |
+| `rateLimit` | Record | per-role 預設 | — | 速率限制（`rateLimit.<role>.requestsPerMinute`） |
+| **inboundHistory** | | | | |
+| `inboundHistory.enabled` | boolean | `false` | — | Inbound History 開關 |
+| `inboundHistory.fullWindowHours` | number | `24` | — | 完整收錄時窗 |
+| `inboundHistory.decayWindowHours` | number | `168` | — | 衰減時窗 |
+| `inboundHistory.inject.enabled` | boolean | `false` | — | 注入到 prompt 開關 |
+| **contextEngineering** | | | | |
+| `contextEngineering.enabled` | boolean | `false` | — | Context Engineering 開關 |
+| `contextEngineering.strategies` | object | — | — | Compaction 策略（model / maxTokens） |
 
 > **注意**：config.json（catclaw.json）支援 JSONC（`//` 行尾 / 整行註解）。`claude.cwd` / `claude.command` 已移除，改由環境變數 `CATCLAW_CONFIG_DIR` / `CATCLAW_WORKSPACE` / `CATCLAW_CLAUDE_BIN` 控制。
 
@@ -229,7 +333,7 @@ catclaw/                          ← 純程式碼
 └── workspace/            ← CATCLAW_WORKSPACE（Claude CLI cwd）
     ├── AGENTS.md             bot 行為規則（system prompt）
     └── data/
-        ├── sessions.json     channelId → sessionId 映射（重啟持久化）
+        ├── sessions/         per-channel session 持久化目錄
         ├── cron-jobs.json    排程 job 定義 + 狀態
         └── active-turns/     進行中 turn 追蹤（crash recovery 用）
 ```

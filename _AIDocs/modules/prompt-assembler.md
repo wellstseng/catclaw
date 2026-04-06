@@ -33,7 +33,7 @@ detectIntent(userMessage: string): "coding" | "research" | "conversation"
 |--------|------|---------|
 | `coding` | codingScore ≥ 2 | 全部 |
 | `research` | researchScore ≥ 2 且 codingScore = 0 | 省略 coding-rules, git-rules |
-| `coding`（fallback） | codingScore ≥ 1（但 < 2 且 research 未達 2） | 全部 |
+| `coding`（fallback） | codingScore ≥ 1 | 全部 |
 | `conversation` | 其餘 | date-time, identity, catclaw-md, output-format, discord-reply, memory-rules |
 
 ## CATCLAW.md 層級繼承

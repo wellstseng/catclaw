@@ -95,27 +95,27 @@
   // ── Session ─────────────────────────────────────────────────────
   "session": {
     "ttlHours": 168,             // Session 閒置 TTL（小時），預設 7 天
-    "maxHistoryTurns": 100,      // 最大保留 turn 數
+    "maxHistoryTurns": 50,       // 最大保留 turn 數
     "compactAfterTurns": 30,     // 超過此 turn 數觸發 CE 壓縮
-    "persistPath": "data/sessions.json"  // 持久化路徑（相對 CATCLAW_WORKSPACE）
+    "persistPath": "data/sessions/"       // 持久化目錄（相對 CATCLAW_WORKSPACE）
   },
 
   // ── Memory ──────────────────────────────────────────────────────
   "memory": {
     "enabled": true,
-    "root": "memory",            // 記憶根目錄（相對 catclawDir）
-    "vectorDbPath": "memory/_vectordb",
+    "root": "~/.catclaw/memory",           // 記憶根目錄（絕對路徑，~ 展開）
+    "vectorDbPath": "~/.catclaw/memory/_vectordb",
     "contextBudget": 3000,       // 注入 token 上限
     "contextBudgetRatio": { "global": 0.3, "project": 0.4, "account": 0.3 },
     "writeGate": { "enabled": true, "dedupThreshold": 0.80 },
     "recall": {
       "triggerMatch": true,
-      "vectorSearch": false,     // 啟用向量搜尋
-      "relatedEdgeSpreading": false,
+      "vectorSearch": true,      // 啟用向量搜尋
+      "relatedEdgeSpreading": true,
       "vectorMinScore": 0.65,
-      "vectorTopK": 5,
+      "vectorTopK": 10,
       "llmSelect": false,
-      "llmSelectMax": 3
+      "llmSelectMax": 5
     },
     "extract": {
       "enabled": true,
@@ -123,17 +123,17 @@
       "onSessionEnd": true,
       "maxItemsPerTurn": 3,
       "maxItemsSessionEnd": 5,
-      "minNewChars": 100
+      "minNewChars": 200
     },
     "consolidate": {
-      "autoPromoteThreshold": 4,
-      "suggestPromoteThreshold": 2,
-      "decay": { "enabled": true, "halfLifeDays": 30, "archiveThreshold": 0.1 }
+      "autoPromoteThreshold": 3,
+      "suggestPromoteThreshold": 4,
+      "decay": { "enabled": true, "halfLifeDays": 14, "archiveThreshold": 0.2 }
     },
-    "episodic": { "enabled": true, "ttlDays": 30 },
-    "rutDetection": { "enabled": true, "windowSize": 10, "minOccurrences": 3 },
+    "episodic": { "enabled": true, "ttlDays": 24 },
+    "rutDetection": { "enabled": true, "windowSize": 3, "minOccurrences": 2 },
     "oscillation": { "enabled": true },
-    "sessionMemory": { "enabled": true, "intervalTurns": 5, "maxHistoryTurns": 20 }
+    "sessionMemory": { "enabled": true, "intervalTurns": 10, "maxHistoryTurns": 15 }
   },
 
   // ── Workflow ─────────────────────────────────────────────────────
@@ -218,7 +218,9 @@
 
 | 模組名 | 優先序 | 說明 |
 |--------|--------|------|
+| `date-time` | 5 | 當前時間（Asia/Taipei） |
 | `identity` | 10 | CatClaw 身份 + 多人場景說話者資訊 |
+| `catclaw-md` | 15 | 載入 CATCLAW.md 階層（workspace → 專案） |
 | `tools-usage` | 20 | 工具使用規則（read_file/edit_file 等） |
 | `coding-rules` | 30 | 行為約束 / 精密模式載入 coding-discipline.md |
 | `git-rules` | 40 | Git 安全協定 |

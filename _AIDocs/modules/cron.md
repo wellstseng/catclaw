@@ -6,7 +6,7 @@
 
 定時排程執行任務（發送訊息、呼叫 Claude、或執行 shell 指令），支援三種排程模式。
 Job 定義 + 執行狀態統一存在 `data/cron-jobs.json`，支援 hot-reload。
-`config.json` 只控制 `cron.enabled` 和 `maxConcurrentRuns`。
+`config.json` 控制 `cron.enabled`、`maxConcurrentRuns`、`defaultAccountId`、`defaultProvider`。
 
 ## 排程模式
 

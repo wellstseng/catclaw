@@ -36,7 +36,21 @@ interface InboundEntry {
 
 ## 儲存
 
-JSONL 格式，路徑：`{dataDir}/inbound/{channelId}.jsonl`
+JSONL 格式，路徑：`{dataDir}/inbound/discord_{channelId}.jsonl`（channelId 經 sanitize）
+
+### 全域單例
+
+- `initInboundHistoryStore(dataDir)` — 初始化
+- `getInboundHistoryStore()` — 取得實例
+
+### 額外公開方法
+
+| 方法 | 說明 |
+|------|------|
+| `listChannels()` | 列出所有有記錄的頻道 |
+| `readEntries(channelId)` | 讀取指定頻道的所有 entries |
+| `clearChannel(channelId)` | 清除指定頻道的記錄 |
+| `clearAll()` | 清除所有頻道記錄 |
 
 ## 與 message-pipeline 的關係
 

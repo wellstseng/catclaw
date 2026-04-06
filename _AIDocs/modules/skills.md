@@ -117,7 +117,7 @@ tier: admin | trigger: `/configure`
 | `/configure` / `/configure show` | 顯示目前 provider/model 設定 |
 | `/configure model <id> [--provider <id>]` | 更改指定 provider 的 model（寫入 catclaw.json，hot-reload 自動生效） |
 | `/configure provider <id>` | 切換預設 provider |
-| `/configure models` | 列出 pi-ai 支援的 Anthropic 模型清單 |
+| `/configure models` | 列出可用模型清單（V2 優先讀 models.json，降級讀 pi-ai） |
 
 ### 實作細節
 
@@ -133,7 +133,7 @@ tier: standard | trigger: `/session`
 | 命令 | 說明 |
 |------|------|
 | `/session` / `/session list` | 列出目前所有 session |
-| `/session clear <key>` | 清空指定 session 的訊息（保留 session） |
-| `/session compact <key>` | 強制觸發 CE 壓縮 |
+| `/session clear` | 清空當前頻道 session 的訊息（保留 session） |
+| `/session compact` | 強制觸發當前頻道 session 的 CE 壓縮 |
 | `/session purge` | 批次清除所有過期 session |
 | `/session delete <key>` | 刪除指定 session |

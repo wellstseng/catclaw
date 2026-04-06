@@ -71,7 +71,7 @@ interface ToolContext {
 | Tool | 說明 | resultTokenCap | timeoutMs |
 |------|------|---------------|-----------|
 | `web_fetch` | HTTP 請求 + HTML→純文字（SSRF 保護：拒絕私有 IP / localhost） | 8000 | 20000 |
-| `web_search` | 網頁搜尋（DuckDuckGo / SearXNG） | 4000 | 15000 |
+| `web_search` | 網頁搜尋（DuckDuckGo） | 4000 | 15000 |
 
 **web_fetch SSRF 保護**：解析 URL hostname，以正則比對拒絕 `localhost`、`127.x`、`::1`、`10.x`、`172.16-31.x`、`192.168.x`、`169.254.x`、`fc/fd` 前綴。只允許 `http:` / `https:` 協定。 |
 

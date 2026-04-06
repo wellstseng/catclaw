@@ -57,7 +57,7 @@ recall(
 RecallResult：
 - `fragments: AtomFragment[]` — 命中的 atom 片段
 - `blindSpot: boolean` — 所有層均無命中時為 true（Blind-Spot 警告）
-- `degraded: boolean` — vector service 離線時降級為 trigger-only
+- `degraded: boolean` — vector service 離線時回傳空結果（不再 fallback trigger-only）
 
 ### Context 組裝
 
@@ -65,6 +65,8 @@ RecallResult：
 buildContext(
   fragments: AtomFragment[],
   prompt: string,
+  budget = 2000,
+  _ratios?: { global: number; project: number; account: number },
   blindSpot = false
 ): ContextPayload
 ```
@@ -132,7 +134,7 @@ getStatus(): MemoryStatus
 ```
 recall(query)
   1. embed query → vector
-  2. LanceDB search(vector, topK=5, minScore=0.65)
+  2. LanceDB search(vector, topK=10, minScore=0.65)
   3. 讀取命中 atom 檔案內容
   4. 組裝 fragments（去重）
   5. 回傳 RecallResult
@@ -142,7 +144,7 @@ recall(query)
 
 ## Context Builder
 
-- **Budget**：全域 token 預算 2000（無層級分配）
+- **Budget**：全域 token 預算 3000（無層級分配）
 - 按 vector score 排序，超出 budget 截斷
 
 ## 設定（MemoryConfig）
@@ -152,11 +154,13 @@ recall(query)
 | `enabled` | true | 開關 |
 | `root` | `{catclawDir}/memory` | 記憶根目錄 |
 | `vectorDbPath` | `{root}/_vectordb` | 向量 DB 路徑 |
-| `contextBudget` | 2000 | 注入 token 上限 |
+| `contextBudget` | 3000 | 注入 token 上限 |
+| `writeGate.enabled` | true | 寫入閘門開關 |
 | `writeGate.dedupThreshold` | 0.80 | 去重閾值 |
 | `recall.vectorSearch` | true | 是否啟用向量搜尋 |
 | `recall.vectorMinScore` | 0.65 | 向量最低相關度 |
-| `recall.vectorTopK` | 5 | 向量 top-K |
+| `recall.vectorTopK` | 10 | 向量 top-K |
+| `extract.enabled` | true | 萃取功能開關 |
 | `extract.perTurn` | true | 每輪自動萃取 |
 | `extract.onSessionEnd` | true | Session 結束時全量掃描萃取 |
 | `extract.maxItemsPerTurn` | 3 | 每輪最多萃取數 |

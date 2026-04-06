@@ -58,7 +58,7 @@ Bearer token 認證（可選）：
 
 | 端點 | 方法 | 說明 |
 |------|------|------|
-| `/api/traces` | GET | Trace 列表（`?limit=N&session=key`） |
+| `/api/traces` | GET | Trace 列表（`?limit=N&sessionKey=xxx`） |
 | `/api/traces/:id` | GET | 單筆 trace 詳情 |
 | `/api/traces/:id/context` | GET | Context snapshot（lazy-load） |
 
@@ -146,10 +146,10 @@ Dashboard 內嵌互動式對話介面，支援：
 - Session 選擇器下拉選單（`refreshChatSessions()`）
 - 切換 session 時自動載入歷史訊息（`loadChatHistory()` → `/api/chat/history`）
 - SSE streaming 即時回覆
-- `clearChatSession()` 清空 session（預設同時清除 traces）
+- `clearChatSession()` 清空 session 訊息（不清除 traces）
 
 ## Config 安全
 
-- GET 時敏感欄位（token/apiKey/password/credential）遮罩為 `***`
+- GET 時敏感欄位（token/apiKey/api_key/password/credential）遮罩為 `***`
 - POST 時 `***` 自動還原為原始值（`restoreMasked`）
 - 每次寫入前自動備份（保留最近 5 份 `.bak.{timestamp}`）

@@ -13,9 +13,9 @@
 |------|------|---------|
 | `bootstrap.ts` | 統一初始化入口 | — |
 | `file-tracker.ts` | 檔案修改追蹤 | `file:modified` |
-| `sync-reminder.ts` | 未同步提醒 | `file:modified` |
+| `sync-reminder.ts` | 未同步提醒 | `turn:after` |
 | `rut-detector.ts` | 重複模式偵測 | `turn:after` |
-| `oscillation-detector.ts` | 擺盪偵測 | `memory:written` |
+| `oscillation-detector.ts` | 擺盪偵測 | `file:modified` |
 | `wisdom-engine.ts` | 經驗累積引擎 | `turn:after` |
 | `failure-detector.ts` | 失敗偵測 → 記錄 failures/ | `tool:error` |
 | `aidocs-manager.ts` | _AIDocs 自動維護 | `file:modified` |
@@ -64,7 +64,7 @@ getAllSessionStats(): Map<string, Set<string>>
 
 ### sync-reminder
 
-監聽 `file:modified`，累積未同步的修改檔案。
+監聽 `turn:after`，檢查該 turn 是否有修改檔案。
 達到閾值時發出 `workflow:sync_needed` 事件。
 
 ```typescript
@@ -85,7 +85,7 @@ getSignalsPath(): string | null
 
 ### oscillation-detector
 
-監聽 `memory:written`，偵測同一 atom 短時間內反覆被修改。
+監聽 `file:modified`，偵測同一檔案在同一 session 內反覆被修改。
 發出 `workflow:oscillation` 事件。
 
 ```typescript
@@ -129,8 +129,8 @@ getAidocsSyncHint(): string
 
 ### memory-extractor
 
-監聽 `turn:after`，每 N 輪自動觸發記憶萃取。
-呼叫 MemoryEngine.extract()。
+監聽 `turn:after`，每輪（turn:after）自動觸發記憶萃取。
+呼叫 engine.extractPerTurn()。
 
 ```typescript
 initMemoryExtractor(eventBus: EventBus): void

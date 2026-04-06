@@ -115,8 +115,8 @@ profileId 格式：`"provider:name"`，credential type：`api_key` / `token` / `
 
 ### 陷阱
 
-- 永久停用後必須刪 state 檔（`data/auth-profiles/{id}-profiles.json`）再重啟才能恢復
-- 憑證檔只讀不寫（由使用者維護）；state 檔由 runtime 自動更新
+- 永久停用後呼叫 `clearCooldown(profileId)` 或手動編輯 auth-profile.json 中的 `usageStats` 清除 `disabledUntil` 欄位即可恢復
+- AuthProfileStore 會透過 `_persist()` 主動回寫 auth-profile.json（更新 usageStats、lastGood 等），並非只讀
 
 ## CliProvider（acp-cli.ts）
 
@@ -192,14 +192,18 @@ CLI 不回傳真實 token 數，用字數 ÷ 4 估算（`estimated: true`）。
 
 優先用 `ModelProviderDefinition.api` 欄位，fallback 用 provider name 推斷：
 
-| api 欄位 | → ProviderType |
-|----------|---------------|
-| `anthropic-messages` | claude |
-| `openai-completions` | openai-compat |
-| `openai-codex-responses` | codex-oauth |
-| `ollama` | ollama |
-| (無) + name `cli-claude` | cli-claude |
-| (無) + name `cli-gemini` | cli-gemini |
+| 條件 | → ProviderType |
+|------|---------------|
+| api=`anthropic-messages` | claude |
+| api=`openai-completions` | openai-compat |
+| api=`openai-codex-responses` | codex-oauth |
+| api=`ollama` | ollama |
+| (無 api) + name `anthropic` | claude |
+| (無 api) + name `openai` | openai-compat |
+| (無 api) + name `openai-codex` | codex-oauth |
+| (無 api) + name `ollama` 或 `ollama-*` | ollama |
+| (無 api) + name `cli-claude` | cli-claude |
+| (無 api) + name `cli-gemini` | cli-gemini |
 
 ### Failover Chain
 

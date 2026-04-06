@@ -14,6 +14,7 @@
 | `check(accountId, role)` | 檢查配額（不消費），回傳 `RateLimitResult` |
 | `record(accountId)` | 記錄一次請求（消費配額） |
 | `evict()` | 清除過期記錄（可由外部定期呼叫） |
+| `resetRateLimiter()` | 重置全域單例 |
 
 ### RateLimitResult
 

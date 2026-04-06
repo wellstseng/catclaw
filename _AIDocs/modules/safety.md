@@ -8,7 +8,7 @@
 程式碼層安全攔截。在 Permission Gate 之後、Tool 執行之前攔截。
 
 ```
-Permission Gate → Safety Guard → Hook → Tool 執行
+Permission Gate → Safety Guard → Tool 執行
 ```
 
 ## SafetyGuard（guard.ts）
@@ -75,12 +75,19 @@ interface PermissionContext {
 
 ```jsonc
 "safety": {
-  "protectedWritePaths": ["~/.catclaw/"],
-  "protectedReadPaths": ["~/.catclaw/catclaw.json"],
-  "bashBlacklist": ["rm -rf /"],
-  "toolPermissions": [
-    { "tool": "run_command", "allowPatterns": ["/tmp/"], "denyPatterns": ["/etc/"] }
-  ]
+  "filesystem": {
+    "protectedPaths": ["~/.catclaw/"],
+    "credentialPatterns": ["\\.env$"]
+  },
+  "bash": {
+    "blacklist": ["rm -rf /"]
+  },
+  "toolPermissions": {
+    "defaultAllow": true,
+    "rules": [
+      { "tool": "run_command", "effect": "deny", "subjectType": "role", "subject": "guest", "paramMatch": { "command": "/etc/" }, "reason": "guests 禁止操作 /etc/" }
+    ]
+  }
 }
 ```
 

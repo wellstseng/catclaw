@@ -54,7 +54,7 @@ messageCreate
   │
   ├─ ⑧ text 為空（只有 mention 無文字，且無附件）→ 忽略
   │
-  └─ 通過 → debounce(channelId:authorId) → createReplyHandler + enqueue
+  └─ 通過 → debounce(channelId:authorId) → agentLoop() + handleAgentLoopReply()
 ```
 
 ### Per-Channel 存取設定（繼承鏈）
@@ -113,13 +113,8 @@ messageCreate
 
 ## 使用者識別
 
-多人頻道中，prompt 前綴 `displayName:`，讓 Claude 分辨發言者：
-
-```text
-Wells: 這個 API 怎麼用？
-```
-
-DM 也加此前綴（不影響 Claude 行為，保持格式一致）。
+多人頻道中，透過 `speakerDisplay` opts 傳給 agentLoop，由 prompt-assembler 在 system prompt 中注入說話者資訊。
+prompt 本身不加 displayName 前綴。
 
 ## Thread 偵測
 
@@ -233,7 +228,7 @@ inboundContext = ctx.text;  // 注入到 messages 層，非 system prompt
 
 ```typescript
 const replyThread = await firstMessage.startThread({
-  name: combinedText.slice(0, 50) || "對話",
+  name: combinedText.replace(/\n/g, " ").slice(0, 50) || "對話",
   autoArchiveDuration: 60,
 });
 effectiveChannelId = replyThread.id;
@@ -285,16 +280,7 @@ const gen = agentLoop(prompt, {
 
 ## Context End Trace
 
-agent-loop 啟動前記錄 context 指標：
-
-```typescript
-trace.recordContextEnd({
-  systemPromptTokens,
-  historyTokens: 0,           // 精確值在 agent-loop CE 之後才知道
-  historyMessageCount: 0,
-  totalContextTokens: sysTokens,
-});
-```
+context 指標由 message-pipeline / agent-loop 內部記錄（`trace.recordContextEnd`），非在 discord.ts 層。
 
 ## 其他機制
 

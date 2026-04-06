@@ -69,13 +69,15 @@ interface Identity {
 | `resolveIdentity(platform, platformId)` | 身份反查 → accountId |
 | `linkIdentity(accountId, platform, platformId)` | 綁定新身份 |
 | `listAccountIds()` | 列出所有帳號 ID |
+| `touch(accountId)` | 更新 lastActiveAt 時間戳 |
+| `getIndex()` | 取得完整索引（accountId → identity 映射） |
 
 ## PermissionGate
 
 ```typescript
 class PermissionGate {
   listAvailable(accountId: string): ToolDefinition[]
-  check(accountId: string, toolName: string): boolean
+  check(accountId: string, toolName: string): PermissionResult  // { allowed: boolean; reason?: string }
 }
 ```
 
@@ -83,10 +85,17 @@ class PermissionGate {
 
 ## RegistrationManager
 
-邀請碼機制：
+兩種註冊流程：
+
+**A. 邀請碼**：
 1. Admin 用 `/register invite` 產生邀請碼
 2. Guest 用 `/register {邀請碼}` 升級為 member
 3. 邀請碼一次性，使用後失效
+
+**B. 配對碼**（`createPairingCode` / `approvePairing`）：
+
+1. 使用者在 Discord 請求配對 → 取得 6 碼
+2. Admin 審批後綁定帳號
 
 ## IdentityLinker
 

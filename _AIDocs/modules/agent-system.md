@@ -50,7 +50,7 @@ CatClaw 支援多 bot 部署（`--agent <id>`），每個 agent 可覆寫頂層 
 | `has(agentId)` | 確認是否存在 |
 | `resolve(agentId, base)` | 深合併回傳完整 config |
 
-全域單例：`initAgentRegistry()` / `getAgentRegistry()` / `resetAgentRegistry()`
+全域單例：`initAgentRegistry(agents: AgentsConfig)` / `getAgentRegistry()` / `resetAgentRegistry()`
 
 ## agent-types.ts
 

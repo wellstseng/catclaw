@@ -15,7 +15,7 @@ Subagent 系統管理子 agent 的生命週期（spawn / kill / complete / fail 
 ```ts
 type SubagentStatus = "running" | "completed" | "failed" | "killed" | "timeout";
 type SubagentMode = "run" | "session";
-type SubagentRuntime = "default" | "coding" | "acp" | "explore" | "plan" | "build" | "review";
+type SubagentRuntime = "default" | "coding" | "acp" | "explore" | "plan" | "build" | "review" | (string & {});
 ```
 
 ### SubagentRunRecord

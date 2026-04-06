@@ -44,7 +44,15 @@
 | `modeExtras` | `boolean` | `false` | 開關 |
 | `channelOverride` | `string` | - | 平台專屬注入 |
 | `role` | `string` | `"guest"` | 使用者角色 |
-| `modePreset` | `ModePreset` | normal | 模式 preset |
+| `traceCategory` | `TraceCategory` | - | Trace 分類 |
+| `projectId` | `string` | - | 專案 ID |
+| `isGroupChannel` | `boolean` | - | 是否群組頻道 |
+| `speakerDisplay` | `string` | - | 說話者顯示名稱 |
+| `modeName` | `string` | - | 模式名稱 |
+| `activeMcpServers` | `string[]` | - | 啟用的 MCP server |
+| `conversationLabel` | `string` | - | 對話標籤 |
+| `additionalExtraBlocks` | `Array` | - | 額外 system prompt 區塊 |
+| `modePreset` | `ModePreset` | `{ thinking: null, compaction: "sliding-window" }` | 模式 preset |
 
 #### PipelineResult 主要欄位
 

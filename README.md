@@ -1,31 +1,42 @@
-# catclaw
+# CatClaw
 
-輕量 Discord Bot，直接透過 [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 進行對話。不依賴 Claude API SDK 或 OpenClaw。
+Codex 版 Claude Code CLI + 多人 AI 開發平台。
+以 Discord 為前端，提供等同 Claude Code 的完整開發能力：multi-turn agent loop、17+ builtin tools、31 builtin skills、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、帳號/角色/權限系統、Web Dashboard + Trace 追蹤。
 
 ## 功能
 
-- 串流回覆（即時顯示 Claude 輸出）
-- Per-channel 設定（allow / requireMention / allowBot / allowFrom）
-- Thread 繼承（thread → parent channel → guild 預設）
-- Persistent session（同頻道延續對話上下文）
-- 多頻道並行（不同 channel 平行處理，同 channel 串行佇列）
-- DM 支援（直接私訊 bot）
-- Typing indicator（回應中顯示打字狀態）
-- Turn timeout（基礎 5 分鐘，tool call 延長至 ~8 分鐘）
-- Turn timeout 80% 警告（送 ⏳ 提示）
-- Debounce（短時間內多則訊息自動合併）
-- Crash recovery（重啟後清理中斷的 turn）
-- Signal-based restart（Discord 頻道觸發 PM2 重啟並通知）
-- Config hot-reload（修改 catclaw.json 自動生效，不需重啟）
-- Cron 排程（定時送訊息 / 開 Claude turn / 執行 shell）
-- Slash commands
-- 對話歷史記錄（SQLite）
-- 2000 字自動分段 + code fence 跨段平衡
-- 附件下載（使用者上傳檔案 → Claude 可讀取）
-- MEDIA token 檔案上傳（Claude 回覆含 `MEDIA: /path` → 自動上傳至 Discord）
-- 長回覆自動轉 .md 檔案上傳（超過 fileUploadThreshold）
-- Thinking 顯示（可選，引用格式）
-- showToolCalls 三級控制（all / summary / none）
+### 核心引擎
+
+- **Agent Loop** — Multi-turn 推理迴圈，tool 執行、output token recovery、auto-compact
+- **17+ Builtin Tools** — read/write/edit/glob/grep/run/web/memory/subagent/task...
+- **31 Builtin Skills** — 28 TS + 3 prompt（status/help/configure/mode/plan/restart/...）
+- **Multi-Provider Failover** — claude-api / codex-oauth / cli-claude / cli-gemini / cli-codex / ollama / openai-compat + circuit-breaker
+- **MCP Support** — MCP client 連線 + tool 自動註冊、Discord MCP server
+
+### 記憶與 Context
+
+- **三層記憶引擎** — recall（向量+關鍵字）+ extract（自動萃取）+ consolidate（晉升/衰減）
+- **Context Engine** — compaction / budget-guard / sliding-window / overflow-hard-stop
+- **Prompt Assembler** — 模組化 system prompt 組裝 + context-aware intent detection
+
+### 平台能力
+
+- **帳號/角色/權限系統** — 註冊、identity linking、per-channel 權限閘門
+- **Subagent 編排** — 子任務分派 + 追蹤 + Discord bridge
+- **Web Dashboard + Trace** — REST API、trace 視覺化、Web Chat（跨平台 session 共用）
+- **Cron 排程** — cron/every/at 三種排程 + message/claude-acp/exec/subagent 四種 action
+
+### Discord 整合
+
+- 串流即時回覆（streaming edit mode）
+- Per-channel 設定（allow / requireMention / allowBot / allowFrom / autoThread）
+- Thread 繼承鏈（thread → parent channel → guild 預設）
+- Session 持久化（per-channel 串行佇列 + 磁碟持久化 + TTL）
+- Debounce（短時間多則訊息自動合併）
+- 附件下載 + MEDIA token 檔案上傳 + 長回覆自動轉 .md
+- Thinking 顯示、showToolCalls 三級控制
+- Crash recovery + Signal-based restart + Config hot-reload
+- Slash commands 管理介面
 
 ## 架構
 
@@ -36,38 +47,43 @@ graph TB
         DGW[Discord Gateway]
     end
 
-    subgraph catclaw
-        IDX[index.ts<br/>進入點]
-        CFG[config.ts<br/>catclaw.json 載入]
-        LOG[logger.ts<br/>Log Level]
-        DIS[discord.ts<br/>訊息過濾 + Debounce]
-        SES[session.ts<br/>Session 快取 + 佇列]
-        ACP[acp.ts<br/>CLI Spawn + 串流 Diff]
-        REP[reply.ts<br/>分段回覆 + Typing]
-        CRN[cron.ts<br/>排程服務]
-        HST[history.ts<br/>SQLite 歷史]
-        SLH[slash.ts<br/>Slash Commands]
+    subgraph "catclaw 核心"
+        DSC[discord.ts<br/>訊息過濾 + Debounce]
+        MPL[message-pipeline.ts<br/>Memory Recall / Intent /<br/>Assembler / Trace]
+        AGL[agent-loop.ts<br/>Multi-turn 推理迴圈]
+        PRV[providers/<br/>LLM 抽象層 + Failover]
+        RPL[reply-handler.ts<br/>Streaming 分段回覆]
     end
 
-    subgraph Claude
-        CLI[Claude Code CLI<br/>claude -p stream-json]
+    subgraph "核心子系統"
+        PLT[platform.ts<br/>子系統初始化工廠]
+        SES[session.ts<br/>Session 管理 + 佇列]
+        MEM[memory/<br/>三層記憶引擎]
+        CTX[context-engine.ts<br/>Context 壓縮策略]
+        TRG[tools/ + skills/<br/>Tool & Skill Registry]
+        EVT[event-bus.ts<br/>強型別事件匯流排]
+        ACC[accounts/<br/>帳號 + 角色 + 權限]
+        DSH[dashboard.ts<br/>Web Dashboard + Trace]
     end
 
     User -->|訊息| DGW
-    DGW -->|messageCreate| DIS
-    IDX --> CFG
-    IDX --> LOG
-    IDX --> DIS
-    DIS -->|getChannelAccess| CFG
-    DIS -->|createReplyHandler| REP
-    DIS -->|enqueue| SES
-    SES -->|runClaudeTurn| ACP
-    ACP -->|spawn| CLI
-    CLI -->|NDJSON 串流| ACP
-    ACP -->|AcpEvent| SES
-    SES -->|onEvent| REP
-    REP -->|reply / send| DGW
+    DGW -->|messageCreate| DSC
+    DSC -->|身份解析 + 權限閘門| MPL
+    MPL -->|組裝 prompt| AGL
+    AGL -->|tool 迴圈| TRG
+    AGL -->|LLM 請求| PRV
+    PRV -->|streaming| RPL
+    RPL -->|reply / edit| DGW
     DGW -->|回覆| User
+
+    PLT -.->|初始化| SES
+    PLT -.->|初始化| MEM
+    PLT -.->|初始化| TRG
+    PLT -.->|初始化| ACC
+    MPL -.->|recall| MEM
+    MPL -.->|context| CTX
+    AGL -.->|事件| EVT
+    DSH -.->|trace| EVT
 ```
 
 ## 目錄結構
@@ -75,28 +91,56 @@ graph TB
 程式碼與資料完全分離：
 
 ```
-~/project/catclaw/         ← 純程式碼（Git repo）
+~/project/catclaw/          <-- 純程式碼（Git repo）
   src/
-  dist/
-  signal/                  ← PM2 重啟 signal 檔（自動生成）
+    core/                   Agent Loop, Platform, Session, Dashboard, Context Engine,
+                            Prompt Assembler, Reply Handler, Event Bus, Message Pipeline,
+                            Message Trace, Mode, Rate Limiter, Task Store/UI, Subagent...
+    memory/                 三層記憶引擎（engine, recall, context-builder, extract）
+    providers/              LLM Provider 抽象（claude-api, ollama, openai-compat, cli-*...）
+    tools/                  Tool Registry + 17 builtin tools
+    skills/                 Skill Registry + 31 builtin skills
+    hooks/                  Hook 系統（tool 前後觸發）
+    safety/                 安全攔截（guard, collab-conflict, reversibility）
+    workflow/               工作流引擎（rut, oscillation, fix-escalation, sync, wisdom）
+    accounts/               帳號 + 角色 + 權限 + identity linking
+    mcp/                    MCP client + Discord MCP server
+    vector/                 Ollama embedding + LanceDB 向量搜尋
+    discord/                Discord 附加模組（inbound-history）
+    projects/               專案管理
+    ollama/                 Ollama 後端工具
+    migration/              資料遷移腳本
+    discord.ts              Discord Client 入口
+    cron.ts                 排程服務
+    history.ts              訊息歷史（NDJSON append-only）
+    slash.ts                Slash Commands
+    index.ts                進入點
+    config.ts               設定載入 + hot-reload
+    logger.ts               Log 系統
+  catclaw.js                CLI 進入點（start/restart/stop/logs/status/reset-session）
+  ecosystem.config.cjs      PM2 設定
+  dist/                     編譯輸出
 
-~/.catclaw/                ← CATCLAW_CONFIG_DIR（使用者資料）
-  catclaw.json             ← 主設定檔（JSONC，支援 // 註解）
-  workspace/               ← CATCLAW_WORKSPACE（Claude CLI cwd）
-    AGENTS.md              ← Claude 行為規則
+~/.catclaw/                 <-- CATCLAW_CONFIG_DIR（使用者資料）
+  catclaw.json              主設定檔（JSONC）
+  models-config.json        模型設定唯一真相源
+  workspace/                CATCLAW_WORKSPACE
+    AGENTS.md               Agent 行為規則
     data/
-      sessions.json        ← Session 持久化
-      cron-jobs.json       ← Cron 定義 + 狀態
-      active-turns/        ← Crash recovery 追蹤
-    history.db             ← 對話歷史（SQLite）
+      sessions/             Session 持久化（per-channel 目錄）
+      cron-jobs.json        Cron 定義 + 狀態
+      active-turns/         Crash recovery 追蹤
+    history/                對話歷史（NDJSON）
+  memory/                   記憶根目錄
+    _vectordb/              LanceDB 向量資料庫
 ```
 
 ## 前置需求
 
 - Node.js >= 18
 - [pnpm](https://pnpm.io/)
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（需在 PATH 中可用）
 - Discord Bot Token（從 [Discord Developer Portal](https://discord.com/developers/applications) 取得）
+- LLM Provider 至少一個：Anthropic API key / Claude Code OAuth / Ollama 等
 
 ## 安裝與設定
 
@@ -112,47 +156,63 @@ pnpm build
 ### 2. 建立設定目錄
 
 ```bash
-mkdir -p ~/.catclaw/workspace/data/active-turns
-node -e "const fs=require('fs'),h=require('os').homedir();fs.writeFileSync(h+'/.catclaw/catclaw.json',fs.readFileSync('catclaw.example.json','utf-8').replace(/\/\/.*$/gm,'').replace(/\n\s*\n/g,'\n'))"
+mkdir -p ~/.catclaw/workspace/data/{sessions,active-turns}
+cp catclaw.example.json ~/.catclaw/catclaw.json
+cp models-config.example.json ~/.catclaw/models-config.json
 ```
 
-這會把 `catclaw.example.json` 的 `//` 註解清除後複製到 `~/.catclaw/catclaw.json`。
+### 3. 編輯設定檔
 
-### 3. 編輯 catclaw.json
-
-`~/.catclaw/catclaw.json`（JSONC 格式，支援 `//` 註解）：
+**`~/.catclaw/catclaw.json`**（JSONC 格式）— 主要設定：
 
 ```jsonc
 {
   "discord": {
-    "token": "你的 Discord Bot Token",      // 必填
+    "token": "你的 Discord Bot Token",
     "dm": { "enabled": true },
     "guilds": {
       "<伺服器 ID>": {
         "allow": true,
         "requireMention": true,
-        "allowBot": false,
-        "allowFrom": [],
         "channels": {
           "<頻道 ID>": { "allow": true, "requireMention": false }
         }
       }
     }
   },
-  "admin": {
-    "allowedUserIds": ["你的 Discord User ID"]  // slash commands 權限
-  },
   "turnTimeoutMs": 300000,
-  "turnTimeoutToolCallMs": 480000,
   "sessionTtlHours": 168,
   "showToolCalls": "summary",
   "showThinking": false,
+  "streamingReply": true,
   "debounceMs": 500,
-  "fileUploadThreshold": 4000,
   "logLevel": "info",
-  "cron": { "enabled": false, "maxConcurrentRuns": 1 }
+  "memory": { "enabled": true },
+  "accounts": { "registrationMode": "invite" },
+  "providerRouting": {
+    "failoverChain": ["anthropic", "ollama"],
+    "circuitBreaker": { "threshold": 3, "cooldownMs": 60000 }
+  },
+  "cron": { "enabled": false }
 }
 ```
+
+**`~/.catclaw/models-config.json`** — 模型設定：
+
+```jsonc
+{
+  "primary": "sonnet",
+  "fallbacks": ["haiku"],
+  "aliases": {
+    "sonnet": "anthropic/claude-sonnet-4-6",
+    "opus": "anthropic/claude-opus-4-6",
+    "haiku": "anthropic/claude-haiku-4-5-20251001"
+  },
+  "routing": { "default": "sonnet" }
+}
+```
+
+> 完整設定欄位參考：[`_AIDocs/02-CONFIG-REFERENCE.md`](_AIDocs/02-CONFIG-REFERENCE.md)
 
 ### 4. 啟動
 
@@ -160,49 +220,14 @@ node -e "const fs=require('fs'),h=require('os').homedir();fs.writeFileSync(h+'/.
 node catclaw.js start
 ```
 
----
-
-## 設定說明
-
-| 欄位 | 說明 | 預設值 |
-|------|------|--------|
-| `discord.token` | Discord Bot Token（必填） | — |
-| `discord.dm.enabled` | 是否啟用 DM 回應 | `true` |
-| `discord.guilds` | Per-guild/channel 設定 | `{}` |
-| `admin.allowedUserIds` | 可執行 slash commands 的 Discord User ID | `[]` |
-| `turnTimeoutMs` | 基礎回應超時（ms） | `300000` (5 分鐘) |
-| `turnTimeoutToolCallMs` | Tool call 時延長超時（ms） | `480000` (~8 分鐘) |
-| `sessionTtlHours` | Session 閒置過期時間 | `168` (7 天) |
-| `showToolCalls` | 工具呼叫顯示：`all` / `summary` / `none` | `"summary"` |
-| `showThinking` | 是否顯示 Claude 思考過程 | `false` |
-| `debounceMs` | 同一人連續訊息合併等待時間（ms） | `500` |
-| `fileUploadThreshold` | 回覆超過此字數自動上傳為 .md（0 = 停用） | `4000` |
-| `logLevel` | Log 層級：`debug` / `info` / `warn` / `error` / `silent` | `"info"` |
-| `cron.enabled` | 啟用 cron 排程 | `false` |
-| `cron.maxConcurrentRuns` | Cron 最大並發數 | `1` |
-
-### Guild 設定繼承鏈
-
-```
-Thread → channels[threadId] → channels[parentId] → Guild 預設
-```
-
-| Guild 欄位 | 說明 |
-|-----------|------|
-| `allow` | 是否允許此 guild |
-| `requireMention` | 需要 @mention bot 才觸發 |
-| `allowBot` | 是否允許其他 bot 觸發 |
-| `allowFrom` | 白名單使用者 ID（空 = 全部允許） |
-| `channels` | Per-channel 覆寫設定（繼承 guild 預設） |
-
-### 環境變數（選用）
+## 環境變數
 
 | 變數 | 預設 | 說明 |
-|------|------|------|
-| `CATCLAW_CONFIG_DIR` | `~/.catclaw` | catclaw.json 位置 |
-| `CATCLAW_WORKSPACE` | `~/.catclaw/workspace` | Claude CLI cwd |
-| `CATCLAW_CLAUDE_BIN` | `"claude"` | claude binary 路徑 |
-| `ACP_TRACE` | — | `1` 啟用 debug 串流輸出 |
+| ---- | ---- | ---- |
+| `CATCLAW_CONFIG_DIR` | `~/.catclaw` | catclaw.json 所在目錄 |
+| `CATCLAW_WORKSPACE` | `~/.catclaw/workspace` | Agent 工作目錄 + data/ |
+| `CATCLAW_CLAUDE_BIN` | `"claude"` | Claude CLI binary 路徑（legacy V1 用） |
+| `ACP_TRACE` | — | `1` 啟用 ACP debug 串流輸出（legacy V1 用） |
 
 ## CLI 管理指令
 
@@ -216,86 +241,53 @@ node catclaw.js reset-session             # 清除所有 session
 node catclaw.js reset-session <channelId> # 清除指定 channel
 ```
 
-## Claude CLI 介接
+## Claude CLI 介接（Legacy V1）
 
-本專案不使用 Claude API SDK，直接 spawn Claude Code CLI 子程序：
+> V1 透過 spawn Claude Code CLI 子程序進行推理（`acp.ts`）。
+> V2 改為 HTTP API 透過 Provider 抽象層直接呼叫 LLM，不再依賴 Claude CLI。
 
 ```bash
+# V1 指令格式（僅供參考）
 claude -p --output-format stream-json --verbose --include-partial-messages \
   --dangerously-skip-permissions [--resume <sessionId>] "<prompt>"
 ```
-
-### 串流 Diff 機制
-
-CLI 的 `--include-partial-messages` 回傳**累積文字**（非 delta）。`acp.ts` 追蹤 `lastTextLength`，每次 `fullText.slice(lastTextLength)` 提取新增部分。
-
-### Session 延續
-
-- 首次：無 `--resume`，從 `session_init` event 取 UUID 並快取
-- 後續：`--resume <UUID>` 延續上下文
-- 持久化：`data/sessions.json`（atomic write）
-- TTL 超時 → 自動開新 session
 
 ## Cron 排程
 
 定義檔：`~/.catclaw/workspace/data/cron-jobs.json`（hot-reload）
 
-```jsonc
+```json
 {
-  "jobs": [
-    {
-      "id": "daily-standup",
-      "schedule": "0 9 * * 1-5",
-      "channelId": "<頻道 ID>",
-      "action": "claude",
-      "prompt": "產生今日站立會議提醒"
+  "version": 1,
+  "jobs": {
+    "daily-standup": {
+      "name": "每日站會提醒",
+      "enabled": true,
+      "schedule": { "kind": "cron", "expr": "0 9 * * 1-5", "tz": "Asia/Taipei" },
+      "action": { "type": "message", "channelId": "<頻道 ID>", "text": "站立會議時間！" }
+    },
+    "auto-task": {
+      "name": "自動執行任務",
+      "enabled": true,
+      "schedule": { "kind": "every", "everyMs": 3600000 },
+      "action": { "type": "subagent", "task": "摘要最近工作進度", "notify": "<頻道 ID>" }
     }
-  ]
+  }
 }
 ```
 
-| 排程類型 | 設定方式 |
-|---------|---------|
-| Cron | `"schedule": "0 9 * * *"` |
-| 固定間隔 | `"everyMs": 3600000` |
-| 一次性 | `"at": "2026-01-01T09:00:00"` |
+| 排程 kind | 說明 |
+| --------- | ---- |
+| `cron` | 標準 5-field cron + 時區 |
+| `every` | 固定間隔（ms） |
+| `at` | 一次性（ISO 8601） |
 
-Action 類型：`message`（送固定訊息）、`claude`（開 Claude turn）、`exec`（執行 shell 指令）
-
-## 檔案上傳
-
-### Inbound（使用者 → Claude）
-
-使用者附帶檔案 → 自動下載至 `/tmp/claude-discord-uploads/{messageId}/` → Claude 透過 Read 工具讀取。
-
-### Outbound（Claude → Discord）
-
-Claude 回覆中包含 `MEDIA: /absolute/path/to/file` → 自動解析並上傳為 Discord 附件。
-
-### 長回覆自動上傳
-
-回覆總字數超過 `fileUploadThreshold`（預設 4000）→ 自動上傳為 `response.md` + 前 150 字預覽。
-
-## 專案結構
-
-```
-catclaw/
-├── src/
-│   ├── index.ts        進入點、啟動序列、關閉處理
-│   ├── config.ts       catclaw.json 載入 + hot-reload + per-channel helper
-│   ├── logger.ts       Log level 控制
-│   ├── discord.ts      Discord client + 訊息過濾 + debounce
-│   ├── session.ts      Session 快取 + per-channel 串行佇列 + timeout + crash recovery
-│   ├── acp.ts          Claude CLI spawn + 串流 diff + AcpEvent
-│   ├── reply.ts        Discord 回覆分段 + typing + thinking + MEDIA upload
-│   ├── cron.ts         Cron 排程服務
-│   ├── history.ts      SQLite 對話歷史
-│   └── slash.ts        Slash commands
-├── catclaw.js          CLI 進入點（start/restart/stop/logs/status/reset-session）
-├── ecosystem.config.cjs PM2 設定
-├── package.json
-└── tsconfig.json
-```
+| Action type | 說明 |
+| ----------- | ---- |
+| `message` | 發送純文字訊息 |
+| `claude-acp` | 透過 ACP（V1 CLI spawn）執行 turn |
+| `exec` | 執行 shell 指令 |
+| `subagent` | 透過 V2 Agent Loop 執行任務 |
 
 ## License
 
