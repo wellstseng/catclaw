@@ -620,10 +620,13 @@ label.cfg-toggle { min-width: 36px; }
 <!-- Chat -->
 <div id="pane-chat" class="pane">
   <div style="display:flex;flex-direction:column;height:calc(100vh - 140px)">
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
       <label style="font-size:0.78rem;color:var(--fg2)">Session:</label>
-      <input id="chat-session" value="dashboard-chat" style="flex:1;max-width:220px;padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem" />
-      <button class="btn btn-sm btn-red" onclick="clearChatSession()">🗑 清除 Session</button>
+      <select id="chat-session" style="flex:1;max-width:300px;padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem">
+        <option value="">（新 Session）</option>
+      </select>
+      <button class="btn btn-sm" onclick="refreshChatSessions()" title="重新整理 session 列表">🔄</button>
+      <button class="btn btn-sm btn-red" onclick="clearChatSession()">🗑 清除</button>
       <span id="chat-status" style="font-size:0.72rem;color:var(--fg3)">就緒</span>
     </div>
     <div id="chat-messages" style="flex:1;overflow-y:auto;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:0.85rem;line-height:1.6">
@@ -689,6 +692,7 @@ function switchTab(id, el) {
   // trace 自動刷新：進入 traces tab 啟動，離開停止
   if (_traceAutoRefresh) { clearInterval(_traceAutoRefresh); _traceAutoRefresh = null; }
   if (id === 'sessions') { loadSessions(); loadInboundHistory(); }
+  if (id === 'chat') { refreshChatSessions(); }
   if (id === 'logs') connectLogStream();
   if (id !== 'logs') disconnectLogStream();
   if (id === 'ops') { loadSubagents(); }
@@ -2283,7 +2287,7 @@ async function sendChat() {
   appendChatMsg('user', text);
   const assistantDiv = appendChatMsg('assistant', '');
 
-  const sessionKey = document.getElementById('chat-session').value.trim() || 'dashboard-chat';
+  const sessionKey = document.getElementById('chat-session').value || '';
 
   try {
     const resp = await fetch('/api/chat' + (_authToken ? '?token=' + encodeURIComponent(_authToken) : ''), {
@@ -2344,13 +2348,37 @@ async function sendChat() {
   }
 }
 
+async function refreshChatSessions() {
+  try {
+    const data = await authFetch('/api/sessions').then(r => r.json());
+    const sel = document.getElementById('chat-session');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">(新 Session)</option>';
+    if (data && !data.error) {
+      const sessions = Array.isArray(data) ? data : (data.sessions || []);
+      sessions
+        .sort((a, b) => (b.lastTs || '').localeCompare(a.lastTs || ''))
+        .forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.sessionKey;
+          const label = s.sessionKey.length > 36 ? '...' + s.sessionKey.slice(-32) : s.sessionKey;
+          opt.textContent = label + ' (' + s.turns + ' turns)';
+          sel.appendChild(opt);
+        });
+    }
+    if (prev) sel.value = prev;
+  } catch {}
+}
+
 async function clearChatSession() {
-  const sessionKey = document.getElementById('chat-session').value.trim() || 'dashboard-chat';
+  const sessionKey = document.getElementById('chat-session').value;
+  if (!sessionKey) { document.getElementById('chat-status').textContent = '請先選擇 Session'; return; }
+  if (!confirm('確定清除 session ' + sessionKey.slice(-24) + '？')) return;
   try {
     await authFetch('/api/sessions/clear', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionKey: 'api-trigger:ch:dashboard-chat-' + sessionKey }),
+      body: JSON.stringify({ sessionKey }),
     });
     document.getElementById('chat-messages').innerHTML = '<div style="color:var(--fg3);text-align:center;padding:40px 0">Session 已清除。輸入訊息開始新對話。</div>';
     document.getElementById('chat-status').textContent = '已清除';
@@ -3363,13 +3391,13 @@ export class DashboardServer {
               const message = String(body["message"] ?? "").trim();
               if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: "message is required" })); return; }
 
-              const sessionSuffix = String(body["sessionKey"] ?? "dashboard-chat");
+              const rawSessionKey = String(body["sessionKey"] ?? "").trim();
 
               const { agentLoop } = await import("./agent-loop.js");
               const { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRegistry, getPlatformSafetyGuard } = await import("./platform.js");
               const { eventBus } = await import("./event-bus.js");
               const { getProviderRegistry } = await import("../providers/registry.js");
-              const { assembleSystemPrompt } = await import("./prompt-assembler.js");
+              const { runMessagePipeline } = await import("./message-pipeline.js");
 
               const providerRegistry = getProviderRegistry();
               const provider = providerRegistry.resolve();
@@ -3391,7 +3419,10 @@ export class DashboardServer {
                 "Access-Control-Allow-Origin": "*",
               });
 
-              const channelId = `dashboard-chat-${sessionSuffix}`;
+              // Session key：有選則沿用（跨平台共用），無則建立新 web session
+              const sessionKey = rawSessionKey || `web:ch:dashboard-${Date.now()}`;
+              // 從 session key 推導 channelId（discord:ch:XXX → XXX，否則用 session key 本身）
+              const channelId = sessionKey.replace(/^[^:]+:ch:/, "");
               const accountId = "dashboard-user";
 
               // 確保 dashboard-user 帳號存在（首次自動建立）
@@ -3403,21 +3434,31 @@ export class DashboardServer {
                 } catch { /* 已存在或建立失敗，忽略 */ }
               }
 
-              const systemPrompt = assembleSystemPrompt({
-                role: "platform-owner" as any,
-                mode: { thinking: null, compaction: "sliding-window" },
-                modeName: "normal",
-                workspaceDir: undefined,
-              });
-
-              const loopGen = agentLoop(message, {
-                platform: "api-trigger",
+              // ── 統一管線 ────────────────────────────────────────────────────
+              const pipeline = await runMessagePipeline({
+                prompt: message,
+                platform: "api",
                 channelId,
                 accountId,
                 provider,
-                systemPrompt,
+                role: "platform-owner",
+                memoryRecall: true,
+                sessionMemory: true,
+                modeExtras: true,
+                inboundHistory: true,
+              });
+
+              const loopGen = agentLoop(message, {
+                platform: "web",
+                channelId,
+                accountId,
+                provider,
+                systemPrompt: pipeline.systemPrompt || undefined,
                 allowSpawn: true,
-                _sessionKeyOverride: `api-trigger:ch:${channelId}`,
+                _sessionKeyOverride: sessionKey,
+                ...(pipeline.sessionMemoryOpts ? { sessionMemory: pipeline.sessionMemoryOpts } : {}),
+                trace: pipeline.trace,
+                promptBreakdownHints: pipeline.promptBreakdownHints,
               }, {
                 sessionManager: sm,
                 permissionGate: pg,

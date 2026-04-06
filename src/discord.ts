@@ -41,10 +41,8 @@ import {
   getPlatformPermissionGate,
   getPlatformToolRegistry,
   getPlatformSafetyGuard,
-  getPlatformMemoryEngine,
   getPlatformProjectManager,
   getPlatformRateLimiter,
-  getPlatformMemoryRoot,
 } from "./core/platform.js";
 import { getInboundHistoryStore, type InboundEntry } from "./discord/inbound-history.js";
 import { resolveProvider, getChannelAccess as getCoreChannelAccess } from "./core/config.js";
@@ -56,7 +54,7 @@ import { getChannelProviderOverride } from "./skills/builtin/use.js";
 import { getChannelSystemOverride } from "./skills/builtin/system.js";
 import { eventBus } from "./core/event-bus.js";
 import { handleAgentLoopReply } from "./core/reply-handler.js";
-import { assembleSystemPrompt, detectIntent, getModulesForIntent, type AssembleTraceOutput } from "./core/prompt-assembler.js";
+import { runMessagePipeline } from "./core/message-pipeline.js";
 import { setDiscordClient, getSubagentThreadBinding } from "./core/subagent-discord-bridge.js";
 import { parseApprovalReply, parseApprovalButtonId, resolveApproval, setApprovalDiscordClient } from "./core/exec-approval.js";
 import { abortRunningTurn } from "./skills/builtin/stop.js";
@@ -589,154 +587,33 @@ async function handleMessage(
       const isGroupChannel = !!firstMessage.guild;
       const prompt = combinedText;
 
-      // ── 記憶 Recall（三層：全域+專案+個人） ─────────────────────────────
-      trace.recordContextStart();
-      let systemPromptFromMemory = "";
-      const memEngine = getPlatformMemoryEngine();
-      if (memEngine) {
-        const recallStartMs = Date.now();
-        try {
-          const recallResult = await memEngine.recall(prompt, {
-            accountId,
-            projectId: resolvedProjectId,
-            channelId: firstMessage.channelId,
-          });
-          if (recallResult.fragments.length > 0) {
-            const ctx = memEngine.buildContext(recallResult.fragments, prompt, recallResult.blindSpot);
-            systemPromptFromMemory = ctx.text;
-            log.debug(`[discord] 記憶注入 ${recallResult.fragments.length} 個 atom (${ctx.tokenCount} tokens)`);
-            trace.recordMemoryRecall({
-              durationMs: Date.now() - recallStartMs,
-              fragmentCount: recallResult.fragments.length,
-              atomNames: recallResult.fragments.map(f => f.atom.name),
-              injectedTokens: ctx.tokenCount,
-              vectorSearch: !recallResult.degraded,
-              degraded: recallResult.degraded,
-              blindSpot: recallResult.blindSpot,
-              hits: recallResult.fragments.map(f => ({
-                name: f.atom.name,
-                layer: f.layer,
-                score: Math.round(f.score * 1000) / 1000,
-                matchedBy: f.matchedBy,
-              })),
-            });
-          } else {
-            // fragments=0 也記錄（含 blindSpot/degraded 狀態）
-            trace.recordMemoryRecall({
-              durationMs: Date.now() - recallStartMs,
-              fragmentCount: 0,
-              atomNames: [],
-              injectedTokens: 0,
-              vectorSearch: !recallResult.degraded,
-              degraded: recallResult.degraded,
-              blindSpot: recallResult.blindSpot,
-              hits: [],
-            });
-          }
-        } catch (err) {
-          log.debug(`[discord] 記憶 recall 失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // ── System Prompt 組裝（prompt-assembler + 動態區塊） ──────────────
+      // ── 統一管線（Memory Recall → Prompt Assembly → Trace） ─────────
       const channelSystemOverride = getChannelSystemOverride(firstMessage.channelId);
-
-      // Mode prompt extras（workspace/prompts/{name}.md）
       const modePreset = getChannelModePreset(firstMessage.channelId);
-      let modeExtrasBlock = "";
-      if (modePreset.systemPromptExtras?.length) {
-        const { resolveWorkspaceDir } = await import("./core/config.js");
-        const { readFileSync, existsSync } = await import("node:fs");
-        const { join } = await import("node:path");
-        const promptsDir = join(resolveWorkspaceDir(), "prompts");
-        const extras: string[] = [];
-        for (const name of modePreset.systemPromptExtras) {
-          const p = join(promptsDir, `${name}.md`);
-          if (existsSync(p)) {
-            try { extras.push(readFileSync(p, "utf-8")); } catch { /* skip */ }
-          }
-        }
-        if (extras.length > 0) modeExtrasBlock = extras.join("\n\n");
-      }
 
-      // Context-aware intent detection → moduleFilter
-      const intent = detectIntent(prompt);
-      const moduleFilter = getModulesForIntent(intent);
-      log.debug(`[discord] Intent: ${intent}, modules: ${moduleFilter ? moduleFilter.join(",") : "all"}`);
-
-      const assemblerTrace: AssembleTraceOutput = { modulesActive: [], modulesSkipped: [], segments: [] };
-      // extraBlocks + extraBlockNames 保持同序（filter 掉空值時同步移除名稱）
-      const _extraRaw: Array<[string, string | undefined]> = [
-        ["memory-recall", systemPromptFromMemory],
-        ["channel-override", channelSystemOverride],
-        ["mode-extras", modeExtrasBlock],
-      ];
-      const extraBlocks: string[] = [];
-      const extraBlockNames: string[] = [];
-      for (const [name, blk] of _extraRaw) {
-        if (blk) { extraBlocks.push(blk); extraBlockNames.push(name); }
-      }
-      const combinedSystemPrompt = assembleSystemPrompt({
-        role: accountRole as any,
-        mode: modePreset,
-        modeName: getChannelMode(firstMessage.channelId),
-        workspaceDir: undefined, // assembler 自行 resolveWorkspaceDir
+      const pipeline = await runMessagePipeline({
+        prompt,
+        platform: "discord",
+        trace,
+        channelId: firstMessage.channelId,
+        accountId,
+        provider,
+        projectId: resolvedProjectId,
+        role: accountRole,
         isGroupChannel,
         speakerDisplay: firstMessage.author.displayName,
-        accountId,
-        speakerRole: accountRole,
-        activeMcpServers: ["discord"], // Discord channel 永遠有 Discord context
-        extraBlocks,
-        extraBlockNames,
-        moduleFilter,
-        traceOutput: assemblerTrace,
+        modeName: getChannelMode(firstMessage.channelId),
+        modePreset,
+        activeMcpServers: ["discord"],
+        memoryRecall: true,
+        inboundHistory: true,
+        sessionMemory: true,
+        modeExtras: true,
+        channelOverride: channelSystemOverride,
       });
 
-      // Trace: Prompt Assembly + Intent + Provider
-      trace.recordPromptAssembly({
-        intent,
-        modulesActive: assemblerTrace.modulesActive,
-        modulesSkipped: assemblerTrace.modulesSkipped,
-        extraBlocks: extraBlocks.map(b => b.slice(0, 40)),
-        agentLoopBlocks: [],  // agent-loop 內追加的區塊由 agent-loop 補填
-      });
-      trace.recordProviderSelection({
-        providerId: provider.id,
-        providerType: provider.name,
-        model: provider.modelId,
-      });
-
-      // ── Inbound History（注入到 messages 層，非 system prompt）──────────
-      let inboundContext: string | undefined;
-      const inboundStore = getInboundHistoryStore();
-      const inboundCfg = config.inboundHistory;
-      if (inboundStore && inboundCfg?.enabled !== false) {
-        try {
-          const ctx = await inboundStore.consumeForInjection(
-            firstMessage.channelId,
-            {
-              enabled: true,
-              fullWindowHours: inboundCfg?.fullWindowHours ?? 24,
-              decayWindowHours: inboundCfg?.decayWindowHours ?? 168,
-              bucketBTokenCap: inboundCfg?.bucketBTokenCap ?? 600,
-              decayIITokenCap: inboundCfg?.decayIITokenCap ?? 300,
-              inject: { enabled: inboundCfg?.inject?.enabled ?? false },
-            },
-          );
-          if (ctx) {
-            inboundContext = ctx.text;
-            trace.recordInboundHistory({
-              entriesCount: ctx.entriesCount,
-              bucketA: ctx.bucketA,
-              bucketB: ctx.bucketB,
-              tokens: Math.ceil(ctx.text.length / 4),
-              decayIIApplied: false,
-            });
-          }
-        } catch (err) {
-          log.debug(`[discord] inbound-history inject 失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+      const combinedSystemPrompt = pipeline.systemPrompt;
+      const { inboundContext } = pipeline;
 
       // ── 中途插隊（interruptOnNewMessage）───────────────────────────────
       // 若此頻道設定了 interruptOnNewMessage=true，新訊息到來時自動 abort 正在執行的 turn
@@ -770,21 +647,9 @@ async function handleMessage(
         }
       }
 
-      // Trace: Context 組裝完成
-      {
-        const sysTokens = Math.ceil((combinedSystemPrompt?.length ?? 0) / 4);
-        trace.recordContextEnd({
-          systemPromptTokens: sysTokens,
-          historyTokens: 0,  // 精確值在 agent-loop CE 之後才知道
-          historyMessageCount: 0,
-          totalContextTokens: sysTokens,
-        });
-      }
-
       // ── Ack Reaction：⏳ queued ──────────────────────────────────────────
       void firstMessage.react("⏳").catch(() => { /* 無 permission 時靜默 */ });
 
-      const memoryRoot = getPlatformMemoryRoot();
       const gen = agentLoop(prompt, {
         platform: "discord",
         channelId: effectiveChannelId,
@@ -797,14 +662,7 @@ async function handleMessage(
         inboundContext,
         turnTimeoutMs: config.turnTimeoutMs,
         showToolCalls: config.showToolCalls as "all" | "summary" | "none",
-        ...(memoryRoot && config.memory.sessionMemory?.enabled !== false ? {
-          sessionMemory: {
-            enabled: true,
-            intervalTurns: config.memory.sessionMemory?.intervalTurns ?? 10,
-            maxHistoryTurns: config.memory.sessionMemory?.maxHistoryTurns ?? 15,
-            memoryDir: memoryRoot,
-          },
-        } : {}),
+        ...(pipeline.sessionMemoryOpts ? { sessionMemory: pipeline.sessionMemoryOpts } : {}),
         ...(config.safety?.execApproval?.enabled && config.safety.execApproval.dmUserId ? {
           execApproval: {
             enabled: true,
@@ -819,23 +677,15 @@ async function handleMessage(
         } : {}),
         ...(allImages.length > 0 ? { imageAttachments: allImages } : {}),
         ...(() => {
-          // thinking 優先：/think 手動設定 > mode preset
           const channelThinking = getChannelThinking(firstMessage.channelId);
-          const modePreset = getChannelModePreset(firstMessage.channelId);
           const thinking = channelThinking ?? getModeThinking(modePreset);
           return {
             ...(thinking ? { thinking } : {}),
             modePreset,
           };
         })(),
-        trace,
-        promptBreakdownHints: {
-          memoryContext: systemPromptFromMemory || undefined,
-          channelOverride: channelSystemOverride || undefined,
-          modeExtras: modeExtrasBlock || undefined,
-          assemblerModules: assemblerTrace.modulesActive,
-          assemblerSegments: assemblerTrace.segments,
-        },
+        trace: pipeline.trace,
+        promptBreakdownHints: pipeline.promptBreakdownHints,
       }, {
         sessionManager: getPlatformSessionManager(),
         permissionGate: getPlatformPermissionGate(),
