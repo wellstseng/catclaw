@@ -1,6 +1,6 @@
 # CatClaw _AIDocs 知識庫索引
 
-> 建立日期：2026-03-18 | 最近更新：2026-04-05 | 專案：catclaw
+> 建立日期：2026-03-18 | 最近更新：2026-04-06 | 專案：catclaw
 
 ## 專案簡介
 
@@ -70,7 +70,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/dashboard.md](modules/dashboard.md) | `src/core/dashboard.ts` | Web dashboard + REST API | 2026-04-05 |
 | [modules/memory-engine.md](modules/memory-engine.md) | `src/memory/` | 三層記憶引擎 | 2026-04-05 |
 | [modules/tool-registry.md](modules/tool-registry.md) | `src/tools/` | Tool 註冊 + builtin tools | 2026-04-05 |
-| [modules/message-trace.md](modules/message-trace.md) | `src/core/message-trace.ts` | 7 階段訊息追蹤 + TraceStore | 2026-04-02 |
+| [modules/message-trace.md](modules/message-trace.md) | `src/core/message-trace.ts` | 7 階段訊息追蹤 + TraceStore + ContextStore | 2026-04-06 |
 | [modules/config.md](modules/config.md) | `src/core/config.ts` | JSON 設定載入 | 2026-04-05 |
 | [modules/discord.md](modules/discord.md) | `src/discord.ts` | Discord 入口 | 2026-04-05 |
 | [modules/providers.md](modules/providers.md) | `src/providers/` | LLM Provider 系統 | 2026-04-05 |
@@ -83,6 +83,12 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/safety.md](modules/safety.md) | `src/safety/` | 安全攔截 | 2026-04-05 |
 | [modules/workflow.md](modules/workflow.md) | `src/workflow/` | 工作流引擎 | 2026-04-05 |
 | [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn（舊版入口） | 2026-03-22 |
+| [modules/permission-gate.md](modules/permission-gate.md) | `src/accounts/permission-gate.ts` | 權限閘門（Tier + allow/deny） | 2026-04-06 |
+| [modules/ollama-provider.md](modules/ollama-provider.md) | `src/providers/ollama.ts` | Ollama 本地 LLM Provider | 2026-04-06 |
+| [modules/vector-service.md](modules/vector-service.md) | `src/vector/lancedb.ts` | LanceDB 向量服務 | 2026-04-06 |
+| [modules/task-store.md](modules/task-store.md) | `src/core/task-store.ts` | 任務 CRUD + per-session | 2026-04-06 |
+| [modules/task-ui.md](modules/task-ui.md) | `src/core/task-ui.ts` | Discord 任務按鈕互動 | 2026-04-06 |
+| [modules/mcp-client.md](modules/mcp-client.md) | `src/mcp/client.ts` | MCP server 連線 + tool 自動註冊 | 2026-04-06 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務 | 2026-03-22 |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點 | 2026-03-22 |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log 系統 | 2026-03-22 |
