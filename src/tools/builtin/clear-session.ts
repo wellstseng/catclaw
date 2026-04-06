@@ -24,7 +24,7 @@ export const tool: Tool = {
     properties: {
       clear_traces: {
         type: "boolean",
-        description: "是否同時清除該 session 的 trace 紀錄（預設 false）",
+        description: "是否同時清除該 session 的 trace 紀錄（預設 true）",
       },
     },
     required: [],
@@ -38,13 +38,12 @@ export const tool: Tool = {
       return { result: "此頻道尚無 session 歷史，無需清除。" };
     }
 
-    const msgCount = session.messages.length;
     const sessionKey = session.sessionKey;
-    session.messages = [];
-    session.turnCount = 0;
+    const msgCount = sessionManager.clearMessages(sessionKey);
 
+    const clearTraces = params["clear_traces"] !== false; // 預設 true
     let tracesDeleted = 0;
-    if (params["clear_traces"]) {
+    if (clearTraces) {
       const traceStore = getTraceStore();
       tracesDeleted = traceStore?.deleteBySession(sessionKey) ?? 0;
     }

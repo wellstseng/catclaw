@@ -2367,7 +2367,33 @@ async function refreshChatSessions() {
         });
     }
     if (prev) sel.value = prev;
+    // 綁定切換事件
+    sel.onchange = loadChatHistory;
   } catch {}
+}
+
+async function loadChatHistory() {
+  const sessionKey = document.getElementById('chat-session').value;
+  const msgEl = document.getElementById('chat-messages');
+  msgEl.innerHTML = '';
+  if (!sessionKey) {
+    msgEl.innerHTML = '<div style="color:var(--fg3);text-align:center;padding:40px 0">在下方輸入訊息開始對話</div>';
+    return;
+  }
+  msgEl.innerHTML = '<div style="color:var(--fg3);text-align:center;padding:20px 0">載入歷史...</div>';
+  try {
+    const history = await authFetch('/api/chat/history?sessionKey=' + encodeURIComponent(sessionKey)).then(r => r.json());
+    msgEl.innerHTML = '';
+    if (!history.length) {
+      msgEl.innerHTML = '<div style="color:var(--fg3);text-align:center;padding:40px 0">此 Session 無對話紀錄</div>';
+      return;
+    }
+    for (const msg of history) {
+      appendChatMsg(msg.role, msg.content);
+    }
+  } catch (err) {
+    msgEl.innerHTML = '<div style="color:#f44;text-align:center;padding:20px 0">載入失敗: ' + err.message + '</div>';
+  }
 }
 
 async function clearChatSession() {
@@ -3376,6 +3402,28 @@ export class DashboardServer {
             res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
           }
         })();
+        return;
+      }
+
+      // GET /api/chat/history?sessionKey=xxx — 取得 session 對話歷史
+      if (url?.startsWith("/api/chat/history") && method === "GET") {
+        const skMatch = url.match(/[?&]sessionKey=([^&]+)/);
+        const sessionKey = skMatch ? decodeURIComponent(skMatch[1]!) : "";
+        if (!sessionKey) { res.writeHead(400); res.end(JSON.stringify({ error: "missing sessionKey" })); return; }
+        const sm = getSessionManager();
+        const messages = sm.getHistory(sessionKey);
+        // 只回傳 role + 純文字 content（過濾 tool_use/tool_result blocks）
+        const simplified = messages
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .map(m => ({
+            role: m.role,
+            content: typeof m.content === "string"
+              ? m.content
+              : (m.content as any[]).filter((b: any) => b.type === "text").map((b: any) => b.text).join(""),
+          }))
+          .filter(m => m.content);
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify(simplified));
         return;
       }
 
