@@ -1,19 +1,23 @@
 /**
  * @file memory/recall.ts
- * @description 三層記憶檢索（global + project + account）
+ * @description 三層記憶檢索（global + project + account）— Vector-Only
  *
- * 管線（R1-R14）：
- *   Trigger 匹配 → Vector Search → Related-Edge BFS(depth=1) → 合併去重 → LLM 選擇
- * 降級：Ollama / Vector 離線 → 純 keyword（R10）；LLM 選擇失敗 → score 排序前 N
- * 快取：同頻道 60s 內 Jaccard ≥ 0.7 直接回傳（F7）
- * Blind-Spot：所有層結果為空 → blindSpot=true（R9）
+ * 簡化管線（5 步）：
+ *   1. Cache 檢查
+ *   2. Embed prompt
+ *   3. Vector search（global + account 並行）
+ *   4. Merge + dedup + sort by score
+ *   5. touchAtom + cache + return
+ *
+ * 降級：Ollama / Vector 離線 → 回傳空結果 + degraded=true
+ * 快取：同頻道 60s 內 Jaccard ≥ 0.7 直接回傳
+ * Blind-Spot：所有層結果為空 → blindSpot=true
  */
 
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { log } from "../logger.js";
-import { readAtom, touchAtom, computeActivation, type Atom } from "./atom.js";
-import { loadIndex, matchTriggers } from "./index-manager.js";
+import { readAtom, touchAtom } from "./atom.js";
 import { embedOne } from "../vector/embedding.js";
 
 // ── 型別定義 ─────────────────────────────────────────────────────────────────
@@ -23,10 +27,11 @@ export type MemoryLayer = "global" | "project" | "account";
 export interface AtomFragment {
   id: string;
   layer: MemoryLayer;
-  atom: Atom;
-  /** cosine 相似度 or 1.0（trigger hit） */
+  atom: import("./atom.js").Atom;
+  /** cosine 相似度 (0–1) */
   score: number;
-  matchedBy: "trigger" | "vector" | "related";
+  /** 保留供 trace/status 顯示，固定 "vector" */
+  matchedBy: "vector";
 }
 
 export interface RecallContext {
@@ -49,7 +54,7 @@ export interface RecallResult {
   fragments: AtomFragment[];
   /** true = 所有層均無命中 → Blind-Spot 警告 */
   blindSpot: boolean;
-  /** 降級為純 keyword（Ollama 離線） */
+  /** Ollama / Vector 離線 */
   degraded: boolean;
 }
 
@@ -97,275 +102,124 @@ function layerToNs(layer: MemoryLayer, ctx: RecallContext): string {
   return `account/${ctx.accountId}`;
 }
 
-/** 從 memoryDir 解析 atom 實際路徑（相對/絕對均支援） */
-function resolveAtomPath(memoryDir: string, entryPath: string): string {
-  if (entryPath.startsWith("/") || entryPath.startsWith("~")) return entryPath;
-  return join(memoryDir, entryPath);
-}
+// ── 預設參數 ─────────────────────────────────────────────────────────────────
 
-// ── 單層 recall（trigger + vector） ─────────────────────────────────────────
-
-async function recallLayer(
-  prompt: string,
-  layer: MemoryLayer,
-  memoryDir: string,
-  ctx: RecallContext,
-  queryVec: number[],
-  useVector: boolean,
-  opts: { vectorMinScore: number; vectorTopK: number; relatedEdge: boolean }
-): Promise<AtomFragment[]> {
-  const memMd = join(memoryDir, "MEMORY.md");
-  if (!existsSync(memMd)) return [];
-
-  const entries = loadIndex(memMd);
-  const fragments: AtomFragment[] = [];
-  const seen = new Set<string>();
-
-  // ── R2: Trigger 匹配 ──
-  const triggerHits = matchTriggers(prompt, entries);
-  for (const e of triggerHits) {
-    const atomPath = resolveAtomPath(memoryDir, e.path);
-    const atom = readAtom(atomPath);
-    if (!atom || seen.has(atom.name)) continue;
-    seen.add(atom.name);
-    fragments.push({ id: atom.name, layer, atom, score: 1.0, matchedBy: "trigger" });
-  }
-
-  // ── R3: Vector Search ──
-  if (useVector && queryVec.length > 0) {
-    try {
-      const { getVectorService } = await import("../vector/lancedb.js");
-      const vsvc = getVectorService();
-      if (vsvc.isAvailable()) {
-        const ns = layerToNs(layer, ctx);
-        const results = await vsvc.search(queryVec, {
-          namespace: ns,
-          topK: opts.vectorTopK,
-          minScore: opts.vectorMinScore,
-        });
-        for (const r of results) {
-          if (seen.has(r.id)) continue;
-          // 找到 atom 對應的 entry path
-          const matchEntry = entries.find(e => e.name === r.id);
-          if (!matchEntry) continue;
-          const atomPath = resolveAtomPath(memoryDir, matchEntry.path);
-          const atom = readAtom(atomPath);
-          if (!atom) continue;
-          seen.add(atom.name);
-          fragments.push({ id: atom.name, layer, atom, score: r.score, matchedBy: "vector" });
-        }
-      }
-    } catch (err) {
-      log.debug(`[recall] vector search layer=${layer} 跳過：${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  // ── R5: Related-Edge Spreading（BFS depth=1） ──
-  if (opts.relatedEdge && fragments.length > 0) {
-    const toExpand = [...fragments];
-    for (const frag of toExpand) {
-      for (const relName of frag.atom.related) {
-        if (seen.has(relName)) continue;
-        const matchEntry = entries.find(e => e.name === relName);
-        if (!matchEntry) continue;
-        const atomPath = resolveAtomPath(memoryDir, matchEntry.path);
-        const atom = readAtom(atomPath);
-        if (!atom) continue;
-        seen.add(atom.name);
-        fragments.push({ id: atom.name, layer, atom, score: frag.score * 0.8, matchedBy: "related" });
-      }
-    }
-  }
-
-  return fragments;
-}
-
-// ── 純 keyword 降級（R10） ────────────────────────────────────────────────────
-
-function recallKeyword(
-  prompt: string,
-  layer: MemoryLayer,
-  memoryDir: string,
-  ctx: RecallContext
-): AtomFragment[] {
-  const memMd = join(memoryDir, "MEMORY.md");
-  if (!existsSync(memMd)) return [];
-
-  const entries = loadIndex(memMd);
-  const lower = prompt.toLowerCase();
-  const scored: Array<{ entry: typeof entries[0]; score: number }> = [];
-
-  for (const e of entries) {
-    // 完整命中 description
-    const descMatch = (e.name.toLowerCase().includes(lower) || lower.includes(e.name.toLowerCase())) ? 1 : 0;
-    // trigger 部分命中
-    const trigScore = e.triggers.some(t => lower.includes(t.toLowerCase())) ? 0.8 : 0;
-    const score = Math.max(descMatch, trigScore);
-    if (score > 0) scored.push({ entry: e, score });
-  }
-
-  scored.sort((a, b) => b.score - a.score);
-  const fragments: AtomFragment[] = [];
-  for (const { entry, score } of scored.slice(0, 5)) {
-    const atomPath = resolveAtomPath(memoryDir, entry.path);
-    const atom = readAtom(atomPath);
-    if (atom) fragments.push({ id: atom.name, layer, atom, score, matchedBy: "trigger" });
-  }
-  return fragments;
-}
-
-// ── LLM 記憶選擇（參考 Claude Code findRelevantMemories） ─────────────────────
-
-const LLM_SELECT_SYSTEM = `你是一個記憶選擇器。根據使用者的查詢，從可用的記憶 atom 清單中選出最相關的 atom（最多 5 個）。
-只選擇明確有幫助的 atom。不確定的跳過。若無相關 atom，回傳空陣列。
-回傳 JSON 格式：{"selected": ["id1", "id2", ...]}`;
-
-/**
- * 用 Ollama LLM 從候選 fragments 中選出最相關的（最多 maxSelect 個）。
- * 失敗或 Ollama 離線時，fallback 到 score 排序前 maxSelect 個。
- */
-async function llmSelectAtoms(
-  prompt: string,
-  fragments: AtomFragment[],
-  maxSelect = 5
-): Promise<AtomFragment[]> {
-  if (fragments.length <= maxSelect) return fragments;
-
-  try {
-    const { getOllamaClient } = await import("../ollama/client.js");
-    const client = getOllamaClient();
-
-    const manifest = fragments
-      .map(f => `${f.id}: ${f.atom.description ?? f.atom.name}`)
-      .join("\n");
-
-    const raw = await client.chat(
-      [{ role: "user", content: `Query: ${prompt.slice(0, 300)}\n\nAvailable atoms:\n${manifest}` }],
-      { system: LLM_SELECT_SYSTEM, timeout: 8_000 }
-    );
-
-    // 從回應中萃取 JSON
-    const match = raw.match(/\{[\s\S]*"selected"[\s\S]*\}/);
-    if (!match) throw new Error("no JSON in response");
-    const parsed: { selected: string[] } = JSON.parse(match[0]);
-    if (!Array.isArray(parsed.selected)) throw new Error("invalid selected");
-
-    const validIds = new Set(fragments.map(f => f.id));
-    const selectedIds = parsed.selected.filter(id => validIds.has(id)).slice(0, maxSelect);
-    if (selectedIds.length === 0) throw new Error("no valid ids selected");
-
-    const byId = new Map(fragments.map(f => [f.id, f]));
-    const selected = selectedIds.map(id => byId.get(id)!).filter(Boolean);
-
-    log.debug(`[recall] LLM 選擇：${fragments.length} → ${selected.length} atoms`);
-    return selected;
-  } catch (err) {
-    log.debug(`[recall] LLM 選擇失敗，fallback ACT-R 排序：${err instanceof Error ? err.message : String(err)}`);
-    return fragments
-      .sort((a, b) => (computeActivation(b.atom) * 0.3 + b.score * 0.7) - (computeActivation(a.atom) * 0.3 + a.score * 0.7))
-      .slice(0, maxSelect);
-  }
-}
+const DEFAULT_TOP_K = 8;
+const DEFAULT_MIN_SCORE = 0.55;
+const DEFAULT_MAX_RESULTS = 5;
 
 // ── 公開 API ─────────────────────────────────────────────────────────────────
 
 /**
- * 三層記憶檢索主入口
- *
- * @param prompt     使用者 / turn prompt
- * @param ctx        recall 上下文（accountId, projectId, sessionIntent）
- * @param paths      三層記憶目錄路徑
- * @param opts       recall 參數（來自 MemoryConfig.recall）
+ * 三層記憶檢索主入口（Vector-Only）
  */
 export async function recall(
   prompt: string,
   ctx: RecallContext,
   paths: RecallPaths,
   opts: {
-    triggerMatch: boolean;
-    vectorSearch: boolean;
-    relatedEdgeSpreading: boolean;
-    vectorMinScore: number;
-    vectorTopK: number;
+    topK?: number;
+    minScore?: number;
+    maxResults?: number;
+    // 保留舊欄位相容（engine.ts 傳入），但不再使用
+    triggerMatch?: boolean;
+    vectorSearch?: boolean;
+    relatedEdgeSpreading?: boolean;
+    vectorMinScore?: number;
+    vectorTopK?: number;
     llmSelect?: boolean;
     llmSelectMax?: number;
   }
 ): Promise<RecallResult> {
-  // ── Cache 檢查 ──
+  // ── Step 1: Cache 檢查 ──
   if (!ctx.skipCache) {
     const cached = getCache(ctx.channelId, prompt);
     if (cached) return cached;
   }
 
-  // ── R1: Intent 分類（簡化：僅影響 log） ──
   log.debug(`[recall] prompt="${prompt.slice(0, 50)}…" intent=${ctx.sessionIntent ?? "general"}`);
 
-  // ── 取得 embedding 向量 ──
-  let queryVec: number[] = [];
-  let degraded = false;
-  if (opts.vectorSearch) {
-    try {
-      queryVec = await embedOne(prompt);
-    } catch {
-      log.debug("[recall] embedding 失敗，降級純 keyword");
-      degraded = true;
-    }
+  // 相容舊 config 欄位
+  const topK = opts.topK ?? opts.vectorTopK ?? DEFAULT_TOP_K;
+  const minScore = opts.minScore ?? opts.vectorMinScore ?? DEFAULT_MIN_SCORE;
+  const maxResults = opts.maxResults ?? opts.llmSelectMax ?? DEFAULT_MAX_RESULTS;
+
+  // ── Step 2: Embed prompt ──
+  let queryVec: number[];
+  try {
+    queryVec = await embedOne(prompt);
+    if (!queryVec.length) throw new Error("empty embedding");
+  } catch (err) {
+    log.debug(`[recall] embedding 失敗，回傳空結果：${err instanceof Error ? err.message : String(err)}`);
+    const result: RecallResult = { fragments: [], blindSpot: true, degraded: true };
+    setCache(ctx.channelId, prompt, result);
+    return result;
   }
 
-  const useVector = opts.vectorSearch && !degraded && queryVec.length > 0;
-
-  // ── 三層並行查詢 ──
+  // ── Step 3: Vector search（各層並行） ──
   const layerDefs: Array<{ layer: MemoryLayer; dir: string }> = [
-    { layer: "global",  dir: paths.globalDir },
+    { layer: "global", dir: paths.globalDir },
     ...(paths.projectDir ? [{ layer: "project" as MemoryLayer, dir: paths.projectDir }] : []),
     ...(paths.accountDir ? [{ layer: "account" as MemoryLayer, dir: paths.accountDir }] : []),
   ];
 
-  const allFragments: AtomFragment[] = [];
+  let allFragments: AtomFragment[] = [];
 
-  const results = await Promise.all(layerDefs.map(({ layer, dir }) =>
-    degraded
-      ? Promise.resolve(recallKeyword(prompt, layer, dir, ctx))
-      : recallLayer(prompt, layer, dir, ctx, queryVec, useVector, {
-          vectorMinScore: opts.vectorMinScore,
-          vectorTopK: opts.vectorTopK,
-          relatedEdge: opts.relatedEdgeSpreading,
-        })
-  ));
+  try {
+    const { getVectorService } = await import("../vector/lancedb.js");
+    const vsvc = getVectorService();
+    if (!vsvc.isAvailable()) throw new Error("vector service not available");
 
-  for (const frags of results) allFragments.push(...frags);
+    const layerResults = await Promise.all(layerDefs.map(async ({ layer, dir }) => {
+      const ns = layerToNs(layer, ctx);
+      const hits = await vsvc.search(queryVec, { namespace: ns, topK, minScore });
+      const fragments: AtomFragment[] = [];
 
-  // ── 全域去重（同 atom 只保留最高分） ──
+      for (const hit of hits) {
+        // 優先用 vector record 的 path，fallback 掃描目錄
+        let atomPath = hit.path;
+        if (!atomPath || !existsSync(atomPath)) {
+          atomPath = join(dir, `${hit.id}.md`);
+        }
+        if (!existsSync(atomPath)) continue;
+
+        const atom = readAtom(atomPath);
+        if (!atom) continue;
+        fragments.push({ id: atom.name, layer, atom, score: hit.score, matchedBy: "vector" });
+      }
+      return fragments;
+    }));
+
+    for (const frags of layerResults) allFragments.push(...frags);
+  } catch (err) {
+    log.debug(`[recall] vector search 失敗：${err instanceof Error ? err.message : String(err)}`);
+    const result: RecallResult = { fragments: [], blindSpot: true, degraded: true };
+    setCache(ctx.channelId, prompt, result);
+    return result;
+  }
+
+  // ── Step 4: Merge + dedup + sort ──
   const best = new Map<string, AtomFragment>();
   for (const f of allFragments) {
     const prev = best.get(f.id);
     if (!prev || f.score > prev.score) best.set(f.id, f);
   }
-  const fragments = Array.from(best.values());
+  const finalFragments = Array.from(best.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults);
 
-  // ── LLM 選擇（僅 opts.llmSelect === true 時啟用，預設 OFF） ──
-  // fallback ACT-R 排序精度不亞於小模型選擇，且無 LLM 呼叫成本
-  const finalFragments = (opts.llmSelect === true && fragments.length > (opts.llmSelectMax ?? 5))
-    ? await llmSelectAtoms(prompt, fragments, opts.llmSelectMax ?? 5)
-    : fragments.sort((a, b) => (computeActivation(b.atom) * 0.3 + b.score * 0.7) - (computeActivation(a.atom) * 0.3 + a.score * 0.7)).slice(0, opts.llmSelectMax ?? 10);
-
-  // ── C1: touchAtom（recall 命中 → confirmations +1） ──
+  // ── Step 5: touchAtom + cache ──
   for (const f of finalFragments) {
     try { touchAtom(f.atom.path); } catch { /* 靜默 */ }
   }
 
-  // ── R9: Blind-Spot 偵測 ──
   const blindSpot = finalFragments.length === 0;
-  if (blindSpot) {
-    log.debug("[recall] BlindSpot — 所有層均無命中");
-  }
+  if (blindSpot) log.debug("[recall] BlindSpot — 所有層均無命中");
 
-  const result: RecallResult = { fragments: finalFragments, blindSpot, degraded };
-
-  // ── 存入 Cache ──
+  const result: RecallResult = { fragments: finalFragments, blindSpot, degraded: false };
   setCache(ctx.channelId, prompt, result);
 
-  log.debug(`[recall] 命中 ${finalFragments.length} 個 atom（degraded=${degraded}）`);
+  log.debug(`[recall] 命中 ${finalFragments.length} 個 atom`);
   return result;
 }
 

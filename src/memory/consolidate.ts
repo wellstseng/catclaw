@@ -31,7 +31,7 @@ function decayScore(atom: Atom, halfLifeDays: number): number {
   }
   const lambda = HALF_LIFE_FACTOR / halfLifeDays;
   const recency = Math.exp(-lambda * days);
-  const usageNorm = Math.min(1, atom.confirmations / 20);
+  const usageNorm = Math.min(1, atom.confirmations / 10);
   return 0.5 * recency + 0.5 * usageNorm;
 }
 

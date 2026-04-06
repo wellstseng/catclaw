@@ -985,11 +985,11 @@ function defaultMemoryConfig(raw: Partial<MemoryConfig> | undefined, workspaceDi
     },
     extract: r.extract ?? {
       enabled: true, perTurn: true, onSessionEnd: true,
-      maxItemsPerTurn: 3, maxItemsSessionEnd: 5, minNewChars: 500,
+      maxItemsPerTurn: 3, maxItemsSessionEnd: 5, minNewChars: 200,
     },
     consolidate: r.consolidate ?? {
-      autoPromoteThreshold: 20, suggestPromoteThreshold: 4,
-      decay: { enabled: true, halfLifeDays: 30, archiveThreshold: 0.3 },
+      autoPromoteThreshold: 3, suggestPromoteThreshold: 4,
+      decay: { enabled: true, halfLifeDays: 14, archiveThreshold: 0.2 },
     },
     episodic:     r.episodic ?? { enabled: true, ttlDays: 24 },
     rutDetection: r.rutDetection ?? { enabled: true, windowSize: 3, minOccurrences: 2 },

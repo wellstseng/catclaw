@@ -18,12 +18,11 @@ import type { MemoryLayer } from "./recall.js";
 // ── 知識類型 ─────────────────────────────────────────────────────────────────
 
 export type KnowledgeType =
-  | "factual"        // 事實性知識
-  | "architectural"  // 架構決策
-  | "procedural"     // 操作步驟
-  | "decision"       // 決策理由
-  | "pitfall"        // 陷阱 / 錯誤
-  | "preference";    // 使用者偏好
+  | "fact"           // 客觀知識（事實、架構、操作步驟）
+  | "decision"       // 決策理由 + 陷阱
+  | "preference"     // 使用者偏好
+  // 舊類型保留相容（映射到新類型）
+  | "factual" | "architectural" | "procedural" | "pitfall";
 
 export type KnowledgeTier =
   | "company"   // 公司/團隊層 → 全域
@@ -44,32 +43,21 @@ export interface KnowledgeItem {
 
 // ── 萃取 Prompt ───────────────────────────────────────────────────────────────
 
-const INTENT_EMPHASIS: Record<string, string> = {
-  build:   "重點萃取：架構決策、API 設計、模組邊界",
-  debug:   "重點萃取：錯誤模式、陷阱、root cause 分析",
-  design:  "重點萃取：架構原則、設計取捨、最佳實踐",
-  recall:  "重點萃取：記憶引用邏輯、知識組織方式",
-  general: "均衡萃取所有類型",
-};
-
 function buildExtractPrompt(
   response: string,
-  intent: string,
   crossSessionContext?: string
 ): string {
-  const emphasis = INTENT_EMPHASIS[intent] ?? INTENT_EMPHASIS.general;
   const crossCtx = crossSessionContext
-    ? `\n# 已有類似知識（避免重複）\n${crossSessionContext}\n`
+    ? `\n# Existing knowledge (avoid duplicates)\n${crossSessionContext}\n`
     : "";
 
-  return `知識萃取：從以下回應提取可操作、長期有價值的片段（0-5 項）。${emphasis}
-類型：factual|architectural|procedural|decision|pitfall|preference
-層級：company→全域 / project→專案 / personal|unknown→個人${crossCtx}
-# 回應
-${response.slice(0, 20000)}
-
-輸出 JSON array（僅 JSON）：
-[{"type":"factual","tier":"project","content":"具體內容1-3句","triggers":["詞1"]}]`;
+  return `Extract 0-3 reusable knowledge items from this response.
+Types: fact (what is true), decision (why this choice), preference (user habit/style)
+Tier: company | project | personal
+Output JSON only: [{"type":"fact","tier":"project","content":"...","triggers":["..."]}]
+Empty array [] if nothing worth remembering.${crossCtx}
+# Response
+${response.slice(0, 20000)}`;
 }
 
 // ── 分流邏輯（E8） ────────────────────────────────────────────────────────────
@@ -109,10 +97,21 @@ async function getCrossSessionContext(
 
 // ── 解析 LLM JSON 輸出 ────────────────────────────────────────────────────────
 
+/** 舊類型 → 新類型映射 */
+const TYPE_MAP: Record<string, KnowledgeType> = {
+  fact: "fact", factual: "fact", architectural: "fact", procedural: "fact",
+  decision: "decision", pitfall: "decision",
+  preference: "preference",
+};
+
 function parseExtractResult(raw: string): KnowledgeItem[] {
-  // 找 JSON array
-  const match = raw.match(/\[[\s\S]*?\]/);
-  if (!match) return [];
+  // 找 JSON array（non-greedy 優先，greedy fallback）
+  let match = raw.match(/\[[\s\S]*?\]/);
+  if (!match) match = raw.match(/\[[\s\S]*\]/);
+  if (!match) {
+    log.info(`[extract] JSON parse 失敗 — 無 array。raw(200): ${raw.slice(0, 200)}`);
+    return [];
+  }
 
   try {
     const parsed = JSON.parse(match[0]) as Array<{
@@ -120,13 +119,12 @@ function parseExtractResult(raw: string): KnowledgeItem[] {
     }>;
     if (!Array.isArray(parsed)) return [];
 
-    const VALID_TYPES = new Set(["factual", "architectural", "procedural", "decision", "pitfall", "preference"]);
     const VALID_TIERS = new Set(["company", "project", "personal", "unknown"]);
 
     return parsed
-      .filter(item => item.content && item.content.trim().length > 10)
+      .filter(item => item.content && item.content.trim().length > 20)
       .map(item => {
-        const type = (VALID_TYPES.has(item.type ?? "") ? item.type : "factual") as KnowledgeType;
+        const type = TYPE_MAP[item.type ?? ""] ?? "fact";
         const tier = (VALID_TIERS.has(item.tier ?? "") ? item.tier : "unknown") as KnowledgeTier;
         return {
           type,
@@ -137,7 +135,8 @@ function parseExtractResult(raw: string): KnowledgeItem[] {
           extractedAt: new Date().toISOString(),
         };
       });
-  } catch {
+  } catch (err) {
+    log.info(`[extract] JSON parse 失敗：${err instanceof Error ? err.message : String(err)}。raw(200): ${raw.slice(0, 200)}`);
     return [];
   }
 }
@@ -202,7 +201,7 @@ async function doExtract(task: ExtractTask): Promise<KnowledgeItem[]> {
   try {
     const { getOllamaClient } = await import("../ollama/client.js");
     const client = getOllamaClient();
-    const prompt = buildExtractPrompt(task.response, task.intent, crossCtx);
+    const prompt = buildExtractPrompt(task.response, crossCtx);
     raw = await client.generate(prompt, { think: "auto", numPredict: 2048 });
   } catch (err) {
     log.debug(`[extract] Ollama 不可用，跳過：${err instanceof Error ? err.message : String(err)}`);
@@ -210,7 +209,11 @@ async function doExtract(task: ExtractTask): Promise<KnowledgeItem[]> {
   }
 
   const items = parseExtractResult(raw);
-  log.debug(`[extract] 萃取 ${items.length} 項`);
+  if (items.length === 0) {
+    log.info(`[extract] 萃取 0 項 — raw(200): ${raw.slice(0, 200)}`);
+  } else {
+    log.info(`[extract] 萃取 ${items.length} 項：${items.map(i => `${i.type}/${i.tier}`).join(", ")}`);
+  }
   return items.slice(0, task.maxItems);
 }
 
@@ -235,8 +238,8 @@ export function extractPerTurn(
   newText: string,
   opts: ExtractOpts
 ): Promise<KnowledgeItem[]> {
-  if (newText.length < 500) {
-    log.debug("[extract] 新增文字 < 500 字元，跳過");
+  if (newText.length < 200) {
+    log.debug("[extract] 新增文字 < 200 字元，跳過");
     return Promise.resolve([]);
   }
 

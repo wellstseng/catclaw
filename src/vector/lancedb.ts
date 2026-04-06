@@ -193,12 +193,12 @@ export class LanceVectorService implements VectorService {
         .limit(topK * 2)          // 多取再 filter，避免 minScore 後數量不足
         .toArray();
 
-      // LanceDB 預設 L2 metric，對 unit-normalized 向量：cosine_sim = 1 - d²/2
+      // LanceDB 預設 L2 metric，_distance 已是 L2²；對 unit-normalized 向量：cosine_sim = 1 - L2²/2
       const results: SearchResult[] = rawResults
         .map(r => ({
           id: r["id"] as string,
           text: r["text"] as string,
-          score: 1 - ((r["_distance"] as number ?? 0) ** 2) / 2,
+          score: 1 - (r["_distance"] as number ?? 0) / 2,
           path: (r["path"] as string) || undefined,
           meta: (r["meta"] as string) || undefined,
         }))
@@ -229,6 +229,28 @@ export class LanceVectorService implements VectorService {
       await this.deleteFromTable(table, id);
     } catch (err) {
       log.warn(`[lancedb] delete ${id} 失敗：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // ── Drop Table ──────────────────────────────────────────────────────────────
+
+  /**
+   * 刪除指定 namespace 的 table（用於 migration 前清空）
+   */
+  async dropTable(namespace: string): Promise<boolean> {
+    validateNamespace(namespace);
+    if (!this.db) return false;
+
+    const tableName = nsToTable(namespace);
+    try {
+      const tableList = await this.db.tableNames();
+      if (!tableList.includes(tableName)) return false;
+      await this.db.dropTable(tableName);
+      log.info(`[lancedb] dropTable "${namespace}" 完成`);
+      return true;
+    } catch (err) {
+      log.warn(`[lancedb] dropTable "${namespace}" 失敗：${err instanceof Error ? err.message : String(err)}`);
+      return false;
     }
   }
 
