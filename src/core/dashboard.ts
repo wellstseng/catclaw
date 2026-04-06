@@ -3494,6 +3494,7 @@ export class DashboardServer {
                 sessionMemory: true,
                 modeExtras: true,
                 inboundHistory: true,
+                conversationLabel: `dashboard channel id:${channelId}`,
               });
 
               const loopGen = agentLoop(message, {

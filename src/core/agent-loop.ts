@@ -1504,13 +1504,19 @@ export async function* agentLoop(
   }
 
   // 儲存 turn 到 session（B: 標記 per-message token 數）
-  const promptTokens = Math.ceil(prompt.length / 4);
-  const responseTokens = totalOutputTokens > 0 ? totalOutputTokens : Math.ceil(fullResponse.length / 4);
-  sessionManager.addMessages(sessionKey, [
-    { role: "user", content: prompt, tokens: promptTokens },
-    { role: "assistant", content: fullResponse, tokens: responseTokens },
-    ...extraMessages,
-  ]);
+  // 若本輪呼叫了 clear_session，不再將本輪訊息寫回（否則清除等於白做）
+  const sessionClearedDuringTurn = tracker.toolCalls.some(tc => tc.name === "clear_session" && !tc.error);
+  if (!sessionClearedDuringTurn) {
+    const promptTokens = Math.ceil(prompt.length / 4);
+    const responseTokens = totalOutputTokens > 0 ? totalOutputTokens : Math.ceil(fullResponse.length / 4);
+    sessionManager.addMessages(sessionKey, [
+      { role: "user", content: prompt, tokens: promptTokens },
+      { role: "assistant", content: fullResponse, tokens: responseTokens },
+      ...extraMessages,
+    ]);
+  } else {
+    log.info(`[agent-loop] clear_session 已執行，跳過本輪 addMessages`);
+  }
 
   eventBus.emit("turn:after", { accountId, channelId, sessionKey, prompt, projectId }, fullResponse);
 

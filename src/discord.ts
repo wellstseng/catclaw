@@ -587,6 +587,12 @@ async function handleMessage(
       const isGroupChannel = !!firstMessage.guild;
       const prompt = combinedText;
 
+      // ── ConversationLabel（比照 OpenClaw buildGuildLabel / buildDirectLabel）
+      const channelName = "name" in firstMessage.channel ? (firstMessage.channel as { name: string }).name : null;
+      const conversationLabel = isGroupChannel
+        ? `${firstMessage.guild!.name} #${channelName ?? firstMessage.channelId} channel id:${firstMessage.channelId}`
+        : `${firstMessage.author.displayName} user id:${firstMessage.author.id}`;
+
       // ── 統一管線（Memory Recall → Prompt Assembly → Trace） ─────────
       const channelSystemOverride = getChannelSystemOverride(firstMessage.channelId);
       const modePreset = getChannelModePreset(firstMessage.channelId);
@@ -610,6 +616,7 @@ async function handleMessage(
         sessionMemory: true,
         modeExtras: true,
         channelOverride: channelSystemOverride,
+        conversationLabel,
       });
 
       const combinedSystemPrompt = pipeline.systemPrompt;

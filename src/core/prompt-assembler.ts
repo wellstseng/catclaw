@@ -49,6 +49,9 @@ export interface PromptContext {
   workspaceDir?: string;
   /** 當前 session 已啟用的 MCP server 名稱 */
   activeMcpServers?: string[];
+  /** 對話場景標籤（比照 OpenClaw ConversationLabel）
+   *  例："Guild名 #頻道名 channel id:頻道ID" */
+  conversationLabel?: string;
 }
 
 // ── Context-aware Intent Detection ──────────────────────────────────────────
@@ -101,8 +104,11 @@ const identityModule: PromptModule = {
     const parts: string[] = [];
     parts.push("你是 CatClaw，一個 Codex 版 Claude Code CLI + 多人 AI 開發平台。");
     parts.push("透過 Discord 為前端介面，提供等同 Claude Code 的完整開發能力。");
+    if (ctx.conversationLabel) {
+      parts.push(`\n[Conversation] ${ctx.conversationLabel}`);
+    }
     if (ctx.isGroupChannel && ctx.speakerDisplay) {
-      parts.push(`\n[多人頻道] 當前說話者：${ctx.speakerDisplay}（${ctx.accountId ?? "unknown"}/${ctx.speakerRole ?? "member"}）`);
+      parts.push(`[多人頻道] 當前說話者：${ctx.speakerDisplay}（${ctx.accountId ?? "unknown"}/${ctx.speakerRole ?? "member"}）`);
     }
     return parts.join("\n");
   },

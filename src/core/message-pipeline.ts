@@ -87,6 +87,13 @@ export interface PipelineInput {
 
   // ── 平台專屬注入 ──────────────────────────────────────────────────────────
 
+  /** 對話場景標籤（比照 OpenClaw ConversationLabel）
+   *  Discord guild: "Guild名 #頻道名 channel id:頻道ID"
+   *  DM: "username user id:userId"
+   *  API/dashboard: "dashboard channel id:channelId"
+   */
+  conversationLabel?: string;
+
   /** Channel system prompt override（Discord /system 指令設定） */
   channelOverride?: string;
 
@@ -278,6 +285,7 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
     accountId,
     speakerRole: role,
     activeMcpServers,
+    conversationLabel: input.conversationLabel,
     extraBlocks,
     extraBlockNames,
     moduleFilter,
