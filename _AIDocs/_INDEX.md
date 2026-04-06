@@ -6,7 +6,7 @@
 
 CatClaw = Codex 版 Claude Code CLI + 多人 AI 開發平台。
 以 Discord 為前端，提供等同 Claude Code 的完整開發能力：multi-turn agent loop、17+ builtin tools、
-28 builtin skills（25 TS + 3 prompt）、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、
+31 builtin skills（28 TS + 3 prompt）、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、
 帳號/角色/權限系統、Web Dashboard + Trace 追蹤。
 
 ## 架構一句話摘要
@@ -91,6 +91,14 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/task-ui.md](modules/task-ui.md) | `src/core/task-ui.ts` | Discord 任務按鈕互動 | 2026-04-06 |
 | [modules/mcp-client.md](modules/mcp-client.md) | `src/mcp/client.ts` | MCP server 連線 + tool 自動註冊 | 2026-04-06 |
 | [modules/message-pipeline.md](modules/message-pipeline.md) | `src/core/message-pipeline.ts` | 統一訊息管線 | 2026-04-06 |
+| [modules/agent-system.md](modules/agent-system.md) | `src/core/agent-loader.ts` + `agent-registry.ts` + `agent-types.ts` | Multi-Agent 設定與型別 | 2026-04-06 |
+| [modules/subagent-system.md](modules/subagent-system.md) | `src/core/subagent-registry.ts` + `subagent-discord-bridge.ts` | Subagent 編排與追蹤 | 2026-04-06 |
+| [modules/exec-approval.md](modules/exec-approval.md) | `src/core/exec-approval.ts` | 執行指令 DM 確認 | 2026-04-06 |
+| [modules/mode.md](modules/mode.md) | `src/core/mode.ts` | Per-channel 模式管理 | 2026-04-06 |
+| [modules/rate-limiter.md](modules/rate-limiter.md) | `src/core/rate-limiter.ts` | 請求速率限制器 | 2026-04-06 |
+| [modules/session-snapshot.md](modules/session-snapshot.md) | `src/core/session-snapshot.ts` | Session 快照與回退 | 2026-04-06 |
+| [modules/tool-log-store.md](modules/tool-log-store.md) | `src/core/tool-log-store.ts` | Tool log 持久化 | 2026-04-06 |
+| [modules/inbound-history.md](modules/inbound-history.md) | `src/discord/inbound-history.ts` | 未處理訊息記錄 | 2026-04-06 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務 | 2026-03-22 |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點 | 2026-03-22 |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log 系統 | 2026-03-22 |

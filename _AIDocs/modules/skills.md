@@ -8,7 +8,7 @@
 src/skills/
   types.ts          — Skill, SkillContext, SkillResult 型別
   registry.ts       — loadBuiltinSkills(), loadPromptSkills(), matchSkill()
-  builtin/          — TypeScript 執行型 skills（25 個）
+  builtin/          — TypeScript 執行型 skills（28 個）
   builtin-prompt/   — SKILL.md 格式 prompt-type skills（3 個）
 ```
 
