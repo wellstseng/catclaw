@@ -12,15 +12,13 @@
 
 ```jsonc
 // catclaw.json
-"mcp": {
-  "servers": {
-    "my-server": {
-      "command": "npx",
-      "args": ["-y", "my-mcp-server"],
-      "env": { "API_KEY": "..." },
-      "tier": "elevated",     // 此 server 所有 tool 的預設 tier（預設 elevated）
-      "deferred": true        // deferred 模式：不注入完整 schema 到 LLM context（預設 true）
-    }
+"mcpServers": {
+  "my-server": {
+    "command": "npx",
+    "args": ["-y", "my-mcp-server"],
+    "env": { "API_KEY": "..." },
+    "tier": "elevated"      // 此 server 所有 tool 的預設 tier（預設 elevated）
+    // deferred 預設 true（McpClient 內部 `this.cfg.deferred !== false`），通常不需明確設定
   }
 }
 ```
@@ -73,6 +71,6 @@ timeout: 30 秒。
 
 | 呼叫者 | 用途 |
 |--------|------|
-| `platform.ts` | 遍歷 `config.mcp.servers` 建立 McpClient + start() |
+| `platform.ts` | 遍歷 `config.mcpServers` 建立 McpClient + start() |
 | ToolRegistry | `_registerTools()` 自動註冊 tool |
 | `agent-loop.ts` | 透過 ToolRegistry 正常呼叫 MCP tool |

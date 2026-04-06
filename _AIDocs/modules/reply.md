@@ -180,7 +180,7 @@ const MEDIA_RE = /\bMEDIA:\s*`?([^\n`]+)`?/gi;
 | `TEXT_LIMIT` | `2000` | Discord 單則訊息字元上限 |
 | `FLUSH_DELAY_MS` | `3000` | chunk 模式：定時 flush 延遲（毫秒） |
 | `EDIT_INTERVAL_MS` | `800` | streaming 模式：最快 edit 間隔（毫秒） |
-| `STREAM_SPLIT_THRESHOLD` | `1900` | streaming 模式：超過此值終結目前段開新訊息 |
+| `STREAM_SPLIT_THRESHOLD` | `1900` | streaming 模式：超過此值終結目前段開新訊息（函式內 local const） |
 
 ### API
 

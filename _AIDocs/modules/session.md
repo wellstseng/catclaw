@@ -337,7 +337,7 @@ export interface TurnRequest {
 ### Turn Queue 設計
 
 - Max depth: 5（超過 reject `BUSY`）
-- 排隊超時：`Math.max(turnTimeoutMs, 120s)`，超時自動 reject `TIMEOUT`
+- 排隊超時：`Math.max(config.turnTimeoutMs, 120s)`（取自全域 config.turnTimeoutMs），超時自動 reject `TIMEOUT`
 - 第一個進入 queue 的 turn 立即 resolve（不排隊）
 - `dequeueTurn()` 由 caller 在 turn 完成後主動呼叫
 

@@ -12,10 +12,10 @@
 1. import { config }             ← module eval 時執行 loadConfig()，讀 config.json
 2. setLogLevel(config.logLevel)  ← 在其他模組 log 前設定層級（module 頂層執行）
 3. loadSessions()                ← 從磁碟載入 session 快取（重啟後延續對話上下文）
-4. createDiscordClient()         ← 建立 Client + 綁定 messageCreate（不傳 config）
+4. createBot()                   ← 建立 Client + 綁定 messageCreate（不傳 config）
 5. watchConfig()                 ← 啟動 config.json hot-reload 監聽
 6. await client.login()          ← 連線 Discord Gateway
-7. client.once("ready")          ← Bot 上線後執行：
+7. bot.once("clientReady")       ← Bot 上線後執行：
    ├─ 印出上線資訊（DM/Guild/工具訊息/CATCLAW_WORKSPACE）
    ├─ startCron(client)          ← 啟動排程服務（需要 client 傳送訊息）
    ├─ 重啟回報                   ← 偵測 signal/RESTART 並發送通知
@@ -154,7 +154,7 @@ process.on("unhandledRejection", (reason) => {
 ```typescript
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { config, watchConfig } from "./config.js";     // ← module eval 時載入設定
+import { config, watchConfig } from "./core/config.js"; // ← module eval 時載入設定
 import { setLogLevel, log } from "./logger.js";
 import { createDiscordClient } from "./discord.js";
 import { loadSessions, scanAndCleanActiveTurns } from "./session.js";

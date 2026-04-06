@@ -16,7 +16,7 @@ class ToolRegistry {
   all(): Tool[]
   loadFromDirectory(dir: string): Promise<void>  // 掃描 dist/tools/builtin/
   watchDirectory(dir: string): void               // Hot-reload
-  execute(name: string, params: unknown, ctx: ToolContext): Promise<ToolResult>
+  execute(name: string, params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
 }
 ```
 
@@ -28,8 +28,8 @@ interface Tool {
   description: string;
   tier: "standard" | "elevated" | "admin";
   deferred?: boolean;          // true = 名稱注入 system prompt，schema 需 tool_search 載入
-  inputSchema: JSONSchema;
-  execute(params: unknown, ctx: ToolContext): Promise<ToolResult>;
+  parameters: JsonSchema;
+  execute(params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }
 ```
 
@@ -38,7 +38,7 @@ interface Tool {
 ```typescript
 interface ToolContext {
   accountId: string;
-  sessionKey: string;
+  sessionId: string;
   channelId: string;
   projectId?: string;
   toolTier?: string;
@@ -130,7 +130,7 @@ Deferred tools 的 schema 不直接注入 `tools` 參數（省 token）。
 ## MCP Tool 整合
 
 MCP server 的 tools 透過 `McpClient` 自動注冊到 ToolRegistry。
-名稱格式：`mcp__{serverName}__{toolName}`
+名稱格式：`mcp_${serverName}_${toolName}`（單底線）
 
 ## Permission Tier
 

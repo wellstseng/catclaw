@@ -95,19 +95,19 @@ pi-ai 使用分離的 `ToolResultMessage`（role: "toolResult"）。
 
 ### 生命週期
 
-1. `new AuthProfileStore({ providerId, persistPath, credentialsFilePath })` + `load()`
+1. `new AuthProfileStore(filePath: string)` + `load()`
 2. `load()` → 讀 state 檔 → 讀憑證檔 → `_mergeCredentials()`（更新 credential，保留 state）
-3. `pick()` → 找第一個未 disabled + cooldown 未過期的 profile
+3. `pickForProvider(provider: string): PickResult | null` → 找該 provider 下第一個未 disabled + cooldown 未過期的 profile
 4. 呼叫失敗 → `setCooldown(id, reason)` 設 cooldown 或永久停用
 
 ### Cooldown 時長
 
 | reason | 時長 |
 |--------|------|
-| `rate_limit` | 15 分鐘 |
+| `rate_limit` | 5 小時 |
 | `overloaded` | 5 分鐘 |
-| `billing` | 永久停用 |
-| `auth` | 永久停用 |
+| `billing` | 24 小時 |
+| `auth` | 永久停用（Infinity） |
 
 ### 陷阱
 
@@ -322,7 +322,7 @@ new CodexOAuthProvider(id, entry, authStore?)
 
 | Provider Key | API | 包含模型 |
 |-------------|-----|---------|
-| `anthropic` | anthropic-messages | claude-opus-4-6, claude-sonnet-4-6, claude-sonnet-4-5, claude-haiku-4-5 |
+| `anthropic` | anthropic-messages | claude-opus-4-6, claude-sonnet-4-6, claude-sonnet-4-5-20250514, claude-haiku-4-5-20251001 |
 | `openai` | openai-completions | gpt-4o, gpt-4o-mini |
 | `openai-codex` | openai-codex-responses | gpt-5.4 |
 

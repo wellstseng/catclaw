@@ -1,6 +1,6 @@
 # modules/dashboard — Web Dashboard + REST API
 
-> 檔案：`src/core/dashboard.ts` (~3400 行)
+> 檔案：`src/core/dashboard.ts` (~3600 行)
 > 更新日期：2026-04-06
 
 ## 職責
@@ -10,7 +10,7 @@
 ## 啟動
 
 ```typescript
-initDashboard(port: number, token?: string): void
+initDashboard(port = 8088, token?: string): DashboardServer
 ```
 
 在 `platform.ts` 步驟 9.8 初始化。`config.dashboard.enabled` 控制。
@@ -122,7 +122,7 @@ Bearer token 認證（可選）：
 | 端點 | 方法 | 說明 |
 |------|------|------|
 | `/api/trigger` | POST | 遠端觸發 agent loop `{ channelId, prompt }` |
-| `/api/trigger/:traceId` | GET | 查詢觸發結果 |
+| `/api/trigger/:runId` | GET | 查詢觸發結果 |
 
 ### Chat
 

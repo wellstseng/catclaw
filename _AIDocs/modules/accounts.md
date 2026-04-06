@@ -68,14 +68,13 @@ interface Identity {
 | `update(accountId, patch)` | 更新帳號 |
 | `resolveIdentity(platform, platformId)` | 身份反查 → accountId |
 | `linkIdentity(accountId, identity)` | 綁定新身份 |
-| `list()` | 列出所有帳號 |
-| `getRole(accountId)` | 取得角色 |
+| `listAccountIds()` | 列出所有帳號 ID |
 
 ## PermissionGate
 
 ```typescript
 class PermissionGate {
-  filterTools(accountId: string, tools: ToolDefinition[]): ToolDefinition[]
+  listAvailable(accountId: string): ToolDefinition[]
   check(accountId: string, toolName: string): boolean
 }
 ```
@@ -91,9 +90,8 @@ class PermissionGate {
 
 ## IdentityLinker
 
-```typescript
-linkIdentity(accountId, platform, platformId): void
-unlinkIdentity(accountId, platform, platformId): void
-```
+三種綁定方式：
+- `linkDirect(accountId, platform, platformId)` — Admin 直接綁定
+- `requestLink(...)` → `confirmLink(...)` — 驗證碼流程
 
 一個帳號可綁定多個平台身份（Discord + Line + ...）。

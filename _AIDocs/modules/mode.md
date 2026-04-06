@@ -5,7 +5,7 @@
 
 ## 概觀
 
-Per-channel 模式系統，影響 thinking level、CE 策略、system prompt 額外區段、tool budget。
+Per-channel 模式系統，影響 thinking level、壓縮策略、system prompt 額外區段、token 預算。
 模式可在 config.modes.presets 自訂，也有 builtin presets。
 
 ## 核心函式
@@ -27,10 +27,12 @@ Per-channel 模式系統，影響 thinking level、CE 策略、system prompt 額
 
 ```ts
 interface ModePreset {
-  thinking?: ThinkingLevel;  // "none" | "low" | "medium" | "high"
-  ceStrategy?: string;
-  systemPromptExtra?: string;
-  toolBudget?: number;
+  thinking?: ThinkingLevel | null;  // "minimal" | "low" | "medium" | "high" | "xhigh"（null = 關閉）
+  compaction?: "sliding-window" | "llm-summary";
+  systemPromptExtras?: string[];
+  resultTokenCap?: number;
+  contextReserve?: number;
+  perTurnTotalCap?: number;
 }
 ```
 

@@ -84,7 +84,7 @@ interface ContextBreakdown {
 
 觸發條件：`estimatedTokens > contextWindowTokens × maxUtilization`
 
-從最舊非 system message 逐條刪除，直到 tokens < targetTokens（window × 0.8 × 0.7）。
+從最舊非 system message 逐條刪除，直到 tokens < targetTokens（contextWindowTokens × maxUtilization（預設 0.8）× 0.7）。
 刪除後執行 `repairToolPairing`。
 
 ## OverflowHardStopStrategy

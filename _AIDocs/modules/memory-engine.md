@@ -65,28 +65,36 @@ RecallResult：
 buildContext(
   fragments: AtomFragment[],
   query: string,
-  blindSpot?: string
+  blindSpot = false
 ): ContextPayload
 ```
 
 ContextPayload：
 - `text: string` — 注入到 system prompt 的文字
 - `tokenCount: number` — 估算 token 數
-- `atoms: string[]` — 使用的 atom 名稱
+- `layerCounts: Record<MemoryLayer, number>` — 三層各自 fragment 數量
+- `blindSpotWarning?: string` — BlindSpot 警告字串（若有）
 
 ### 萃取
 
 ```typescript
-extract(
-  messages: Message[],
+/** 逐輪萃取（fire-and-forget） */
+extractPerTurn(
+  newText: string,
+  opts: ExtractOpts
+): Promise<KnowledgeItem[]>
+
+/** 全量掃描萃取（session end） */
+extractFullScan(
+  response: string,
   opts: ExtractOpts
 ): Promise<KnowledgeItem[]>
 ```
 
-### 寫入
+### 寫入閘門
 
 ```typescript
-writeAtom(layer, name, content, opts): Promise<WriteGateResult>
+checkWrite(content: string, namespace: string, bypass = false): Promise<WriteGateResult>
 ```
 
 WriteGateResult：
@@ -115,7 +123,7 @@ rebuildIndex(namespace: string): Promise<void>
 ### 狀態
 
 ```typescript
-status(): MemoryStatus
+getStatus(): MemoryStatus
 ```
 
 ## Recall 三層邏輯
@@ -147,9 +155,9 @@ recall(query)
 | `contextBudget` | 3000 | 注入 token 上限 |
 | `contextBudgetRatio` | 0.3/0.4/0.3 | 三層分配比例 |
 | `writeGate.dedupThreshold` | 0.80 | 去重閾值 |
-| `recall.vectorSearch` | false | 是否啟用向量搜尋 |
+| `recall.vectorSearch` | true | 是否啟用向量搜尋 |
 | `recall.vectorMinScore` | 0.65 | 向量最低相關度 |
-| `recall.vectorTopK` | 5 | 向量 top-K |
+| `recall.vectorTopK` | 10 | 向量 top-K |
 | `extract.perTurn` | true | 每輪自動萃取 |
 | `extract.maxItemsPerTurn` | 3 | 每輪最多萃取數 |
 
@@ -157,7 +165,7 @@ recall(query)
 
 ```typescript
 initMemoryEngine(cfg): MemoryEngine
-getMemoryEngine(): MemoryEngine | null
+getMemoryEngine(): MemoryEngine  // throw on null
 ```
 
 由 `platform.ts` 步驟 9 初始化。

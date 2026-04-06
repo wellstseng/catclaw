@@ -57,7 +57,7 @@ interface VectorService {
 1. query 為字串 → `embedOne(query)` 轉向量；為 `number[]` → 直接使用
 2. Ollama offline → `return []`（graceful empty）
 3. `vectorSearch(queryVec).limit(topK * 2)` → 多取再 filter
-4. L2 metric → cosine similarity 轉換：`score = 1 - d²/2`
+4. L2 metric → cosine similarity 轉換：`score = 1 - _distance²/2`（d = LanceDB 回傳的 `_distance` 欄位，L2 距離值）
 5. 過濾 `minScore`（預設 0.65）→ 排序 → 取 topK
 
 ### SearchOpts

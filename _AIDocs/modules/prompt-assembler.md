@@ -31,8 +31,9 @@ detectIntent(userMessage: string): "coding" | "research" | "conversation"
 
 | Intent | 觸發 | 啟用模組 |
 |--------|------|---------|
-| `coding` | coding keywords ≥ 2 | 全部 |
-| `research` | research keywords ≥ 2 且 coding = 0 | 省略 coding-rules, git-rules |
+| `coding` | codingScore ≥ 2 | 全部 |
+| `research` | researchScore ≥ 2 且 codingScore = 0 | 省略 coding-rules, git-rules |
+| `coding`（fallback） | codingScore ≥ 1（但 < 2 且 research 未達 2） | 全部 |
 | `conversation` | 其餘 | date-time, identity, catclaw-md, output-format, discord-reply, memory-rules |
 
 ## CATCLAW.md 層級繼承
