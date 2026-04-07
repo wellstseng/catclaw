@@ -133,7 +133,7 @@ export class MemoryEngine {
   ): Promise<import("./extract.js").KnowledgeItem[]> {
     if (!this.cfg.extract.enabled || !this.cfg.extract.perTurn) return Promise.resolve([]);
     return import("./extract.js").then(({ extractPerTurn }) =>
-      extractPerTurn(newText, { ...opts, maxItems: this.cfg.extract.maxItemsPerTurn })
+      extractPerTurn(newText, { ...opts, maxItems: this.cfg.extract.maxItemsPerTurn, minNewChars: this.cfg.extract.minNewChars })
     );
   }
 

@@ -2417,13 +2417,13 @@ function renderMemAtoms(atoms) {
   if (!atoms.length) { document.getElementById('mem-atoms').innerHTML = '<div style="color:var(--fg3);padding:12px">無 atom</div>'; return; }
   const confColors = { '[固]': 'var(--green)', '[觀]': 'var(--accent)', '[臨]': 'var(--warn)' };
   const rows = atoms.map(a =>
-    '<tr style="cursor:pointer" onclick="showMemDetail(\'' + a.name.replace(/'/g,"\\'") + '\')">' +
+    '<tr style="cursor:pointer" onclick="showMemDetail(\\'' + a.name.replace(/'/g,"\\\\'") + '\\')">' +
     '<td style="font-weight:500">' + a.name + '</td>' +
     '<td><span style="color:' + (confColors[a.confidence]||'var(--fg2)') + '">' + a.confidence + '</span></td>' +
     '<td>' + a.confirmations + '</td>' +
     '<td>' + (a.lastUsed||'-') + '</td>' +
     '<td style="font-size:0.75rem;color:var(--fg2)">' + (a.triggers||[]).slice(0,4).join(', ') + '</td>' +
-    '<td><button class="btn btn-sm btn-red" onclick="event.stopPropagation();deleteMemAtom(\'' + a.name.replace(/'/g,"\\'") + '\')" title="刪除">🗑</button></td>' +
+    '<td><button class="btn btn-sm btn-red" onclick="event.stopPropagation();deleteMemAtom(\\'' + a.name.replace(/'/g,"\\\\'") + '\\')" title="刪除">🗑</button></td>' +
     '</tr>'
   ).join('');
   document.getElementById('mem-atoms').innerHTML =

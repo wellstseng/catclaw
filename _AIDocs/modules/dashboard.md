@@ -32,6 +32,7 @@ Bearer token 認證（可選）：
 | Tasks | 任務管理面板 |
 | Cron | 排程 job 管理 |
 | Config | catclaw.json 線上編輯 |
+| Memory | Atom Browser（排序/篩選/刪除）+ Recall Tester + Stats Panel |
 | Logs | PM2 日誌 tail + SSE 即時串流 |
 
 ## REST API 端點
@@ -130,6 +131,17 @@ Bearer token 認證（可選）：
 |------|------|------|
 | `/api/chat` | POST | Dashboard 內嵌對話（SSE streaming） |
 | `/api/chat/history` | GET | Session 對話歷史 `?sessionKey=xxx`（過濾 tool blocks，只回傳 user/assistant 文字） |
+
+### Memory
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/memory/atoms` | GET | 列出所有 atom（name, confidence, confirmations, lastUsed, triggers） |
+| `/api/memory/atoms/:name` | GET | 單一 atom 完整內容 |
+| `/api/memory/atoms/:name` | DELETE | 刪除 atom |
+| `/api/memory/recall-test` | POST | 測試 recall（skipCache），body: `{ prompt, accountId? }` |
+| `/api/memory/stats` | GET | 統計：by confidence、confirmation 分布、top/bottom atoms |
+| `/api/memory/vector/stats` | GET | LanceDB table count + sizes |
 
 ### Logs
 

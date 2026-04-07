@@ -81,7 +81,7 @@ ContextPayload：
 ### 萃取
 
 ```typescript
-/** 逐輪萃取（fire-and-forget） */
+/** 逐輪萃取（fire-and-forget）— engine 自動注入 maxItems + minNewChars from config */
 extractPerTurn(
   newText: string,
   opts: ExtractOpts

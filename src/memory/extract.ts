@@ -226,6 +226,8 @@ export interface ExtractOpts {
   /** 向量搜尋 namespace（用於跨 session 觀察） */
   namespace?: string;
   maxItems?: number;
+  /** 最少新增字元數（低於此跳過萃取） */
+  minNewChars?: number;
   /** false = fire-and-forget；true = 等待結果 */
   await?: boolean;
 }
@@ -238,8 +240,9 @@ export function extractPerTurn(
   newText: string,
   opts: ExtractOpts
 ): Promise<KnowledgeItem[]> {
-  if (newText.length < 200) {
-    log.debug("[extract] 新增文字 < 200 字元，跳過");
+  const minChars = opts.minNewChars ?? 200;
+  if (newText.length < minChars) {
+    log.info(`[extract] 新增文字 ${newText.length} < ${minChars} 字元，跳過`);
     return Promise.resolve([]);
   }
 
@@ -247,7 +250,7 @@ export function extractPerTurn(
   const cooldownKey = opts.namespace ?? opts.accountId;
   const lastAt = _cooldownMap.get(cooldownKey) ?? 0;
   if (Date.now() - lastAt < EXTRACT_COOLDOWN_MS) {
-    log.debug(`[extract] cooldown 中，跳過（key=${cooldownKey}）`);
+    log.info(`[extract] cooldown 中，跳過（key=${cooldownKey}）`);
     return Promise.resolve([]);
   }
   _cooldownMap.set(cooldownKey, Date.now());
