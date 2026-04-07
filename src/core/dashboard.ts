@@ -633,7 +633,7 @@ label.cfg-toggle { min-width: 36px; }
       <div style="color:var(--fg3);text-align:center;padding:40px 0">在下方輸入訊息開始對話</div>
     </div>
     <div style="display:flex;gap:8px;margin-top:8px">
-      <textarea id="chat-input" rows="2" placeholder="輸入訊息..." style="flex:1;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--fg);font-size:0.85rem;resize:vertical;font-family:inherit" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <textarea id="chat-input" rows="2" placeholder="輸入訊息..." style="flex:1;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--fg);font-size:0.85rem;resize:vertical;font-family:inherit" onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();sendChat()}"></textarea>
       <button class="btn btn-green" onclick="sendChat()" style="align-self:flex-end;height:38px;padding:0 20px">送出</button>
     </div>
   </div>
