@@ -1,6 +1,6 @@
 # providers — LLM Provider 系統
 
-> 更新日期：2026-04-05
+> 更新日期：2026-04-07
 
 ## 檔案
 
@@ -125,17 +125,34 @@ profileId 格式：`"provider:name"`，credential type：`api_key` / `token` / `
 
 ### 設計原則
 
-- `supportsToolUse = false` — 純推理模式，tool 任務應由 fallback chain 走 API provider
-- 將 `Message[]` 扁平化為文字 prompt，透過 `-p` non-interactive 模式送出
+- `supportsToolUse = true` — 支援 prompt-based function calling（tool 定義嵌入 prompt，解析 `<tool_call>` blocks）
+- 將 `Message[]` 扁平化為文字 prompt，透過 **stdin** 傳入（避免 CLI arg 長度限制 + 特殊字元問題）
+- 使用中性 cwd（`os.tmpdir()`）避免 CLI 載入專案的 CLAUDE.md / hooks
 - 支援三種 CLI 後端，各有不同的輸出格式
 
 ### CLI 後端
 
 | 後端 | 指令 | 輸出格式 | context window |
 |------|------|---------|---------------|
-| claude | `claude -p --output-format stream-json --max-turns 1 --verbose {prompt}` | stream-json | 200k |
-| gemini | `gemini -p {prompt} --output-format stream-json` | stream-json | 1M |
-| codex | `codex --quiet --full-auto {prompt}` | text | 200k |
+| claude | `claude -p --output-format stream-json --verbose --no-session-persistence --tools ""` | stream-json | 200k |
+| gemini | `gemini -p "" -o stream-json --yolo` | stream-json | 1M |
+| codex | `codex --quiet --full-auto` | text | 200k |
+
+- prompt 全部走 stdin（`proc.stdin.write(prompt); proc.stdin.end()`）
+- Claude 的 `--tools ""` 停用 CLI 內建 tools，強制走 CatClaw 的 `<tool_call>` 格式
+- Gemini 的 `-p ""` 搭配 stdin，`--yolo` 跳過確認
+
+### Tool Use（Prompt-based Function Calling）
+
+tool 定義嵌入 prompt 的 `<available_tools>` 區塊，指示模型用 `<tool_call>` XML 格式輸出：
+
+```xml
+<tool_call id="call_1" name="tool_name">
+{"param1": "value1"}
+</tool_call>
+```
+
+解析流程：`parseToolCallsFromText()` 用 regex 匹配 → 解析 JSON params → 回傳 `ToolCall[]` + 清理後的 `cleanText`
 
 ### stream-json 事件解析
 
@@ -144,8 +161,9 @@ Claude/Gemini 共用 stream-json 格式，每行一個 JSON 物件：
 | type | 處理 |
 |------|------|
 | `system` | 忽略（hook 啟動、init 等） |
-| `assistant` | 取 `message.content[]` 的 text/thinking blocks，差量發 text_delta/thinking_delta |
-| `result` | 取 `result` 文字 + `stop_reason`；`is_error` 時發 error event |
+| `assistant` | **Claude 格式**：取 `message.content[]` 的 text/thinking blocks，差量發 text_delta/thinking_delta |
+| `message` (role=assistant) | **Gemini 格式**：`content` + `delta=true` → text_delta，累積到 resultText |
+| `result` | Claude: `result` 文字 + `stop_reason` + `is_error`；Gemini: `status` + `stats` |
 
 ### 設定（models-config.json）
 
@@ -323,6 +341,17 @@ new CodexOAuthProvider(id, entry, authStore?)
   "token_type": "Bearer"
 }
 ```
+
+### Tool Use（原生 Function Calling）
+
+tool 定義透過 Responses API 的 `tools` 參數傳入（OpenAI function calling 格式）。
+
+SSE 事件處理流程：
+1. `response.output_item.added`（type=function_call）→ 建立 argBuffer + `item.id → call_id` 映射
+2. `response.function_call_arguments.delta` → 用頂層 `item_id`（非 `item.call_id`）映射回 call_id → 累積 arguments
+3. `response.output_item.done` → 解析累積的 args（fallback 到 `item.arguments`）→ 產出 `ToolCall`
+
+**陷阱**：delta 事件的 `call_id` 在頂層 `item_id` 欄位，不在 `chunk.item.call_id`。argBuffer 的 args 可能是空字串，fallback 需用 `||`（非 `??`）才會正確 fallback 到 `item.arguments`。
 
 ## models-config.ts — 模型目錄管理
 
