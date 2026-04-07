@@ -15,7 +15,7 @@
 | `engine.ts` | 主引擎：初始化 + API facade |
 | `recall.ts` | Progressive Hybrid recall：keyword 快篩 → vector → ACT-R 混合排序 → related spreading（7 步管線） |
 | `extract.ts` | 知識萃取：從對話中提取 KnowledgeItem |
-| `consolidate.ts` | 整合：promotion / archive / decay |
+| `consolidate.ts` | 整合：promotion / archive / ACT-R decay（與 recall 共用 `computeActivation()`） |
 | `context-builder.ts` | Context 組裝：budget 截斷（ACT-R/層級預算已移除） |
 | `atom.ts` | Atom CRUD：讀寫 markdown atom 檔案 |
 | `write-gate.ts` | 寫入閘門：dedup（餘弦相似度閾值） |

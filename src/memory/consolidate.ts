@@ -5,35 +5,14 @@
  * C1: recall 命中 → confirmations +1（touchAtom，在 recall.ts 呼叫）
  * C2: 建議晉升 [觀]→[固]（confirmations ≥ suggestPromoteThreshold，需使用者確認）
  * C3: 自動晉升 [臨]→[觀]（confirmations ≥ autoPromoteThreshold）
- * C4: Decay 評分（score = 0.5 * recency + 0.5 * usage，half_life=30d）
+ * C4: ACT-R Decay 評分（computeActivation() → sigmoid 正規化 0~1）
  * C5: Archive candidates（score < archiveThreshold）
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../logger.js";
-import { readAllAtoms, type Atom, type AtomConfidence } from "./atom.js";
-
-// ── Decay 評分 ────────────────────────────────────────────────────────────────
-
-const HALF_LIFE_FACTOR = Math.log(2); // ln(2)
-
-/**
- * Decay 分數：score = 0.5 * recency + 0.5 * usage_norm
- * recency = exp(-lambda * days)，half_life = 30d
- * usage_norm = min(1, confirmations / 20)
- */
-function decayScore(atom: Atom, halfLifeDays: number): number {
-  let days = 30;
-  if (atom.lastUsed) {
-    const ms = Date.now() - new Date(atom.lastUsed).getTime();
-    days = Math.max(0, ms / (1000 * 60 * 60 * 24));
-  }
-  const lambda = HALF_LIFE_FACTOR / halfLifeDays;
-  const recency = Math.exp(-lambda * days);
-  const usageNorm = Math.min(1, atom.confirmations / 10);
-  return 0.5 * recency + 0.5 * usageNorm;
-}
+import { readAllAtoms, computeActivation, type Atom, type AtomConfidence } from "./atom.js";
 
 // ── 晉升 ──────────────────────────────────────────────────────────────────────
 
@@ -72,6 +51,7 @@ function autoPromote(atom: Atom): void {
 export interface ConsolidateOpts {
   autoPromoteThreshold: number;    // [臨]→[觀]（預設 20）
   suggestPromoteThreshold: number; // 建議 [觀]→[固]（預設 4）
+  /** @deprecated 已改用 ACT-R computeActivation()，此欄位保留供 config 相容 */
   halfLifeDays: number;
   archiveThreshold: number;
   /** Archive candidate 清單寫入路徑 */
@@ -108,8 +88,10 @@ export async function consolidate(
       promoted.push({ atom, from: "[觀]", to: "[固]", auto: false });
     }
 
-    // ── C4/C5: Decay 評分 ──
-    const score = decayScore(atom, opts.halfLifeDays);
+    // ── C4/C5: ACT-R activation 評分（與 recall 同公式） ──
+    const activation = computeActivation(atom);
+    // sigmoid 正規化到 0~1：1/(1+exp(-x))
+    const score = 1 / (1 + Math.exp(-activation));
     if (score < opts.archiveThreshold) {
       archiveCandidates.push({ atom, score });
     }

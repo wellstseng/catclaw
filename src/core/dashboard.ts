@@ -681,6 +681,7 @@ function fmtCache(r, w) {
 }
 
 let _traceAutoRefresh = null;
+let _sessAutoRefresh = null;
 function switchTab(id, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
@@ -689,16 +690,17 @@ function switchTab(id, el) {
   // 切換 tab 時隱藏 trace detail
   const detailCard = document.getElementById('trace-detail-card');
   if (detailCard) detailCard.style.display = 'none';
-  // trace 自動刷新：進入 traces tab 啟動，離開停止
+  // 自動刷新：進入對應 tab 啟動，離開停止
   if (_traceAutoRefresh) { clearInterval(_traceAutoRefresh); _traceAutoRefresh = null; }
-  if (id === 'sessions') { loadSessions(); loadInboundHistory(); }
+  if (_sessAutoRefresh) { clearInterval(_sessAutoRefresh); _sessAutoRefresh = null; }
+  if (id === 'sessions') { loadSessions(); loadInboundHistory(); _sessAutoRefresh = setInterval(loadSessions, 10000); }
   if (id === 'chat') { refreshChatSessions(); }
   if (id === 'logs') connectLogStream();
   if (id !== 'logs') disconnectLogStream();
   if (id === 'ops') { loadSubagents(); }
   if (id === 'tasks') { loadTasks(); }
   if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
-  if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 10000); }
+  if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 5000); }
   if (id === 'cron') loadCron();
   if (id === 'config') loadCfg();
 }
@@ -782,6 +784,17 @@ async function loadSessions() {
   try {
     const d = await authFetch('/api/sessions').then(r => r.json());
     if (!d.sessions?.length) { document.getElementById('sessions-list').innerHTML = '<p style="color:#888;font-size:0.8rem">無資料</p>'; return; }
+    // 記住展開狀態（skId → sessionKey）
+    const expandedMap = new Map();
+    document.querySelectorAll('.sess-expand').forEach(r => {
+      if (r.style.display !== 'none') {
+        const skId = r.id.replace('row-', '');
+        // 從 header row 的 onclick 取 sessionKey
+        const hdr = r.previousElementSibling;
+        const m = hdr?.getAttribute('onclick')?.match(/toggleSessionRow\\(this,'([^']+)'/);
+        if (m) expandedMap.set(skId, m[1]);
+      }
+    });
     const rows = d.sessions.map(s => {
       const last = new Date(s.lastTs).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
       const tok = \`↑\${s.inputTokens.toLocaleString()}/↓\${s.outputTokens.toLocaleString()}\`;
@@ -797,6 +810,16 @@ async function loadSessions() {
     }).join('');
     document.getElementById('sessions-list').innerHTML =
       \`<table class="tbl"><thead><tr><th>Session</th><th>最後活躍</th><th>Turns</th><th>Tokens</th><th>Cache</th><th>Provider</th><th>CE</th><th>操作</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+    // 恢復展開狀態 + 重新載入 traces
+    expandedMap.forEach((sessionKey, skId) => {
+      const expandRow = document.getElementById('row-' + skId);
+      const headerRow = expandRow?.previousElementSibling;
+      if (expandRow) {
+        expandRow.style.display = '';
+        if (headerRow) headerRow.style.background = 'var(--bg3)';
+        loadSessionTraces(sessionKey, skId);
+      }
+    });
   } catch(e) { document.getElementById('sessions-list').innerHTML = '讀取失敗：' + e; }
 }
 
@@ -818,17 +841,29 @@ async function loadSessionTraces(sessionKey, containerId) {
   const el = document.getElementById(containerId);
   if (!el) return;
   try {
-    const d = await authFetch('/api/traces?limit=50&sessionKey=' + encodeURIComponent(sessionKey)).then(r => r.json());
-    const traces = d.traces || [];
+    // 同時 fetch live + history，合併去重
+    const [liveRes, histRes] = await Promise.all([
+      authFetch('/api/traces/live').then(r => r.json()),
+      authFetch('/api/traces?limit=50&sessionKey=' + encodeURIComponent(sessionKey)).then(r => r.json()),
+    ]);
+    const liveTraces = (liveRes.traces || []).filter(t => t.sessionKey === sessionKey);
+    const histTraces = histRes.traces || [];
+    const seenIds = new Set();
+    const traces = [];
+    for (const t of liveTraces) { seenIds.add(t.traceId); traces.push(t); }
+    for (const t of histTraces) { if (!seenIds.has(t.traceId)) traces.push(t); }
+
     if (!traces.length) { el.innerHTML = '<div style="color:var(--fg2)">此 session 無 trace 記錄</div>'; return; }
     let html = '<table class="tbl"><thead><tr><th>時間</th><th>Duration</th><th>↑ Eff</th><th>↓ Out</th><th>Cache</th><th>Tools</th><th>LLM</th><th>Cost</th><th>Status</th><th>Preview</th><th></th></tr></thead><tbody>';
     for (const t of traces) {
       const ts = new Date(t.ts).toLocaleTimeString('zh-TW', {hour12:false});
       const dur = t.totalDurationMs ? (t.totalDurationMs/1000).toFixed(1)+'s' : '-';
-      const statusIcon = t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
+      const isLive = t.status === 'in_progress';
+      const statusIcon = isLive ? '⏳' : t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
       const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
       const prev = (t.inbound?.textPreview ?? '').slice(0, 30);
-      html += '<tr>';
+      const liveStyle = isLive ? 'background:rgba(255,200,0,0.08);' : '';
+      html += '<tr style="' + liveStyle + '">';
       html += '<td>' + ts + '</td>';
       html += '<td>' + dur + '</td>';
       html += '<td>' + (t.effectiveInputTokens ?? t.totalInputTokens ?? 0).toLocaleString() + '</td>';
@@ -1829,58 +1864,96 @@ async function clearCooldown(providerId, profileId) {
 }
 
 // ── Traces ──────────────────────────────────────────────────────────────────
+function _traceRowHtml(t) {
+  const ts = new Date(t.ts).toLocaleTimeString('zh-TW', {hour12:false});
+  const dur = t.totalDurationMs ? (t.totalDurationMs/1000).toFixed(1)+'s' : '-';
+  const ch = (t.channelId ?? '').slice(-6);
+  const isLive = t.status === 'in_progress';
+  const statusIcon = isLive ? '⏳' : t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
+  const ce = t.contextEngineering?.strategiesApplied?.length > 0 ? '📦' + t.contextEngineering.strategiesApplied.join(',') : '-';
+  const prev = (t.inbound?.textPreview ?? '').slice(0, 40);
+  const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
+  const ctxIcon = t.hasContextSnapshot ? '<span title="有 Context Snapshot，點擊查看" style="cursor:pointer">📋</span>' : '';
+  const liveStyle = isLive ? 'background:rgba(255,200,0,0.08);' : '';
+  let html = '<tr data-trace-id="' + t.traceId + '" style="border-bottom:1px solid var(--border);cursor:pointer;' + liveStyle + '" onclick="showTraceDetail(\\'' + t.traceId + '\\')">';
+  html += '<td style="padding:4px;color:var(--fg2)">' + ts + '</td>';
+  html += '<td style="padding:4px">…' + ch + '</td>';
+  html += '<td style="padding:4px;text-align:right">' + dur + '</td>';
+  html += '<td style="padding:4px;text-align:right">' + (t.effectiveInputTokens ?? t.totalInputTokens ?? 0).toLocaleString() + '</td>';
+  html += '<td style="padding:4px;text-align:right">' + (t.totalOutputTokens ?? 0).toLocaleString() + '</td>';
+  html += '<td style="padding:4px;text-align:right;color:var(--fg2)">' + (t.totalCacheRead ?? 0).toLocaleString() + '/' + (t.totalCacheWrite ?? 0).toLocaleString() + '</td>';
+  html += '<td style="padding:4px;text-align:right">' + (t.totalToolCalls ?? 0) + '</td>';
+  html += '<td style="padding:4px;text-align:right">' + (t.llmCalls?.length ?? 0) + '</td>';
+  html += '<td style="padding:4px;text-align:center">' + ce + '</td>';
+  html += '<td style="padding:4px;text-align:center">' + statusIcon + '</td>';
+  html += '<td style="padding:4px;text-align:right;color:var(--warn)">' + cost + '</td>';
+  html += '<td style="padding:4px;text-align:center">' + ctxIcon + '</td>';
+  html += '<td style="padding:4px;color:var(--fg2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prev + '</td>';
+  html += '</tr>';
+  return html;
+}
+
+const _traceTableHeader = (() => {
+  const tip = (label, desc) => label + ' <span class="th-tip" title="' + desc + '">?</span>';
+  let h = '<tr style="border-bottom:1px solid var(--border);color:var(--fg2)">';
+  h += '<th style="text-align:left;padding:4px">時間</th>';
+  h += '<th style="text-align:left;padding:4px">Channel</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('Duration', '從收到訊息到回覆完成的總耗時') + '</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('↑ Effective', 'LLM 實際處理的 input tokens（新送 + cache read + cache write）') + '</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('↓ Out', 'LLM 產出的 output tokens') + '</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('Cache R/W', 'Cache Read（10%價）/ Cache Write（125%價）的 token 數') + '</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('Tools', '本次 turn 呼叫的工具總次數') + '</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('LLM', 'LLM 來回呼叫次數（含 tool use 迴圈）') + '</th>';
+  h += '<th style="text-align:center;padding:4px">' + tip('CE', 'Context Engineering 策略（compaction 等）') + '</th>';
+  h += '<th style="text-align:center;padding:4px">Status</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('Cost', '預估 API 費用（USD）') + '</th>';
+  h += '<th style="text-align:center;padding:4px">' + tip('Ctx', '有完整 Context Snapshot（system prompt + messages）') + '</th>';
+  h += '<th style="text-align:left;padding:4px">Preview</th>';
+  h += '</tr>';
+  return h;
+})();
+
 async function loadTraces() {
   const limit = document.getElementById('trace-limit')?.value ?? 50;
   const el = document.getElementById('trace-list');
-  el.innerHTML = '<div style="color:var(--fg2)">載入中…</div>';
   try {
-    const d = await authFetch('/api/traces?limit=' + limit).then(r => r.json());
-    if (!d.traces || d.traces.length === 0) { el.innerHTML = '<div style="color:var(--fg2)">無 trace 記錄</div>'; return; }
-    let html = '<table style="width:100%;border-collapse:collapse;font-size:0.82rem">';
-    html += '<tr style="border-bottom:1px solid var(--border);color:var(--fg2)">';
-    const tip = (label, desc) => label + ' <span class="th-tip" title="' + desc + '">?</span>';
-    html += '<th style="text-align:left;padding:4px">時間</th>';
-    html += '<th style="text-align:left;padding:4px">Channel</th>';
-    html += '<th style="text-align:right;padding:4px">' + tip('Duration', '從收到訊息到回覆完成的總耗時') + '</th>';
-    html += '<th style="text-align:right;padding:4px">' + tip('↑ Effective', 'LLM 實際處理的 input tokens（新送 + cache read + cache write）') + '</th>';
-    html += '<th style="text-align:right;padding:4px">' + tip('↓ Out', 'LLM 產出的 output tokens') + '</th>';
-    html += '<th style="text-align:right;padding:4px">' + tip('Cache R/W', 'Cache Read（10%價）/ Cache Write（125%價）的 token 數') + '</th>';
-    html += '<th style="text-align:right;padding:4px">' + tip('Tools', '本次 turn 呼叫的工具總次數') + '</th>';
-    html += '<th style="text-align:right;padding:4px">' + tip('LLM', 'LLM 來回呼叫次數（含 tool use 迴圈）') + '</th>';
-    html += '<th style="text-align:center;padding:4px">' + tip('CE', 'Context Engineering 策略（compaction 等）') + '</th>';
-    html += '<th style="text-align:center;padding:4px">Status</th>';
-    html += '<th style="text-align:right;padding:4px">' + tip('Cost', '預估 API 費用（USD）') + '</th>';
-    html += '<th style="text-align:center;padding:4px">' + tip('Ctx', '有完整 Context Snapshot（system prompt + messages）') + '</th>';
-    html += '<th style="text-align:left;padding:4px">Preview</th>';
-    html += '</tr>';
-    for (const t of d.traces) {
-      const ts = new Date(t.ts).toLocaleTimeString('zh-TW', {hour12:false});
-      const dur = t.totalDurationMs ? (t.totalDurationMs/1000).toFixed(1)+'s' : '-';
-      const ch = (t.channelId ?? '').slice(-6);
-      const statusIcon = t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
-      const ce = t.contextEngineering?.strategiesApplied?.length > 0 ? '📦' + t.contextEngineering.strategiesApplied.join(',') : '-';
-      const prev = (t.inbound?.textPreview ?? '').slice(0, 40);
-      html += '<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="showTraceDetail(\\'' + t.traceId + '\\')">';
-      html += '<td style="padding:4px;color:var(--fg2)">' + ts + '</td>';
-      html += '<td style="padding:4px">…' + ch + '</td>';
-      html += '<td style="padding:4px;text-align:right">' + dur + '</td>';
-      html += '<td style="padding:4px;text-align:right">' + (t.effectiveInputTokens ?? t.totalInputTokens ?? 0).toLocaleString() + '</td>';
-      html += '<td style="padding:4px;text-align:right">' + (t.totalOutputTokens ?? 0).toLocaleString() + '</td>';
-      html += '<td style="padding:4px;text-align:right;color:var(--fg2)">' + (t.totalCacheRead ?? 0).toLocaleString() + '/' + (t.totalCacheWrite ?? 0).toLocaleString() + '</td>';
-      html += '<td style="padding:4px;text-align:right">' + (t.totalToolCalls ?? 0) + '</td>';
-      html += '<td style="padding:4px;text-align:right">' + (t.llmCalls?.length ?? 0) + '</td>';
-      html += '<td style="padding:4px;text-align:center">' + ce + '</td>';
-      html += '<td style="padding:4px;text-align:center">' + statusIcon + '</td>';
-      const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
-      html += '<td style="padding:4px;text-align:right;color:var(--warn)">' + cost + '</td>';
-      const ctxIcon = t.hasContextSnapshot ? '<span title="有 Context Snapshot，點擊查看" style="cursor:pointer">📋</span>' : '';
-      html += '<td style="padding:4px;text-align:center">' + ctxIcon + '</td>';
-      html += '<td style="padding:4px;color:var(--fg2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prev + '</td>';
-      html += '</tr>';
+    // 同時 fetch live + completed traces
+    const [liveRes, histRes] = await Promise.all([
+      authFetch('/api/traces/live').then(r => r.json()),
+      authFetch('/api/traces?limit=' + limit).then(r => r.json()),
+    ]);
+    const liveTraces = liveRes.traces || [];
+    const histTraces = histRes.traces || [];
+    // 合併：live 在前（按時間倒序），去重
+    const seenIds = new Set();
+    const merged = [];
+    for (const t of liveTraces) { seenIds.add(t.traceId); merged.push(t); }
+    for (const t of histTraces) { if (!seenIds.has(t.traceId)) merged.push(t); }
+
+    if (merged.length === 0) { el.innerHTML = '<div style="color:var(--fg2)">無 trace 記錄</div>'; return; }
+
+    // 差量更新：如果表格已存在，只更新變更的 row
+    const existingTable = el.querySelector('table');
+    if (existingTable) {
+      const tbody = existingTable.querySelector('tbody');
+      if (tbody) {
+        const existingRows = tbody.querySelectorAll('tr[data-trace-id]');
+        const existingIds = new Map();
+        existingRows.forEach(r => existingIds.set(r.getAttribute('data-trace-id'), r));
+        // 重建 tbody 但保留 detail card 外的展開狀態
+        let newTbody = '';
+        for (const t of merged) newTbody += _traceRowHtml(t);
+        tbody.innerHTML = newTbody;
+        return;
+      }
     }
-    html += '</table>';
+
+    // 首次建立表格
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:0.82rem"><thead>' + _traceTableHeader + '</thead><tbody>';
+    for (const t of merged) html += _traceRowHtml(t);
+    html += '</tbody></table>';
     el.innerHTML = html;
-  } catch (e) { el.innerHTML = '<div style="color:var(--red2)">載入失敗：' + e + '</div>'; }
+  } catch (e) { if (!el.querySelector('table')) el.innerHTML = '<div style="color:var(--red2)">載入失敗：' + e + '</div>'; }
 }
 
 // ── Trace Context Helpers ────────────────────────────────────────────────────
@@ -1978,8 +2051,19 @@ async function showTraceDetail(traceId) {
         html += '<div style="margin-top:4px;padding:4px;background:var(--bg3);border-radius:4px">';
         html += '<div>🧠 Memory Recall (' + r.durationMs + 'ms)</div>';
         html += '<div>Fragments: ' + r.fragmentCount + ' | Tokens: ' + r.injectedTokens + '</div>';
-        html += '<div style="color:var(--fg2);font-size:0.78rem">' + r.atomNames.join(', ') + '</div>';
-        if (r.degraded) html += '<div style="color:var(--warn)">⚠ Degraded (keyword only)</div>';
+        if (r.hits?.length > 0) {
+          const badgeColor = { vector: 'var(--accent)', keyword: 'var(--warn)', related: 'var(--accent2)' };
+          html += '<div style="margin-top:3px;font-size:0.78rem;display:flex;flex-wrap:wrap;gap:4px">';
+          for (const h of r.hits) {
+            const c = badgeColor[h.matchedBy] || 'var(--fg2)';
+            html += '<span style="border:1px solid ' + c + ';color:' + c + ';border-radius:3px;padding:0 4px">'
+              + h.name + ' <small>' + h.matchedBy + ' ' + h.score + '</small></span>';
+          }
+          html += '</div>';
+        } else {
+          html += '<div style="color:var(--fg2);font-size:0.78rem">' + r.atomNames.join(', ') + '</div>';
+        }
+        if (r.degraded) html += '<div style="color:var(--warn)">⚠ Degraded (keyword fallback)</div>';
         html += '</div>';
       }
       if (t.context.inboundHistory) {
@@ -3130,10 +3214,10 @@ export class DashboardServer {
           return;
         }
 
-        // /api/traces/:traceId — 單筆查詢
+        // /api/traces/:traceId — 單筆查詢（先查 store，再查 live）
         const idMatch = url.match(/^\/api\/traces\/([a-f0-9-]+)/);
         if (idMatch) {
-          const entry = traceStore.getById(idMatch[1]!);
+          const entry = traceStore.getById(idMatch[1]!) ?? MessageTrace.getLiveTraces().find(t => t.traceId === idMatch[1]!);
           if (!entry) { res.writeHead(404); res.end(JSON.stringify({ error: "Trace not found" })); return; }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(entry));
