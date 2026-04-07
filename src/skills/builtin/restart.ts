@@ -39,6 +39,8 @@ export const skill: Skill = {
 
   async execute(ctx) {
     writeRestartSignal(ctx.channelId);
-    return { text: "🔄 重啟信號已送出，幾秒後重新上線。" };
+    // 不依賴 PM2 file watch — 延遲發 SIGTERM 走 graceful shutdown，PM2 autorestart 拉起
+    setTimeout(() => { process.kill(process.pid, "SIGTERM"); }, 1500);
+    return { text: "🔄 重啟中，幾秒後重新上線。" };
   },
 };

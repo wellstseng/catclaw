@@ -208,7 +208,7 @@ export interface MessageTraceEntry {
   hasContextSnapshot?: boolean;
 
   error?: string;
-  status: "completed" | "aborted" | "error";
+  status: "completed" | "aborted" | "error" | "in_progress";
 }
 
 // ── 費用計算 ─────────────────────────────────────────────────────────────────
@@ -251,6 +251,13 @@ function preview(text: string, maxLen = 100): string {
  * 各模組呼叫 record 方法累積數據，最後 finalize() 產出完整記錄。
  */
 export class MessageTrace {
+  /** 活躍中的 trace（尚未 finalize）— 供 /api/traces/live 即時查詢 */
+  private static _liveTraces = new Map<string, MessageTrace>();
+
+  static getLiveTraces(): MessageTraceEntry[] {
+    return Array.from(MessageTrace._liveTraces.values()).map(t => t.snapshot());
+  }
+
   readonly traceId: string;
   private entry: MessageTraceEntry;
   private _currentLLMCall: Partial<TraceLLMCall> | null = null;
@@ -284,7 +291,9 @@ export class MessageTrace {
 
   /** 建立新的 trace */
   static create(traceId: string, channelId: string, accountId: string, category?: TraceCategory): MessageTrace {
-    return new MessageTrace(traceId, channelId, accountId, category);
+    const trace = new MessageTrace(traceId, channelId, accountId, category);
+    MessageTrace._liveTraces.set(traceId, trace);
+    return trace;
   }
 
   /** 設定 sessionKey（agent-loop 開始時注入） */
@@ -522,10 +531,21 @@ export class MessageTrace {
     this.entry.status = "error";
   }
 
-  // ── Finalize ──────────────────────────────────────────────────────────────
+  // ── Snapshot / Finalize ────────────────────────────────────────────────────
+
+  /** 即時快照（不結束追蹤） */
+  snapshot(): MessageTraceEntry {
+    return {
+      ...this.entry,
+      status: "in_progress" as MessageTraceEntry["status"],
+      totalDurationMs: Date.now() - this.entry.inbound.receivedAt,
+      estimatedCostUsd: estimateCost(this.entry.llmCalls),
+    };
+  }
 
   /** 結束追蹤，回傳完整記錄 */
   finalize(): MessageTraceEntry {
+    MessageTrace._liveTraces.delete(this.traceId);
     this.entry.totalDurationMs = Date.now() - this.entry.inbound.receivedAt;
     this.entry.estimatedCostUsd = estimateCost(this.entry.llmCalls);
     return { ...this.entry };

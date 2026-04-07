@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync, readdirSync, unlinkSync, renameSync, exist
 import { dirname, basename, join, join as pathJoin, resolve } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
-import { getTraceStore, getTraceContextStore, type MessageTraceEntry } from "./message-trace.js";
+import { getTraceStore, getTraceContextStore, MessageTrace, type MessageTraceEntry } from "./message-trace.js";
 import { getSessionManager } from "./session.js";
 import { getContextEngine } from "./context-engine.js";
 import { getInboundHistoryStore } from "../discord/inbound-history.js";
@@ -2530,6 +2530,8 @@ export class DashboardServer {
         const ok = touchRestart();
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(ok ? { success: true } : { success: false, error: "signal/RESTART not found" }));
+        // 不依賴 PM2 file watch — 發 SIGTERM 走 graceful shutdown，PM2 autorestart 拉起
+        setTimeout(() => { process.kill(process.pid, "SIGTERM"); }, 500);
         return;
       }
 
@@ -3100,6 +3102,14 @@ export class DashboardServer {
             }
           })();
         });
+        return;
+      }
+
+      // GET /api/traces/live — 活躍中的 trace（即時）
+      if (url === "/api/traces/live" && method === "GET") {
+        const live = MessageTrace.getLiveTraces();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ traces: live }));
         return;
       }
 

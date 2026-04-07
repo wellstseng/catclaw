@@ -3,7 +3,7 @@
  * @description CLI Provider — 透過 AI Agent CLI（Claude / Gemini / Codex）spawn 做 LLM 推理
  *
  * 使用訂閱制額度（Max Plan / Gemini Pro 等），不走 API 計費。
- * 純推理模式（supportsToolUse = false），tool 任務應由 fallback chain 走 API provider。
+ * 支援 tool use（prompt-based function calling）：tool 定義嵌入 prompt，解析 <tool_call> blocks。
  *
  * 支援的 CLI 後端：
  * - claude: `claude -p "prompt" --output-format stream-json --max-turns 1`
@@ -14,10 +14,11 @@
  */
 
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { log } from "../logger.js";
 import type {
   LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent,
-  ProviderUsage, ContentBlock,
+  ProviderUsage, ContentBlock, ToolDefinition, ToolCall,
 } from "./base.js";
 import { resolveWorkspaceDir } from "../core/config.js";
 
@@ -44,6 +45,8 @@ const CLI_BACKENDS: Record<CliBackend, CliBackendConfig> = {
       "--output-format", "stream-json",
       "--max-turns", "1",
       "--verbose",
+      "--no-session-persistence",
+      "--disallowedTools", "*",
       prompt,
     ],
     outputFormat: "stream-json",
@@ -83,13 +86,44 @@ export interface CliProviderOpts {
   env?: Record<string, string>;
 }
 
+// ── Tool 定義嵌入格式 ───────────────────────────────────────────────────────
+
+const TOOL_CALL_INSTRUCTIONS = `
+When you need to use a tool, output EXACTLY this format (no extra text after the block):
+<tool_call id="call_1" name="tool_name">
+{"param1": "value1"}
+</tool_call>
+
+You may output text before tool calls, and multiple tool calls in one response.
+After outputting tool_call blocks, STOP generating — wait for results.
+`.trim();
+
+function formatToolDefs(tools: ToolDefinition[]): string {
+  const defs = tools.map(t => {
+    const params = t.input_schema.properties;
+    const required = t.input_schema.required ?? [];
+    const paramLines = Object.entries(params).map(([k, v]) => {
+      const desc = (v as Record<string, unknown>)["description"] ?? "";
+      const req = required.includes(k) ? " (required)" : "";
+      return `    ${k}${req}: ${desc}`;
+    }).join("\n");
+    return `- ${t.name}: ${t.description}\n  Parameters:\n${paramLines}`;
+  }).join("\n\n");
+
+  return `<available_tools>\n${defs}\n</available_tools>\n\n${TOOL_CALL_INSTRUCTIONS}`;
+}
+
 // ── Message[] → prompt 文字 ──────────────────────────────────────────────────
 
-function formatMessagesAsPrompt(messages: Message[], systemPrompt?: string): string {
+function formatMessagesAsPrompt(messages: Message[], systemPrompt?: string, tools?: ToolDefinition[]): string {
   const parts: string[] = [];
 
   if (systemPrompt) {
     parts.push(`<system>\n${systemPrompt}\n</system>\n`);
+  }
+
+  if (tools?.length) {
+    parts.push(formatToolDefs(tools));
   }
 
   for (const msg of messages) {
@@ -111,12 +145,39 @@ function flattenContentBlocks(blocks: ContentBlock[]): string {
   for (const b of blocks) {
     switch (b.type) {
       case "text":   parts.push(b.text); break;
-      case "tool_use":    parts.push(`[Tool call: ${b.name}]`); break;
-      case "tool_result": parts.push(`[Tool result: ${b.content}]`); break;
+      case "tool_use":
+        parts.push(`<tool_call id="${b.id}" name="${b.name}">\n${JSON.stringify(b.input)}\n</tool_call>`);
+        break;
+      case "tool_result":
+        parts.push(`<tool_result id="${b.tool_use_id}"${b.is_error ? ' is_error="true"' : ''}>\n${b.content}\n</tool_result>`);
+        break;
       case "image":       parts.push("[Image]"); break;
     }
   }
   return parts.join("\n");
+}
+
+// ── tool_call 解析 ──────────────────────────────────────────────────────────
+
+const TOOL_CALL_RE = /<tool_call\s+id="([^"]+)"\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool_call>/g;
+
+function parseToolCallsFromText(text: string): { calls: ToolCall[]; cleanText: string } {
+  const calls: ToolCall[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = TOOL_CALL_RE.exec(text)) !== null) {
+    const [, id, name, inputStr] = match;
+    try {
+      const params = JSON.parse(inputStr);
+      calls.push({ id, name, params });
+    } catch {
+      log.debug(`[cli] tool_call parse error: name=${name} input=${inputStr.slice(0, 100)}`);
+    }
+  }
+  TOOL_CALL_RE.lastIndex = 0; // reset regex state
+
+  const cleanText = text.replace(TOOL_CALL_RE, "").trim();
+  return { calls, cleanText };
 }
 
 // ── stream-json 解析型別 ─────────────────────────────────────────────────────
@@ -137,7 +198,7 @@ interface StreamAssistantMessage {
 export class CliProvider implements LLMProvider {
   readonly id: string;
   readonly name: string;
-  readonly supportsToolUse = false;
+  readonly supportsToolUse = true;
   readonly maxContextTokens: number;
   readonly modelId: string;
 
@@ -160,8 +221,9 @@ export class CliProvider implements LLMProvider {
   }
 
   async stream(messages: Message[], opts: ProviderOpts = {}): Promise<StreamResult> {
-    const cwd = this.cwdOverride ?? resolveWorkspaceDir();
-    const prompt = formatMessagesAsPrompt(messages, opts.systemPrompt);
+    // 使用中性 cwd 避免 CLI 載入專案的 CLAUDE.md / hooks（CatClaw 自己管 system prompt）
+    const cwd = this.cwdOverride ?? tmpdir();
+    const prompt = formatMessagesAsPrompt(messages, opts.systemPrompt, opts.tools);
     const args = this.backend.buildArgs(prompt);
 
     log.debug(`[cli:${this.id}] spawn: ${this.command} backend=${this.backendType} msgs=${messages.length} prompt=${prompt.length}字`);
@@ -202,8 +264,22 @@ export class CliProvider implements LLMProvider {
       });
     }
 
+    // ── 解析 tool_call blocks（prompt-based function calling）──────────────
+    let toolCalls: ToolCall[] = [];
+    let cleanText = finalText;
+
+    if (opts.tools?.length && finalText) {
+      const parsed = parseToolCallsFromText(finalText);
+      if (parsed.calls.length > 0) {
+        toolCalls = parsed.calls;
+        cleanText = parsed.cleanText;
+        finalStopReason = "tool_use";
+        log.debug(`[cli:${this.id}] 解析到 ${toolCalls.length} 個 tool_call: ${toolCalls.map(t => t.name).join(", ")}`);
+      }
+    }
+
     // done event
-    events.push({ type: "done", stopReason: finalStopReason, text: finalText, usage: undefined });
+    events.push({ type: "done", stopReason: finalStopReason, text: cleanText, usage: undefined });
 
     const estInput = Math.round(prompt.length / 4);
     const estOutput = Math.round(finalText.length / 4);
@@ -212,15 +288,15 @@ export class CliProvider implements LLMProvider {
       model: this.modelId, providerType: `cli-${this.backendType}`, estimated: true,
     };
 
-    log.debug(`[cli:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 ~tokens=${usage.totalTokens}`);
+    log.debug(`[cli:${this.id}] 完成 stopReason=${finalStopReason} text=${cleanText.length}字 toolCalls=${toolCalls.length} ~tokens=${usage.totalTokens}`);
 
     async function* makeIterable(): AsyncIterable<ProviderEvent> { yield* events; }
 
     return {
       events: makeIterable(),
       stopReason: finalStopReason,
-      toolCalls: [],
-      text: finalText,
+      toolCalls,
+      text: cleanText,
       usage,
     };
   }
@@ -242,7 +318,11 @@ export class CliProvider implements LLMProvider {
       let lastThinkingLength = 0;
       let resultText = "";
 
+      let stdoutTotal = 0;
+      let jsonLinesTotal = 0;
+
       proc.stdout!.on("data", (chunk: Buffer) => {
+        stdoutTotal += chunk.length;
         buffer += chunk.toString();
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
@@ -252,9 +332,19 @@ export class CliProvider implements LLMProvider {
           if (!trimmed) continue;
 
           let obj: Record<string, unknown>;
-          try { obj = JSON.parse(trimmed); } catch { continue; }
+          try { obj = JSON.parse(trimmed); } catch {
+            log.debug(`[cli:${this.id}] non-json line (${trimmed.length}字): ${trimmed.slice(0, 80)}`);
+            continue;
+          }
 
+          jsonLinesTotal++;
           const type = obj["type"] as string | undefined;
+          const subtype = obj["subtype"] as string | undefined;
+
+          // debug: 記錄每一行的 type 以診斷空回應問題
+          if (type !== "assistant" && type !== "result") {
+            log.debug(`[cli:${this.id}] json type=${type} subtype=${subtype ?? "-"}`);
+          }
 
           if (type === "assistant") {
             const msg = obj["message"] as StreamAssistantMessage | undefined;
@@ -286,7 +376,9 @@ export class CliProvider implements LLMProvider {
 
           if (type === "result") {
             const rt = obj["result"] as string | undefined;
-            if (obj["is_error"]) {
+            const isErr = !!obj["is_error"];
+            log.debug(`[cli:${this.id}] result subtype=${subtype ?? "-"} is_error=${isErr} result=${(rt ?? "").slice(0, 200)} stop_reason=${obj["stop_reason"] ?? "-"}`);
+            if (isErr) {
               events.push({ type: "error", message: rt ?? "CLI 回傳錯誤" });
             }
             if (rt) resultText = rt;
@@ -302,7 +394,7 @@ export class CliProvider implements LLMProvider {
       });
 
       proc.on("close", (code) => {
-        log.debug(`[cli:${this.id}] closed, code=${code}`);
+        log.debug(`[cli:${this.id}] closed code=${code} stdout=${stdoutTotal}bytes jsonLines=${jsonLinesTotal} resultText=${resultText.length}字 stderr=${stderrTail.slice(-200) || "(empty)"} bufferRem=${buffer.length}`);
         if (buffer.trim()) {
           try {
             const obj = JSON.parse(buffer.trim()) as Record<string, unknown>;
