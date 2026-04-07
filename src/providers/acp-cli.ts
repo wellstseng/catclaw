@@ -29,8 +29,8 @@ export type CliBackend = "claude" | "gemini" | "codex";
 interface CliBackendConfig {
   /** CLI 執行檔名（可由 CliProviderOpts.command 覆寫） */
   defaultCommand: string;
-  /** 建構 spawn args */
-  buildArgs(prompt: string): string[];
+  /** 建構 spawn args（prompt 改走 stdin） */
+  buildArgs(): string[];
   /** 輸出格式 */
   outputFormat: "stream-json" | "text";
   /** context window 大小 */
@@ -40,33 +40,31 @@ interface CliBackendConfig {
 const CLI_BACKENDS: Record<CliBackend, CliBackendConfig> = {
   claude: {
     defaultCommand: "claude",
-    buildArgs: (prompt) => [
+    buildArgs: () => [
       "-p",
       "--output-format", "stream-json",
-      "--max-turns", "1",
       "--verbose",
       "--no-session-persistence",
-      "--disallowedTools", "*",
-      prompt,
+      "--tools", "",
     ],
     outputFormat: "stream-json",
     maxContextTokens: 200_000,
   },
   gemini: {
     defaultCommand: "gemini",
-    buildArgs: (prompt) => [
-      "-p", prompt,
-      "--output-format", "stream-json",
+    buildArgs: () => [
+      "-p", "",
+      "-o", "stream-json",
+      "--yolo",
     ],
     outputFormat: "stream-json",
     maxContextTokens: 1_000_000,
   },
   codex: {
     defaultCommand: "codex",
-    buildArgs: (prompt) => [
+    buildArgs: () => [
       "--quiet",
       "--full-auto",
-      prompt,
     ],
     outputFormat: "text",
     maxContextTokens: 200_000,
@@ -224,17 +222,21 @@ export class CliProvider implements LLMProvider {
     // 使用中性 cwd 避免 CLI 載入專案的 CLAUDE.md / hooks（CatClaw 自己管 system prompt）
     const cwd = this.cwdOverride ?? tmpdir();
     const prompt = formatMessagesAsPrompt(messages, opts.systemPrompt, opts.tools);
-    const args = this.backend.buildArgs(prompt);
+    const args = this.backend.buildArgs();
 
     log.debug(`[cli:${this.id}] spawn: ${this.command} backend=${this.backendType} msgs=${messages.length} prompt=${prompt.length}字`);
 
     const proc = spawn(this.command, args, {
       cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       env: { ...process.env, ...this.extraEnv },
       detached: process.platform !== "win32",
     });
+
+    // prompt 透過 stdin 傳入（避免 CLI arg 長度限制 + 特殊字元問題）
+    proc.stdin!.write(prompt);
+    proc.stdin!.end();
 
     log.debug(`[cli:${this.id}] pid=${proc.pid}`);
 
@@ -346,6 +348,7 @@ export class CliProvider implements LLMProvider {
             log.debug(`[cli:${this.id}] json type=${type} subtype=${subtype ?? "-"}`);
           }
 
+          // Claude 格式：type=assistant, message.content=[{type:"text",text:"..."}]
           if (type === "assistant") {
             const msg = obj["message"] as StreamAssistantMessage | undefined;
             if (!msg?.content) continue;
@@ -374,10 +377,22 @@ export class CliProvider implements LLMProvider {
             continue;
           }
 
+          // Gemini 格式：type=message, role=assistant, content="...", delta=true
+          if (type === "message" && obj["role"] === "assistant") {
+            const content = obj["content"] as string | undefined;
+            if (content && obj["delta"]) {
+              events.push({ type: "text_delta", text: content });
+              resultText += content;
+            }
+            continue;
+          }
+
           if (type === "result") {
-            const rt = obj["result"] as string | undefined;
-            const isErr = !!obj["is_error"];
-            log.debug(`[cli:${this.id}] result subtype=${subtype ?? "-"} is_error=${isErr} result=${(rt ?? "").slice(0, 200)} stop_reason=${obj["stop_reason"] ?? "-"}`);
+            // Claude: { result: "text", is_error, stop_reason }
+            // Gemini: { status: "success"|"error", stats: {...} }
+            const rt = (obj["result"] as string | undefined);
+            const isErr = !!obj["is_error"] || obj["status"] === "error";
+            log.debug(`[cli:${this.id}] result subtype=${subtype ?? "-"} is_error=${isErr} result=${(rt ?? "").slice(0, 200)} stop_reason=${obj["stop_reason"] ?? "-"} status=${obj["status"] ?? "-"}`);
             if (isErr) {
               events.push({ type: "error", message: rt ?? "CLI 回傳錯誤" });
             }

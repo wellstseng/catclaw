@@ -58,6 +58,8 @@ interface ResponsesContentBlock {
 interface ResponsesChunk {
   type: string;
   delta?: string;
+  /** 頂層 item_id（delta 事件用，對應 item.id） */
+  item_id?: string;
   item?: {
     id?: string;
     type?: string;
@@ -407,6 +409,8 @@ async function parseResponsesApiStream(
 
 /** function call arguments 累積 buffer（call_id → 累積字串） */
 const argBuffers = new Map<string, { name: string; args: string }>();
+/** item.id → call_id 對照表（delta 事件只有頂層 item_id，需映射回 call_id） */
+const itemIdToCallId = new Map<string, string>();
 
 function processResponsesChunk(chunk: ResponsesChunk, toolCalls: ToolCall[]): ProviderEvent | null {
   switch (chunk.type) {
@@ -414,30 +418,34 @@ function processResponsesChunk(chunk: ResponsesChunk, toolCalls: ToolCall[]): Pr
     case "response.output_text.delta":
       return chunk.delta ? { type: "text_delta", text: chunk.delta } : null;
 
-    // function call 開始（記錄 call_id + name）
+    // function call 開始（記錄 call_id + name，建立 item.id → call_id 映射）
     case "response.output_item.added":
       if (chunk.item?.type === "function_call" && chunk.item.call_id) {
         argBuffers.set(chunk.item.call_id, { name: chunk.item.name ?? "", args: "" });
+        if (chunk.item.id) itemIdToCallId.set(chunk.item.id, chunk.item.call_id);
       }
       return null;
 
-    // function call arguments delta
-    case "response.function_call_arguments.delta":
-      if (chunk.item?.call_id) {
-        const buf = argBuffers.get(chunk.item.call_id);
+    // function call arguments delta（頂層 item_id 映射回 call_id）
+    case "response.function_call_arguments.delta": {
+      const callId = chunk.item?.call_id ?? (chunk.item_id ? itemIdToCallId.get(chunk.item_id) : undefined);
+      if (callId) {
+        const buf = argBuffers.get(callId);
         if (buf && chunk.delta) buf.args += chunk.delta;
       }
       return null;
+    }
 
-    // function call 完成
+    // function call 完成（優先用累積的 args，空字串 fallback 到 item.arguments）
     case "response.output_item.done":
       if (chunk.item?.type === "function_call" && chunk.item.call_id) {
         const buf = argBuffers.get(chunk.item.call_id);
-        const argsStr = buf?.args ?? chunk.item.arguments ?? "{}";
+        const argsStr = (buf?.args || chunk.item.arguments) ?? "{}";
         let params: object = {};
         try { params = JSON.parse(argsStr) as object; } catch { /* 忽略 */ }
-        toolCalls.push({ id: chunk.item.call_id, name: chunk.item.name ?? "", params });
+        toolCalls.push({ id: chunk.item.call_id, name: chunk.item.name ?? buf?.name ?? "", params });
         argBuffers.delete(chunk.item.call_id);
+        if (chunk.item.id) itemIdToCallId.delete(chunk.item.id);
       }
       return null;
 
