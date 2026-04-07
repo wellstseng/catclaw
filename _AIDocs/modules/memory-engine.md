@@ -57,7 +57,7 @@ recall(
 RecallResult：
 - `fragments: AtomFragment[]` — 命中的 atom 片段
 - `blindSpot: boolean` — 所有層均無命中時為 true（Blind-Spot 警告）
-- `degraded: boolean` — vector service 離線時回傳空結果（不再 fallback trigger-only）
+- `degraded: boolean` — vector service 離線時走 keyword fallback（純 keyword + ACT-R 排序）
 
 ### Context 組裝
 
@@ -135,13 +135,29 @@ getStatus(): MemoryStatus
 recall(query)
   1. Cache 檢查（Jaccard ≥ 0.7, 60s TTL）
   2. Progressive Retrieval — keyword 快篩（MEMORY.md trigger match）
-  3. Embed query → vector
-  4. Vector search（各層並行，LanceDB topK=8, minScore=0.55）
+  3. Embed query → vector（失敗 → keyword fallback）
+  4. Vector search（各層並行，LanceDB topK=8, minScore=0.55）（失敗 → keyword fallback）
   5. Merge + dedup + ACT-R activation 混合排序 + keyword bonus
      finalScore = 0.7 × cosine + 0.3 × activation_norm + kwBonus(0.15)
   6. Related-Edge Spreading（top-N 的 related atom 展開，score × 0.6 折扣，每 atom 最多展開 3 個）
   7. touchAtom + cache + return
 ```
+
+### Keyword Fallback（向量不可用兜底）
+
+Step 3 embed 或 Step 4 vector search 失敗時，自動退化為純 keyword 路徑：
+
+- 以 Step 2 的 `keywordHits` 為來源
+- `readAtom()` 讀取 atom → `computeActivation()` 計算 ACT-R 分數排序
+- 回傳 `degraded: true`，下游 trace 可見
+
+### AtomFragment.matchedBy
+
+| 值 | 來源 |
+|------|------|
+| `"vector"` | 正常向量搜尋命中 |
+| `"keyword"` | keyword fallback 命中 |
+| `"related"` | Related-Edge Spreading 展開 |
 
 ### 常數
 

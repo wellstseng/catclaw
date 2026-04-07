@@ -5,7 +5,8 @@
  * 子命令：
  *   /migrate import [--force] [--dry-run]  — 從 ~/.claude 匯入記憶
  *   /migrate rebuild [<memoryDir>]          — 重建 MEMORY.md 索引
- *   /migrate seed [--dry-run]              — 將 atom 嵌入至 LanceDB
+ *   /migrate seed [--dry-run]              — 將 atom 嵌入至 LanceDB（global）
+ *   /migrate vector-resync [--dry-run]    — 全層向量重建（global + project + account）
  *   /migrate status                         — 顯示遷移狀態
  *   /migrate search <query>                — 直查 LanceDB（不過 LLM）
  *   /migrate stats                          — LanceDB 向量數 + table 清單
@@ -110,6 +111,74 @@ async function handleSeed(args: string): Promise<SkillResult> {
   }
 }
 
+async function handleVectorResync(args: string): Promise<SkillResult> {
+  const dryRun = args.includes("--dry-run");
+  const { getPlatformMemoryEngine } = await import("../../core/platform.js");
+  const engine = getPlatformMemoryEngine();
+  if (!engine) {
+    return { text: "❌ MemoryEngine 未啟動（平台模式未啟用）", isError: true };
+  }
+
+  const { existsSync, readdirSync } = await import("node:fs");
+  const status = engine.getStatus();
+  const memRoot = join(resolveCatclawDir(), "memory");
+
+  // 收集所有層：global + projects/* + accounts/*
+  const layers: Array<{ label: string; dir: string; namespace: string }> = [];
+  layers.push({ label: "global", dir: status.globalDir, namespace: "global" });
+
+  const projectsDir = join(memRoot, "projects");
+  if (existsSync(projectsDir)) {
+    for (const sub of readdirSync(projectsDir)) {
+      const dir = join(projectsDir, sub);
+      layers.push({ label: `project/${sub}`, dir, namespace: `project/${sub}` });
+    }
+  }
+  const accountsDir = join(memRoot, "accounts");
+  if (existsSync(accountsDir)) {
+    for (const sub of readdirSync(accountsDir)) {
+      const dir = join(accountsDir, sub);
+      layers.push({ label: `account/${sub}`, dir, namespace: `account/${sub}` });
+    }
+  }
+
+  if (dryRun) {
+    const lines = ["**[Dry Run] vector-resync 預覽**"];
+    for (const l of layers) {
+      if (!existsSync(l.dir)) continue;
+      const count = readdirSync(l.dir).filter(f => f.endsWith(".md") && f !== "MEMORY.md").length;
+      lines.push(`• ${l.label}：${count} 個 atom（ns=${l.namespace}）`);
+    }
+    return { text: lines.join("\n") };
+  }
+
+  const report: string[] = ["**向量全層重建完成**"];
+  let totalSeeded = 0, totalSkipped = 0, totalErrors = 0;
+
+  for (const l of layers) {
+    if (!existsSync(l.dir)) continue;
+    try {
+      const result = await engine.seedFromDir(l.dir, l.namespace);
+      report.push(`• ${l.label}：✅ ${result.seeded} embedded, ${result.skipped} skipped, ${result.errors} errors`);
+      totalSeeded += result.seeded;
+      totalSkipped += result.skipped;
+      totalErrors += result.errors;
+    } catch (err) {
+      report.push(`• ${l.label}：❌ ${err instanceof Error ? err.message : String(err)}`);
+      totalErrors++;
+    }
+  }
+
+  report.push(`\n**合計**：${totalSeeded} embedded, ${totalSkipped} skipped, ${totalErrors} errors`);
+  if (totalErrors > 0 || totalSkipped > 0) {
+    report.push("⚠️ 有 skip/error — 確認 Ollama embedding 是否正常");
+  } else {
+    report.push("✅ 全部完成");
+  }
+
+  return { text: report.join("\n") };
+}
+
 function handleStatus(): SkillResult {
   const claudeMemory = join(homedir(), ".claude", "memory");
   const catclawMemory = join(resolveCatclawDir(), "memory");
@@ -198,6 +267,7 @@ export const skill: Skill = {
       case "import":  return handleImport(rest);
       case "rebuild": return handleRebuild(rest);
       case "seed":    return handleSeed(rest);
+      case "vector-resync": return handleVectorResync(rest);
       case "status":  return handleStatus();
       case "search":  return handleSearch(rest);
       case "stats":   return handleStats();
@@ -207,7 +277,8 @@ export const skill: Skill = {
             "**`/migrate` 子命令**",
             "• `import [--force] [--dry-run]` — 從 `~/.claude/memory/` 匯入記憶",
             "• `rebuild [<memoryDir>] [--dry-run]` — 重建 `MEMORY.md` 索引",
-            "• `seed [--dry-run]` — 將記憶目錄 atom 嵌入至 LanceDB",
+            "• `seed [--dry-run]` — 將記憶目錄 atom 嵌入至 LanceDB（global only）",
+            "• `vector-resync [--dry-run]` — 全層向量重建（global + project + account）",
             "• `status` — 查看遷移狀態",
             "• `search <query>` — 直查 LanceDB（不過 LLM，minScore=0 顯示原始 score）",
             "• `stats` — LanceDB table 清單 + 向量數",

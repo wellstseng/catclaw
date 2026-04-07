@@ -33,8 +33,8 @@ export interface AtomFragment {
   atom: import("./atom.js").Atom;
   /** cosine 相似度 (0–1) */
   score: number;
-  /** 保留供 trace/status 顯示，固定 "vector" */
-  matchedBy: "vector";
+  /** 記憶來源：vector=向量搜尋 | keyword=MD fallback | related=展開 */
+  matchedBy: "vector" | "keyword" | "related";
 }
 
 export interface RecallContext {
@@ -122,10 +122,54 @@ const ACTIVATION_WEIGHT = 0.3;
 const RELATED_SCORE_DISCOUNT = 0.6;
 const RELATED_MAX_EXPAND = 3;  // 最多展開幾個 related atom
 
+// ── Keyword Fallback（向量不可用時的兜底路徑） ────────────────────────────────
+
+function keywordFallback(
+  keywordHits: Set<string>,
+  layerDefs: Array<{ layer: MemoryLayer; dir: string }>,
+  maxResults: number,
+  channelId: string | undefined,
+  prompt: string,
+): RecallResult {
+  if (keywordHits.size === 0) {
+    log.debug("[recall] ⚠ 向量服務不可用，keyword 也無命中 → 空結果");
+    const result: RecallResult = { fragments: [], blindSpot: true, degraded: true };
+    setCache(channelId, prompt, result);
+    return result;
+  }
+
+  const fragments: AtomFragment[] = [];
+  for (const name of keywordHits) {
+    for (const { layer, dir } of layerDefs) {
+      const atomPath = join(dir, `${name}.md`);
+      if (!existsSync(atomPath)) continue;
+      const atom = readAtom(atomPath);
+      if (!atom) continue;
+      const score = computeActivation(atom);
+      fragments.push({ id: atom.name, layer, atom, score, matchedBy: "keyword" });
+      break; // 同名 atom 只取第一層命中
+    }
+  }
+
+  fragments.sort((a, b) => b.score - a.score);
+  const topFragments = fragments.slice(0, maxResults);
+
+  for (const f of topFragments) {
+    try { touchAtom(f.atom.path); } catch { /* 靜默 */ }
+  }
+
+  const blindSpot = topFragments.length === 0;
+  log.debug(`[recall] ⚠ 向量服務不可用，改用 keyword fallback（${topFragments.length} 個命中）`);
+
+  const result: RecallResult = { fragments: topFragments, blindSpot, degraded: true };
+  setCache(channelId, prompt, result);
+  return result;
+}
+
 // ── 公開 API ─────────────────────────────────────────────────────────────────
 
 /**
- * 三層記憶檢索主入口（Vector-Only）
+ * 三層記憶檢索主入口（Vector + keyword fallback）
  */
 export async function recall(
   prompt: string,
@@ -158,13 +202,16 @@ export async function recall(
   const minScore = opts.minScore ?? opts.vectorMinScore ?? DEFAULT_MIN_SCORE;
   const maxResults = opts.maxResults ?? opts.llmSelectMax ?? DEFAULT_MAX_RESULTS;
 
-  // ── Step 2: Progressive Retrieval — keyword 快篩 ──
-  const keywordHits = new Set<string>();
-  for (const { layer: _layer, dir } of [
-    { layer: "global" as MemoryLayer, dir: paths.globalDir },
+  // ── 各層定義（Step 2~6 共用） ──
+  const layerDefs: Array<{ layer: MemoryLayer; dir: string }> = [
+    { layer: "global", dir: paths.globalDir },
     ...(paths.projectDir ? [{ layer: "project" as MemoryLayer, dir: paths.projectDir }] : []),
     ...(paths.accountDir ? [{ layer: "account" as MemoryLayer, dir: paths.accountDir }] : []),
-  ]) {
+  ];
+
+  // ── Step 2: Progressive Retrieval — keyword 快篩 ──
+  const keywordHits = new Set<string>();
+  for (const { dir } of layerDefs) {
     const indexPath = join(dir, "MEMORY.md");
     const entries = loadIndex(indexPath);
     const matched = matchTriggers(prompt, entries);
@@ -180,18 +227,11 @@ export async function recall(
     queryVec = await embedOne(prompt);
     if (!queryVec.length) throw new Error("empty embedding");
   } catch (err) {
-    log.debug(`[recall] embedding 失敗，回傳空結果：${err instanceof Error ? err.message : String(err)}`);
-    const result: RecallResult = { fragments: [], blindSpot: true, degraded: true };
-    setCache(ctx.channelId, prompt, result);
-    return result;
+    log.debug(`[recall] embedding 失敗：${err instanceof Error ? err.message : String(err)}`);
+    return keywordFallback(keywordHits, layerDefs, maxResults, ctx.channelId, prompt);
   }
 
   // ── Step 4: Vector search（各層並行） ──
-  const layerDefs: Array<{ layer: MemoryLayer; dir: string }> = [
-    { layer: "global", dir: paths.globalDir },
-    ...(paths.projectDir ? [{ layer: "project" as MemoryLayer, dir: paths.projectDir }] : []),
-    ...(paths.accountDir ? [{ layer: "account" as MemoryLayer, dir: paths.accountDir }] : []),
-  ];
 
   let allFragments: AtomFragment[] = [];
 
@@ -222,9 +262,7 @@ export async function recall(
     for (const frags of layerResults) allFragments.push(...frags);
   } catch (err) {
     log.debug(`[recall] vector search 失敗：${err instanceof Error ? err.message : String(err)}`);
-    const result: RecallResult = { fragments: [], blindSpot: true, degraded: true };
-    setCache(ctx.channelId, prompt, result);
-    return result;
+    return keywordFallback(keywordHits, layerDefs, maxResults, ctx.channelId, prompt);
   }
 
   // ── Step 5: Merge + dedup + ACT-R 混合排序 + keyword bonus ──
@@ -267,7 +305,7 @@ export async function recall(
         const relAtom = readAtom(relPath);
         if (!relAtom) continue;
         const relScore = frag.score * RELATED_SCORE_DISCOUNT;
-        relatedFragments.push({ id: relAtom.name, layer, atom: relAtom, score: relScore, matchedBy: "vector" });
+        relatedFragments.push({ id: relAtom.name, layer, atom: relAtom, score: relScore, matchedBy: "related" });
         existingIds.add(relName);
         expanded++;
         break;
