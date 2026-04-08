@@ -1,7 +1,7 @@
 # modules/dashboard — Web Dashboard + REST API
 
-> 檔案：`src/core/dashboard.ts` (~3600 行)
-> 更新日期：2026-04-06
+> 檔案：`src/core/dashboard.ts` (~4400 行)
+> 更新日期：2026-04-08
 
 ## 職責
 
@@ -33,6 +33,7 @@ Bearer token 認證（可選）：
 | Cron | 排程 job 管理 |
 | Config | catclaw.json 線上編輯 |
 | Memory | Atom Browser（排序/篩選/刪除）+ Recall Tester + Stats Panel |
+| Pipeline | 管線設定總覽 + Embedding/Extract Model 切換 + Ollama 模型管理 + Vector Resync |
 | Logs | PM2 日誌 tail + SSE 即時串流 |
 
 ## REST API 端點
@@ -142,6 +143,9 @@ Bearer token 認證（可選）：
 | `/api/memory/recall-test` | POST | 測試 recall（skipCache），body: `{ prompt, accountId? }` |
 | `/api/memory/stats` | GET | 統計：by confidence、confirmation 分布、top/bottom atoms |
 | `/api/memory/vector/stats` | GET | LanceDB table count + sizes |
+| `/api/memory/pipeline` | GET | 記憶管線設定（embedding/extraction/reranker + vector stats） |
+| `/api/memory/pipeline` | PUT | 更新管線設定（embedding/extraction），寫入 catclaw.json |
+| `/api/memory/resync` | POST | 觸發全層 vector resync |
 
 ### Logs
 

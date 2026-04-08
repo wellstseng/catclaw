@@ -699,6 +699,15 @@ label.cfg-toggle { min-width: 36px; }
       </div>
       <div id="pl-embed-msg" style="font-size:0.82rem"></div>
     </div>
+    <!-- 操作區：Extract Model 切換 -->
+    <div class="card">
+      <h3 style="margin:0 0 8px">Extract Model 切換</h3>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <select id="pl-extract-select" style="flex:1;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.85rem"></select>
+        <button class="btn btn-sm" onclick="pipelineSwitchExtract()">套用</button>
+      </div>
+      <div id="pl-extract-msg" style="font-size:0.82rem"></div>
+    </div>
   </div>
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
@@ -2620,6 +2629,14 @@ async function loadPipeline() {
   select.innerHTML = embeddingModels.length
     ? embeddingModels.map(function(m) { return '<option value="' + m.name + '"' + (m.name === currentModel ? ' selected' : '') + '>' + m.name + '</option>'; }).join('')
     : '<option value="">（無 embedding 模型）</option>';
+
+  // Extract 切換下拉選單（列出非 embedding 模型）
+  const extSelect = document.getElementById('pl-extract-select');
+  const extractModels = (models.models || []).filter(function(m) { return !m.name.includes('embed'); });
+  const currentExtractModel = pipeline.config?.extraction?.model || '';
+  extSelect.innerHTML = extractModels.length
+    ? extractModels.map(function(m) { return '<option value="' + m.name + '"' + (m.name === currentExtractModel ? ' selected' : '') + '>' + m.name + '</option>'; }).join('')
+    : '<option value="">（無可用模型）</option>';
 }
 
 function renderPipelineModels(models) {
@@ -2631,7 +2648,7 @@ function renderPipelineModels(models) {
       return '<tr><td style="font-weight:500">' + m.name + '</td>' +
         '<td>' + sizeGB + ' GB</td>' +
         '<td style="color:var(--fg2)">' + (m.details?.family || '-') + '</td>' +
-        '<td><button class="btn btn-sm" style="color:var(--error);font-size:0.72rem" onclick="pipelineDeleteModel(\'' + m.name.replace(/'/g, "\\'") + '\')">刪除</button></td></tr>';
+        '<td><button class="btn btn-sm" style="color:var(--error);font-size:0.72rem" onclick="pipelineDeleteModel(\\'' + m.name.replace(/'/g, "\\\\'") + '\\')">刪除</button></td></tr>';
     }).join('') + '</tbody></table>';
 }
 
@@ -2646,6 +2663,22 @@ async function pipelineSwitchEmbed() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ embedding: { provider: 'ollama', model: model } }),
+    }).then(function(r) { return r.json(); });
+    msgEl.innerHTML = '<div style="color:var(--success)">' + (r.message || '已更新') + '</div>';
+  } catch (e) { msgEl.innerHTML = '<div style="color:var(--error)">錯誤: ' + e.message + '</div>'; }
+}
+
+async function pipelineSwitchExtract() {
+  var select = document.getElementById('pl-extract-select');
+  var model = select.value;
+  if (!model) return;
+  var msgEl = document.getElementById('pl-extract-msg');
+  msgEl.innerHTML = '<div style="color:var(--fg2)">套用中...</div>';
+  try {
+    var r = await authFetch('/api/memory/pipeline', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ extraction: { provider: 'ollama', model: model } }),
     }).then(function(r) { return r.json(); });
     msgEl.innerHTML = '<div style="color:var(--success)">' + (r.message || '已更新') + '</div>';
   } catch (e) { msgEl.innerHTML = '<div style="color:var(--error)">錯誤: ' + e.message + '</div>'; }
@@ -4312,6 +4345,7 @@ export class DashboardServer {
             try {
               const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as {
                 embedding?: { provider: string; model: string; host?: string; apiKey?: string; dimensions?: number };
+                extraction?: { provider: string; model: string; host?: string; apiKey?: string };
               };
               const { resolveConfigPath } = await import("./config.js");
               const configPath = resolveConfigPath();
@@ -4320,6 +4354,10 @@ export class DashboardServer {
               if (body.embedding) {
                 rawJson.memoryPipeline = rawJson.memoryPipeline ?? {};
                 rawJson.memoryPipeline.embedding = body.embedding;
+              }
+              if (body.extraction) {
+                rawJson.memoryPipeline = rawJson.memoryPipeline ?? {};
+                rawJson.memoryPipeline.extraction = body.extraction;
               }
               writeFileSync(configPath, JSON.stringify(rawJson, null, 2), "utf-8");
               res.writeHead(200, { "Content-Type": "application/json" });

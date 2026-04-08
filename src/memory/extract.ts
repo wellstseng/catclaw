@@ -200,9 +200,11 @@ async function doExtract(task: ExtractTask): Promise<KnowledgeItem[]> {
   let raw: string;
   try {
     const { getOllamaClient } = await import("../ollama/client.js");
+    const { config } = await import("../core/config.js");
     const client = getOllamaClient();
     const prompt = buildExtractPrompt(task.response, crossCtx);
-    raw = await client.generate(prompt, { think: "auto", numPredict: 2048 });
+    const extractModel = config.memoryPipeline?.extraction?.model;
+    raw = await client.generate(prompt, { model: extractModel, think: "auto", numPredict: 2048 });
   } catch (err) {
     log.debug(`[extract] Ollama 不可用，跳過：${err instanceof Error ? err.message : String(err)}`);
     return [];

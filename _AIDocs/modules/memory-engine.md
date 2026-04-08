@@ -186,6 +186,7 @@ Step 3 embed 或 Step 4 vector search 失敗時，自動退化為純 keyword 路
 | `extract.maxItemsPerTurn` | 3 | 每輪最多萃取數 |
 | `extract.maxItemsSessionEnd` | 5 | Session 結束時最多萃取數 |
 | `extract.minNewChars` | 200 | 逐輪萃取最低新增字元門檻 |
+| `memoryPipeline.extraction.model` | (from ollama config) | 萃取用 LLM 模型（extract.ts doExtract 讀取此值傳給 Ollama） |
 
 ## 全域單例
 
