@@ -1,7 +1,7 @@
 # modules/agent-loop — 核心對話迴圈
 
 > 檔案：`src/core/agent-loop.ts` (~1612 行)
-> 更新日期：2026-04-05
+> 更新日期：2026-04-08
 
 ## 職責
 
@@ -142,6 +142,18 @@ Turn 執行期間監聽 eventBus 事件，轉為 trace workflow events：
 - `oscillation` — 擺盪偵測
 - `sync_needed` — 需同步
 - `file_modified` — 檔案修改追蹤
+
+## Tool Loop Detection（三層防護）
+
+`runBeforeToolCall` 內，Step 4：
+
+| 層級 | 條件 | 說明 |
+|------|------|------|
+| 4a 精確迴圈 | 最近 5 筆同名 ≥3 且同參數 ≥3 | 完全相同呼叫的死迴圈 |
+| 4b 寬鬆防線 | 最近 10 筆中同名 ≥8（參數可不同） | 換參數但一直無效的重試 |
+| 4c 交替迴圈 | A→B→A→B→A 模式（period-2） | 兩工具互踢的死循環 |
+
+比對使用 `JSON.stringify(params)` 做參數簽名。
 
 ## Tool Result 智慧截斷
 

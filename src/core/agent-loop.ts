@@ -514,10 +514,22 @@ async function runBeforeToolCall(
     }
   }
 
-  // 4. Tool Loop Detection（同一 tool 連續 5 次）
-  const recentSame = ctx.recentCalls.slice(-5).filter(c => c.name === call.name);
-  if (recentSame.length >= 5) {
-    return { blocked: true, reason: `偵測到工具迴圈：${call.name} 連續呼叫超過 5 次` };
+  // 4. Tool Loop Detection — 兩層防護
+  // 4a. 精確迴圈：同 tool + 同參數連續 ≥3 次 → 立即攔截
+  const last5 = ctx.recentCalls.slice(-5);
+  const recentSame = last5.filter(c => c.name === call.name);
+  if (recentSame.length >= 3) {
+    const callSig = JSON.stringify(call.params);
+    const identicalCount = recentSame.filter(c => JSON.stringify(c.params) === callSig).length;
+    if (identicalCount >= 3) {
+      return { blocked: true, reason: `偵測到工具迴圈：${call.name} 以相同參數連續呼叫 ${identicalCount} 次` };
+    }
+  }
+  // 4b. 寬鬆防線：同 tool 不同參數，但最近 10 次有 8 次都是同一 tool → 疑似無效重試
+  const last10 = ctx.recentCalls.slice(-10);
+  const sameName10 = last10.filter(c => c.name === call.name).length;
+  if (last10.length >= 10 && sameName10 >= 8) {
+    return { blocked: true, reason: `${call.name} 在最近 10 次呼叫中出現 ${sameName10} 次，疑似無效重試` };
   }
 
   // 4b. Alternating Tool Cycle Detection（period-2：A→B→A→B→A…）
