@@ -14,8 +14,9 @@
  */
 
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { log } from "../logger.js";
-import type { BridgeConfig } from "./config.js";
+import type { BridgeConfig, AgentPersonaConfig } from "./config.js";
 import { resolveCatclawDir } from "./config.js";
 import { deepMerge } from "./agent-registry.js";
 
@@ -75,4 +76,40 @@ export function loadAgentConfig(base: BridgeConfig, agentId: string): BridgeConf
   const final = deepMerge(merged, agentDataPatch);
   log.info(`[agent-loader] agent=${agentId} dataDir=${dataDir}`);
   return final;
+}
+
+// ── Persona Config 載入（供 spawn_subagent 使用）─────────────────────────────
+
+/**
+ * 讀取 `~/.catclaw/agents/{personaId}/config.json`，回傳 AgentPersonaConfig。
+ * 檔案不存在時回傳 undefined（persona 目錄可能只有 CATCLAW.md）。
+ */
+export function loadPersonaConfig(personaId: string): AgentPersonaConfig | undefined {
+  const configPath = join(resolveAgentDataDir(personaId), "config.json");
+  if (!existsSync(configPath)) {
+    log.debug(`[agent-loader] persona config 不存在：${configPath}`);
+    return undefined;
+  }
+  try {
+    const raw = JSON.parse(readFileSync(configPath, "utf-8")) as AgentPersonaConfig;
+    log.info(`[agent-loader] persona config 載入：${personaId}`);
+    return raw;
+  } catch (err) {
+    log.warn(`[agent-loader] persona config 解析失敗：${configPath} — ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+}
+
+/**
+ * 讀取 persona 的 CATCLAW.md（agent 專屬行為規則），作為 system prompt 的一部分。
+ * 不存在時回傳 undefined。
+ */
+export function loadPersonaPrompt(personaId: string): string | undefined {
+  const promptPath = join(resolveAgentDataDir(personaId), "CATCLAW.md");
+  if (!existsSync(promptPath)) return undefined;
+  try {
+    return readFileSync(promptPath, "utf-8");
+  } catch {
+    return undefined;
+  }
 }

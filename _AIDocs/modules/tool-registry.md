@@ -45,6 +45,8 @@ interface ToolContext {
   spawnDepth?: number;       // 0=頂層，≥2 時禁止再 spawn
   parentRunId?: string;      // 父 subagent 的 runId
   traceId?: string;          // 當前 turn 的 traceId
+  personaId?: string;        // Persona agent ID（spawn 帶 persona 時注入）
+  isAdmin?: boolean;         // 管理者 agent（persona config.json 的 admin flag）
 }
 ```
 
@@ -92,7 +94,7 @@ interface ToolContext {
 
 | Tool | 說明 |
 |------|------|
-| `spawn_subagent` | 啟動子 agent（task + provider + depth 控制） |
+| `spawn_subagent` | 啟動子 agent（task + provider + depth 控制 + persona/model/workspaceDir） |
 | `subagents` | 列出/查詢子 agent 狀態 |
 
 ### Session（standard，deferred）

@@ -71,9 +71,13 @@ export class SubagentRegistry {
     accountId: string;
     /** 父 subagent runId（頂層 spawn 不傳） */
     parentId?: string;
+    /** Persona ID — 有值時 session key 為 deterministic（自動恢復歷史） */
+    personaId?: string;
   }): SubagentRunRecord {
     const runId = randomUUID();
-    const childSessionKey = `${opts.parentSessionKey}:sub:${runId}`;
+    const childSessionKey = opts.personaId
+      ? `${opts.parentSessionKey}:persona:${opts.personaId}`
+      : `${opts.parentSessionKey}:sub:${runId}`;
 
     const record: SubagentRunRecord = {
       runId,

@@ -492,6 +492,21 @@ export interface HomeClaudeCodeConfig {
   path?: string;
 }
 
+/** Per-Agent Persona 設定（存放在 agents/{id}/config.json） */
+export interface AgentPersonaConfig {
+  label?: string;
+  systemPrompt?: string;
+  model?: string;
+  allowedTools?: string[] | null;
+  maxTurns?: number;
+  timeoutMs?: number;
+  workspaceDir?: string;
+  skills?: string[];
+  memory?: { namespace?: string };
+  /** 管理者 flag：true 可改 catclaw.json + 其他 agent 設定 */
+  admin?: boolean;
+}
+
 /** 多 Agent 單一 bot 入口設定 */
 export type AgentsConfig = Record<string, Partial<Omit<BridgeConfig, "agents">>>;
 

@@ -25,6 +25,10 @@ export interface PermissionContext {
   accountId?: string;
   /** 帳號角色 */
   role?: string;
+  /** Persona agent ID（非 admin 時限定寫入 agents/{personaId}/ ） */
+  personaId?: string;
+  /** 是否為管理者 agent（admin 不受 persona 路徑限制） */
+  isAdmin?: boolean;
 }
 
 // ── 預設保護路徑 ──────────────────────────────────────────────────────────────
@@ -158,8 +162,15 @@ export class SafetyGuard {
         return this.checkFilesystem(String(params["path"] ?? ""), "read");
 
       case "write_file":
-      case "edit_file":
-        return this.checkFilesystem(String(params["path"] ?? ""), "write");
+      case "edit_file": {
+        const fsResult = this.checkFilesystem(String(params["path"] ?? ""), "write");
+        if (fsResult.blocked) return fsResult;
+        // Persona 路徑白名單：非 admin 限定 agents/{self}/
+        if (ctx?.personaId && !ctx.isAdmin) {
+          return this.checkPersonaWritePath(String(params["path"] ?? ""), ctx.personaId);
+        }
+        return fsResult;
+      }
 
       case "glob":
       case "grep":
@@ -351,6 +362,28 @@ export class SafetyGuard {
       }
     }
     return { blocked: false };
+  }
+
+  // ── Persona 路徑白名單 ──────────────────────────────────────────────────────
+
+  /**
+   * 非 admin persona 只能寫入自己的 agentDir（~/.catclaw/agents/{personaId}/）。
+   * 額外允許 persona config.json 指定的 workspaceDir（未來 Sprint 接入）。
+   */
+  checkPersonaWritePath(filePath: string, personaId: string): GuardResult {
+    const abs = this.expandPath(filePath);
+    const catclawDir = resolve(homedir(), ".catclaw");
+    const allowedDir = resolve(catclawDir, "agents", personaId);
+
+    if (abs.startsWith(allowedDir + "/") || abs === allowedDir) {
+      return { blocked: false };
+    }
+
+    // 不在允許範圍內
+    return {
+      blocked: true,
+      reason: `Persona「${personaId}」只能寫入 agents/${personaId}/，不可存取：${abs}`,
+    };
   }
 
   // ── Bash 路徑保護（防止 run_command 繞過 filesystem guard）────────────────

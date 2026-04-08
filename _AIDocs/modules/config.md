@@ -310,6 +310,7 @@ export type RateLimitConfig;
 export interface ContextEngineeringConfig;
 export interface InboundHistoryConfig;
 export interface HomeClaudeCodeConfig;
+export interface AgentPersonaConfig;  // Per-Agent Persona 設定（agents/{id}/config.json，含 admin flag）
 export type AgentsConfig;
 export type ThinkingLevel;
 export interface ModePreset;
