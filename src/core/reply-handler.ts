@@ -349,6 +349,13 @@ export async function handleAgentLoopReply(
         else { cancelFlushTimer(); }
         stopTyping();
 
+        // Fallback：LLM 回傳空字串時，送出預設訊息避免使用者完全收不到回覆
+        if (!totalText.trim()) {
+          totalText = "（抱歉，我暫時無法回覆這條訊息。請再試一次或換個方式描述。）";
+          buffer = totalText;
+          log.warn(`[reply-handler] LLM 回傳空字串，使用 fallback 回覆`);
+        }
+
         const { text: cleanedText, mediaPaths } = extractMediaTokens(totalText);
 
         if (fileMode && mediaPaths.length === 0) {
