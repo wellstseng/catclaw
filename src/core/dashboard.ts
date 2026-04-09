@@ -1492,6 +1492,19 @@ const CFG_SCHEMA = [
     {k:'dashboard.port',t:'num',l:'Port',d:'Dashboard HTTP 服務埠號，預設 8088'},
     {k:'dashboard.token',t:'pw',l:'Auth Token',d:'存取認證 token，設定後需帶 ?token=xxx 才能進入'},
   ]},
+  { key:'cliBridge', label:'CLI Bridge', fields:[
+    {k:'cliBridge.enabled',t:'bool',l:'啟用',d:'CLI Bridge 總開關：持久 Claude CLI process 經由 Discord 通訊'},
+    {k:'cliBridge.claudeBin',t:'text',l:'Claude Binary',d:'Claude CLI 執行檔路徑（預設 "claude"）'},
+    {k:'cliBridge.workingDir',t:'text',l:'Working Directory',d:'CLI process 工作目錄'},
+    {k:'cliBridge.logDir',t:'text',l:'Log Directory',d:'JSONL 日誌目錄（預設 ~/.catclaw/data/cli-bridge）'},
+    {k:'cliBridge.keepAliveIntervalMs',t:'num',l:'Keep-Alive (ms)',d:'Keep-alive ping 間隔（預設 60000）'},
+    {k:'cliBridge.showThinking',t:'bool',l:'Show Thinking',d:'Discord 中以 spoiler 格式顯示 thinking（預設 false）'},
+    {k:'cliBridge.editIntervalMs',t:'num',l:'Edit Interval (ms)',d:'Discord 訊息編輯最小間隔，rate limit 保護（預設 800）'},
+  ], dynamic:true, dynamicPath:'cliBridge.channels', entryFields:[
+    {k:'label',t:'text',l:'Label',d:'識別標籤（用於日誌和 Dashboard 顯示）'},
+    {k:'sessionId',t:'text',l:'Session ID',d:'指定 CLI session ID（留空 = 每次啟動新 session）'},
+    {k:'dangerouslySkipPermissions',t:'bool',l:'Skip Permissions',d:'跳過 CLI 權限確認（危險但方便遠端操作）'},
+  ]},
   { key:'toolBudget', label:'Tool Budget', fields:[
     {k:'toolBudget.resultTokenCap',t:'num',l:'Result Token Cap',d:'單次 tool 回傳結果的 token 上限，超過會被截斷'},
     {k:'toolBudget.perTurnTotalCap',t:'num',l:'Per Turn Total Cap',d:'單 turn 內所有 tool 結果的 token 總上限'},
