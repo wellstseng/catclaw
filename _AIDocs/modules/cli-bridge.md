@@ -15,6 +15,7 @@
 | `bridge.ts` | `CliBridge` — 生命週期管理（直送 stdin、自動重啟、keep-alive、中斷） |
 | `stdout-log.ts` | `StdoutLogger` — JSONL 日誌 + 記憶體快取 + WebSocket hook |
 | `index.ts` | 全域單例：`initCliBridges` / `getCliBridge` / `shutdownAllBridges` |
+| `reply.ts` | Discord 回覆處理：streaming edit + 重試 fallback + 送達狀態追蹤 |
 
 ## 關鍵設計
 
@@ -24,13 +25,11 @@
 - **SIGINT 中斷** — 5s 超時 → 重啟 process
 - **與 Agent Loop 完全獨立** — 不共享 Provider / Session / Memory
 
-## 路由
+## 整合點
 
-`discord.ts` 中，在 Agent Loop 路由之前判斷：
-```typescript
-const cliBridge = getCliBridge(effectiveChannelId);
-if (cliBridge) { ... return; }
-```
+- **discord.ts**：在 Subagent Thread 路由之後、Agent Loop 路由之前，動態 import `getCliBridge` 判斷
+- **index.ts**：`clientReady` 時呼叫 `startAllBridges()`，shutdown 時 `shutdownAllBridges()`
+- **config.ts**：`BridgeConfig.cliBridge?: CliBridgeConfig`
 
 ## 設定
 
