@@ -21,7 +21,7 @@ import { log } from "../logger.js";
 /** 單個 Atom 命中明細 */
 export interface TraceRecallHit {
   name: string;
-  layer: "global" | "project" | "account";
+  layer: "global" | "project" | "account" | "agent";
   score: number;
   matchedBy: "vector" | "keyword";
 }

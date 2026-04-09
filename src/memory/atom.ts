@@ -26,7 +26,7 @@ import { upsertIndex } from "./index-manager.js";
 // ── 型別定義 ────────────────────────────────────────────────────────────────
 
 export type AtomConfidence = "[固]" | "[觀]" | "[臨]";
-export type AtomScope = "global" | "project" | "account";
+export type AtomScope = "global" | "project" | "account" | "agent";
 
 export interface Atom {
   /** Atom 檔名（不含 .md） */

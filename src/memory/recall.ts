@@ -1,6 +1,6 @@
 /**
  * @file memory/recall.ts
- * @description 三層記憶檢索（global + project + account）— Vector-First
+ * @description 記憶檢索（global + project + account + agent）— Vector-First
  *
  * 管線（5 步）：
  *   1. Cache 檢查
@@ -23,7 +23,7 @@ import { embedOne } from "../vector/embedding.js";
 
 // ── 型別定義 ─────────────────────────────────────────────────────────────────
 
-export type MemoryLayer = "global" | "project" | "account";
+export type MemoryLayer = "global" | "project" | "account" | "agent";
 
 export interface AtomFragment {
   id: string;
@@ -38,6 +38,8 @@ export interface AtomFragment {
 export interface RecallContext {
   accountId: string;
   projectId?: string;
+  /** Agent ID（有值時 recall 範圍加入 agent 層） */
+  agentId?: string;
   sessionIntent?: "build" | "debug" | "design" | "recall" | "general";
   /** 用於 recall cache（同頻道相似 prompt 復用） */
   channelId?: string;
@@ -49,6 +51,8 @@ export interface RecallPaths {
   globalDir: string;
   projectDir?: string;
   accountDir?: string;
+  /** Agent 專屬記憶目錄（~/.catclaw/agents/{agentId}/memory/） */
+  agentDir?: string;
 }
 
 export interface RecallResult {
@@ -100,6 +104,7 @@ function setCache(channelId: string | undefined, prompt: string, result: RecallR
 function layerToNs(layer: MemoryLayer, ctx: RecallContext): string {
   if (layer === "global")  return "global";
   if (layer === "project") return `project/${ctx.projectId ?? "default"}`;
+  if (layer === "agent")   return `agent/${ctx.agentId!}`;
   return `account/${ctx.accountId}`;
 }
 
@@ -158,7 +163,7 @@ function keywordFallback(
 // ── 公開 API ─────────────────────────────────────────────────────────────────
 
 /**
- * 三層記憶檢索主入口（Vector + keyword fallback）
+ * 記憶檢索主入口（Vector + keyword fallback）
  */
 export async function recall(
   prompt: string,
@@ -196,6 +201,7 @@ export async function recall(
     { layer: "global", dir: paths.globalDir },
     ...(paths.projectDir ? [{ layer: "project" as MemoryLayer, dir: paths.projectDir }] : []),
     ...(paths.accountDir ? [{ layer: "account" as MemoryLayer, dir: paths.accountDir }] : []),
+    ...(paths.agentDir ? [{ layer: "agent" as MemoryLayer, dir: paths.agentDir }] : []),
   ];
 
   // ── Step 2: Progressive Retrieval — keyword 快篩 ──

@@ -44,6 +44,10 @@ function accountDir(cfg: MemoryConfig, accountId: string): string {
   return join(memRoot(cfg), "accounts", accountId);
 }
 
+function agentDir(agentId: string): string {
+  return join(resolvePath("~/.catclaw"), "agents", agentId, "memory");
+}
+
 function episodicDir(cfg: MemoryConfig): string {
   return join(memRoot(cfg), "episodic");
 }
@@ -109,6 +113,7 @@ export class MemoryEngine {
       globalDir: globalDir(this.cfg),
       projectDir: ctx.projectId ? projectDir(this.cfg, ctx.projectId) : undefined,
       accountDir: ctx.accountId ? accountDir(this.cfg, ctx.accountId) : undefined,
+      agentDir: ctx.agentId ? agentDir(ctx.agentId) : undefined,
     };
     const opts = overrides ? { ...this.cfg.recall, ...overrides } : this.cfg.recall;
     return recall(prompt, ctx, paths, opts);

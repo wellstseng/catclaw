@@ -1,7 +1,7 @@
-# modules/memory-engine — 三層記憶引擎
+# modules/memory-engine — 記憶引擎（global + project + account + agent）
 
 > 檔案：`src/memory/engine.ts` + `src/memory/` 子模組
-> 更新日期：2026-04-08
+> 更新日期：2026-04-09
 
 ## 職責
 
@@ -34,7 +34,21 @@
   ├── accounts/{accountId}/  — 個人層 atom
   ├── episodic/              — episodic memory
   └── _vectordb/             — LanceDB 向量資料庫
+
+~/.catclaw/agents/{agentId}/memory/  — agent 專屬記憶
 ```
+
+### 記憶四層結構
+
+| 層 | namespace | 目錄 | 用途 |
+|---------|---------------|--------------------------------------|--------------------------|
+| global  | `global`      | `{memoryRoot}/`                      | 平台共用知識             |
+| project | `project/{id}`| `{memoryRoot}/projects/{id}/`        | 專案知識（暫停用）       |
+| account | `account/{id}`| `{memoryRoot}/accounts/{id}/`        | 使用者偏好/個人資訊      |
+| agent   | `agent/{id}`  | `~/.catclaw/agents/{id}/memory/`     | agent 專屬記憶           |
+
+Recall 範圍 = global + account(當前使用者) + agent(若有 agentId)。
+寫入：agent context 下寫入 agent 層。
 
 ## MemoryEngine API
 
@@ -75,7 +89,7 @@ buildContext(
 ContextPayload：
 - `text: string` — 注入到 system prompt 的文字
 - `tokenCount: number` — 估算 token 數
-- `layerCounts: Record<MemoryLayer, number>` — 三層各自 fragment 數量
+- `layerCounts: Record<MemoryLayer, number>` — 各層 fragment 數量（global/project/account/agent）
 - `blindSpotWarning?: string` — BlindSpot 警告字串（若有）
 
 ### 萃取

@@ -27,8 +27,8 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | Reply Handler | `src/core/reply-handler.ts` | Streaming 回覆：分段、code fence 平衡、typing indicator |
 | Session | `src/core/session.ts` | SessionManager：per-channel 串行佇列、磁碟持久化、TTL |
 | Event Bus | `src/core/event-bus.ts` | 強型別事件匯流排 |
-| Memory Engine | `src/memory/engine.ts` | 三層記憶引擎（recall + extract + consolidate） |
-| Memory Recall | `src/memory/recall.ts` | 全域+專案+個人三層 recall（向量+關鍵字） |
+| Memory Engine | `src/memory/engine.ts` | 記憶引擎（recall + extract + consolidate） |
+| Memory Recall | `src/memory/recall.ts` | global+project+account+agent recall（向量+關鍵字） |
 | Memory Context | `src/memory/context-builder.ts` | ACT-R 衰減 + budget + staleness check |
 | Accounts | `src/accounts/` | 帳號 + 角色 + 權限 + identity linking |
 | Providers | `src/providers/` | LLM Provider 抽象：claude-api / codex-oauth / cli-claude / cli-gemini / cli-codex / ollama / openai-compat + failover + circuit-breaker |

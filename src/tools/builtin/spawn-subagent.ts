@@ -510,20 +510,30 @@ export const tool: Tool = {
         if (saveToMemory && text) {
           try {
             const { writeAtom } = await import("../../memory/atom.js");
-            const { resolveWorkspaceDir } = await import("../../core/config.js");
-            const { join } = await import("node:path");
-            const memDir = join(resolveWorkspaceDir(), "memory");
+            const { join: pathJoin } = await import("node:path");
+            const { homedir: osHomedir } = await import("node:os");
+            const { mkdirSync: mkdirSyncFs } = await import("node:fs");
+
+            // agent context → 寫入 agent 專屬目錄；否則 global
+            const hasAgent = !!agentParam;
+            const memDir = hasAgent
+              ? pathJoin(osHomedir(), ".catclaw", "agents", agentParam!, "memory")
+              : pathJoin(osHomedir(), ".catclaw", "memory");
+            const ns = hasAgent ? `agent/${agentParam!}` : "global";
+
+            mkdirSyncFs(memDir, { recursive: true });
+
             const atomName = `subagent-result-${record.runId.slice(0, 8)}`;
             const triggers = memoryTag ? [memoryTag, "subagent-result"] : ["subagent-result"];
             writeAtom(memDir, atomName, {
               description: `子 agent 結果：${record.label ?? record.task.slice(0, 50)}`,
               triggers,
               confidence: "[臨]",
-              scope: "global",
-              namespace: "global",
+              scope: hasAgent ? "agent" : "global",
+              namespace: ns,
               content: `## 任務\n${record.task}\n\n## 結果\n${text.slice(0, 2000)}`,
             });
-            log.info(`[spawn-subagent] memory saved atomName=${atomName}`);
+            log.info(`[spawn-subagent] memory saved atomName=${atomName} ns=${ns}`);
           } catch (memErr) {
             log.warn(`[spawn-subagent] memory save failed: ${memErr instanceof Error ? memErr.message : String(memErr)}`);
           }

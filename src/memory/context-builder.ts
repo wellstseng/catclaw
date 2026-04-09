@@ -126,7 +126,7 @@ export function buildContext(
   blindSpot = false
 ): ContextPayload {
 
-  const layerCounts: Record<MemoryLayer, number> = { global: 0, project: 0, account: 0 };
+  const layerCounts: Record<MemoryLayer, number> = { global: 0, project: 0, account: 0, agent: 0 };
   const parts: string[] = [];
   let totalTokens = 0;
 

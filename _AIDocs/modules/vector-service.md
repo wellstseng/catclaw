@@ -29,6 +29,7 @@ LanceVectorService            ← src/vector/lancedb.ts（@lancedb/lancedb）
 | `global` | 全域記憶 |
 | `project/{id}` | 專案層記憶 |
 | `account/{id}` | 個人層記憶 |
+| `agent/{id}` | Agent 專屬記憶 |
 
 Table 名稱 = namespace 中 `/` 轉 `__`（LanceDB 不接受 `/`）。
 

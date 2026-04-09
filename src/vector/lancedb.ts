@@ -4,7 +4,7 @@
  *
  * 設計原則：
  * - In-process：不需要 HTTP server（取代 Python memory-vector-service @ port 3849）
- * - Namespace 強制：global / project/{id} / account/{id}，空字串拒絕
+ * - Namespace 強制：global / project/{id} / account/{id} / agent/{id}，空字串拒絕
  * - 每個 namespace 對應一個 LanceDB table，table 名稱 = namespace 轉底線
  * - Ollama offline 時 index/upsert/rebuild 回傳空 graceful；search 降級純關鍵字
  * - 非同步初始化：init() 必須在使用前呼叫
@@ -52,11 +52,11 @@ export interface VectorService {
 
 // ── Namespace 驗證 ────────────────────────────────────────────────────────────
 
-const VALID_NS = /^(global|project\/[\w-]+|account\/[\w-]+)$/;
+const VALID_NS = /^(global|project\/[\w-]+|account\/[\w-]+|agent\/[\w-]+)$/;
 
 function validateNamespace(ns: string): void {
   if (!ns || !VALID_NS.test(ns)) {
-    throw new Error(`[lancedb] 無效 namespace "${ns}"，格式：global / project/{id} / account/{id}`);
+    throw new Error(`[lancedb] 無效 namespace "${ns}"，格式：global / project/{id} / account/{id} / agent/{id}`);
   }
 }
 
