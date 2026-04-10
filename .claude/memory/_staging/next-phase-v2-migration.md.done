@@ -1,0 +1,48 @@
+# [續接] Provider 三層分離 — 驗證 + Dashboard + Smoke Test
+
+## 背景
+
+Provider 三層分離重構 Phase 1-3 已完成並 pushed（`platform-rebuild` branch）：
+- `0d5202b` Phase 1：model-ref.ts / models-config.ts / auth-profile-store.ts V2 / config.ts 型別
+- `c92b215` Phase 2+3：registry.ts alias 解析 + 周邊 10 檔適配 + catclaw.example.json
+- `4137888` docs：_AIDocs + atoms 更新
+
+## 本次任務（依優先序）
+
+### 1. 實際切換驗證（最優先）
+
+將 `~/.catclaw-test/catclaw.json` 改為 V2 格式（加 `agentDefaults`），啟動 catclaw-test 驗證：
+- V2 路徑是否正確啟動（ensureModelsJson → loadModelsJson → initAuthProfileStore → buildProviderRegistryV2）
+- `/configure` `/configure models` `/use sonnet` 等 skill 是否正常
+- alias 解析（`/use sonnet` 應解析為 `anthropic/claude-sonnet-4-6`）
+- CE compaction provider 是否從 registry 取得（`haiku` alias）
+
+**注意**：catclaw-test 用的是 `~/.catclaw-test/catclaw.json`，不是 `~/.catclaw/catclaw.json`。
+auth-profile.json 位於 `~/.catclaw-test/workspace/agents/default/auth-profile.json`。
+
+驗證前先 `cd /Users/wellstseng/project/catclaw && npm run build` 編譯。
+
+### 2. Dashboard 動態欄位（Task #10）
+
+Config Editor GUI 需要依 provider type 動態顯示欄位：
+- V2 模式：顯示 agentDefaults.model.primary / fallbacks / models 表
+- auth-profile 編輯器對齊 V2 格式（provider:name profileId）
+- models.json 唯讀檢視
+
+相關檔案：`src/core/dashboard.ts`
+
+### 3. Smoke Test 補充
+
+V2 啟動路徑的自動化測試：
+- `agentDefaults.model.primary` 存在 → V2 path
+- alias 解析正確性
+- auth-profile round-robin + cooldown
+- models.json 產生 / 載入 / merge
+
+## 關鍵架構知識
+
+- V1/V2 判斷：`config.agentDefaults?.model?.primary` 存在 → V2
+- Registry alias 解析在 `ProviderRegistry.resolveId()`，所有 `get()` / `resolve()` 自動受益
+- models.json 位置：`{workspace}/agents/default/models.json`（自動產生）
+- auth-profile.json 位置：`{workspace}/agents/default/auth-profile.json`
+- ProfileId 格式：`"provider:name"`（如 `"anthropic:default"`）

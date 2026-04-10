@@ -1,0 +1,50 @@
+# 續接：CatClaw 記憶品質分析
+
+## 背景
+CatClaw 記憶系統（recall.ts）已完成 Progressive Hybrid 7 步管線 + keyword fallback + matchedBy 標記 + vector-resync。
+管線功能齊全，但**召回品質尚未驗證**。Dashboard 截圖顯示，部分查詢的 vector recall 命中結果看起來不太相關（如查技術問題卻召回 discord-aguang-ai、tianting-discord-info 等無關 atom）。
+
+## 本階段目標
+針對記憶召回品質做系統性分析，找出瓶頸並提出改善方案。
+
+### 1. 召回精準度測試
+- 設計 10-15 組測試 prompt（涵蓋：技術問答、人物查詢、專案查詢、日常對話）
+- 對每組 prompt 執行 recall，記錄：命中 atom 名、score、matchedBy
+- 人工標注「預期應命中的 atom」，計算 precision / recall
+
+### 2. Embedding 品質檢查
+- 抽 5 個 atom，查看其 embedding 向量品質（透過 /migrate search 測試語意相似度）
+- 測試 atom 內容 vs. 查詢語意的匹配度（Ollama qwen3 1.7b 的語意理解限制）
+- 比對：同一查詢在 keyword 路徑 vs. vector 路徑的結果差異
+
+### 3. MEMORY.md Trigger 覆蓋率
+- 掃描 46 個 global atom 的 MEMORY.md trigger 關鍵字
+- 找出：trigger 缺失的 atom、trigger 過於寬泛的 atom、trigger 語言不一致（中英混用）
+- 評估 keyword bonus（0.15）是否足以把 trigger match 的 atom 往前推
+
+### 4. ACT-R Activation 分析
+- 列出所有 atom 的 activation 分數分布（最高/最低/平均/中位數）
+- 找出「有價值但因 decay 太低而永遠不會被召回」的冷 atom
+- 評估 COSINE_WEIGHT(0.7) vs ACTIVATION_WEIGHT(0.3) 的比例是否合理
+
+### 5. 產出改善建議
+- 彙整分析結果，列出 top-3 改善方向（排優先級）
+- 如果有 quick-win（如調 trigger、調參數），直接在本 session 修
+
+## 關鍵上下文
+- 記憶目錄：`~/.catclaw/memory/`（46 個 global atom，無 project/account 層）
+- Recall 管線：`src/memory/recall.ts`（7 步 Progressive Hybrid）
+- Atom 讀寫：`src/memory/atom.ts`（readAtom / computeActivation / touchAtom）
+- 索引管理：`src/memory/index-manager.ts`（loadIndex / matchTriggers）
+- Vector 搜尋：`src/vector/lancedb.ts`（getVectorService / search）
+- Embedding：`src/vector/embedding.ts`（embedOne，使用 Ollama qwen3:1.7b）
+- Smoke test 可參考：`tests/recall-smoke.mjs`（25 tests，已驗過基本功能）
+- Dashboard trace 可觀察即時 recall 結果：http://localhost:3000
+
+## 完成條件
+- 有量化的 precision/recall 數據（至少 10 組 query）
+- 找出 top-3 品質瓶頸 + 改善方案
+- 如有 quick-win 已套用並驗證
+- 分析結果寫入 _AIDocs 或 _staging（供後續 session 參考）
+
+完成後請執行：驗證 → 上 GIT → 如有下一階段則再次 /resume
