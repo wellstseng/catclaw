@@ -154,11 +154,21 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
         bridge.setSender(sender);
         log.info(`[cli-bridge] ${bridge.label} sender=${sender.mode}`);
 
-        // 獨立 bot 模式：掛 messageCreate 監聽
+        // 獨立 bot 模式：掛 messageCreate 監聽 + 註冊 slash commands
         if (sender.mode === "independent-bot") {
           sender.onMessage((msg: Message) => {
             handleIndependentBotMessage(bridge, msg);
           });
+          // 獨立 bot 也註冊 slash commands（讓沒有主 bot 的伺服器也能用 /cd 等指令）
+          try {
+            const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
+            const indClient = (sender as import("./discord-sender.js").IndependentBotSender).getClient();
+            await registerSlashCommands(indClient);
+            setupSlashCommands(indClient);
+            log.info(`[cli-bridge] ${bridge.label} slash commands 已註冊到獨立 bot`);
+          } catch (err) {
+            log.warn(`[cli-bridge] ${bridge.label} slash commands 註冊失敗：${err instanceof Error ? err.message : String(err)}`);
+          }
         }
 
         await bridge.start();
@@ -413,6 +423,12 @@ async function hotReload(): Promise<void> {
           sender.onMessage((msg: Message) => {
             handleIndependentBotMessage(bridge, msg);
           });
+          try {
+            const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
+            const indClient = (sender as import("./discord-sender.js").IndependentBotSender).getClient();
+            await registerSlashCommands(indClient);
+            setupSlashCommands(indClient);
+          } catch { /* slash 註冊失敗不影響 bridge 運作 */ }
         }
 
         await bridge.start();

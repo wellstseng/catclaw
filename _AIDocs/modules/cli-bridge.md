@@ -1,6 +1,6 @@
 # CLI Bridge 模組
 
-> 原始碼：`src/cli-bridge/` | 建立：2026-04-09
+> 原始碼：`src/cli-bridge/` | 更新：2026-04-10
 
 ## 定位
 
@@ -19,6 +19,7 @@
 
 ## 關鍵設計
 
+- **`setWorkingDir(dir)` 靜默重啟** — 更新 cwd 後重啟 process，不送 Discord 錯誤訊息
 - **不排隊，直送 stdin** — CLI 自己管內部 queue，CatClaw 只管送和收
 - **一 channel 一 process** — CLI session 是單對話，避免 context 混亂
 - **指數退避自動重啟** — 1s, 2s, 4s, 8s, 16s, 30s
@@ -49,3 +50,5 @@
 | 對話歷程匯出 | `dashboard.ts` `GET /api/cli-bridge/:label/export` + UI 匯出按鈕 | 一鍵匯出 Markdown，含 user/assistant/tools |
 | rate limit 保護 | `reply.ts` `editIntervalMs` + `lastEditTime` 計數器 | `cliBridge.editIntervalMs` 可設定（預設 800ms），防止 Discord API rate limit |
 | Dashboard 監控 | `dashboard.ts` UI + `_cbAutoRefresh` | 10s 自動刷新狀態、SSE 即時串流、匯出按鈕、刷新按鈕 |
+| `/cd` 工作目錄切換 | `slash.ts` `handleCd()` + `bridge.ts` `setWorkingDir()` | Slash command 切換 bridge cwd，靜默重啟 process，持久化到 `cli-bridges.json` |
+| 獨立 bot slash commands | `index.ts` + `discord-sender.ts` `getClient()` | 獨立 bot 啟動後自動 `registerSlashCommands`，讓沒有主 bot 的伺服器也能用管理指令 |

@@ -200,13 +200,16 @@ async function runTool(p: P): Promise<string> {
         if (content) await discordFetch("POST", `/channels/${r.id}/messages`, { content });
         return `Thread 建立完成（從訊息），ID: ${r.id}`;
       }
-      // Forum/text channel thread
-      const r = await discordFetch("POST", `/channels/${ch}/threads`, {
+      // 無 messageId → 先發導引訊息再從該訊息建立 thread（讓主頻出現導引）
+      const guideContent = content ?? `📌 ${name}`;
+      const guideMsg = await discordFetch("POST", `/channels/${ch}/messages`, {
+        content: guideContent,
+      }) as { id: string };
+      const r = await discordFetch("POST", `/channels/${ch}/messages/${guideMsg.id}/threads`, {
         name,
-        message: { content: content ?? "" },
         auto_archive_duration: autoArchiveMinutes ?? 1440,
       }) as { id: string };
-      return `Thread 建立完成，ID: ${r.id}`;
+      return `Thread 建立完成（含主頻導引），ID: ${r.id}`;
     }
 
     case "threadList": {

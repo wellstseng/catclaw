@@ -136,6 +136,11 @@ export class IndependentBotSender implements BridgeSender {
     return this.client.user?.id ?? null;
   }
 
+  /** 取得底層 Discord Client（slash command 註冊用） */
+  getClient(): Client {
+    return this.client;
+  }
+
   async destroy(): Promise<void> {
     this.messageCallbacks = [];
     this.client.destroy();

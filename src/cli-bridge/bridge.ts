@@ -66,7 +66,7 @@ export class CliBridge {
   constructor(
     public readonly label: string,
     public readonly channelId: string,
-    private readonly bridgeConfig: CliBridgeConfig,
+    private bridgeConfig: CliBridgeConfig,
     private readonly channelConfig: CliBridgeChannelConfig,
   ) {
     const logDir = bridgeConfig.logDir ?? "~/.catclaw/data/cli-bridge";
@@ -252,6 +252,33 @@ export class CliBridge {
       this._status = "dead";
       log.error(`[cli-bridge:${this.label}] restart failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  /** 切換工作目錄並重啟 process（靜默，不送 Discord 錯誤訊息） */
+  async setWorkingDir(dir: string): Promise<void> {
+    const old = this.bridgeConfig.workingDir;
+    (this.bridgeConfig as { workingDir: string }).workingDir = dir;
+    log.info(`[cli-bridge:${this.label}] workingDir: ${old} → ${dir}`);
+
+    // 靜默重啟：不呼叫 failAllPendingTurns，避免送 ❌ 到 Discord
+    this._status = "restarting";
+    this.stopKeepAlive();
+    if (this.process?.alive) {
+      await this.process.shutdown();
+    }
+    this.restartAttempt = 0;
+    try {
+      await this.spawnProcess();
+      this._status = "idle";
+      this.startKeepAlive();
+    } catch (err) {
+      this._status = "dead";
+      throw err;
+    }
+  }
+
+  get workingDir(): string {
+    return this.bridgeConfig.workingDir;
   }
 
   async shutdown(): Promise<void> {
