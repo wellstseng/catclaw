@@ -40,11 +40,17 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("reset-session")
-    .setDescription("清除 Claude session")
+    .setDescription("清除 Claude session（預設清當前頻道）")
     .addStringOption((opt) =>
       opt
         .setName("channel_id")
-        .setDescription("指定頻道 ID（留空 = 清除全部）")
+        .setDescription("指定頻道 ID（留空 = 當前頻道）")
+        .setRequired(false)
+    )
+    .addBooleanOption((opt) =>
+      opt
+        .setName("all")
+        .setDescription("清除全部頻道的 session（危險操作）")
         .setRequired(false)
     ),
 
@@ -148,24 +154,27 @@ async function handleRestart(interaction: ChatInputCommandInteraction): Promise<
 
 async function handleResetSession(interaction: ChatInputCommandInteraction): Promise<void> {
   const channelId = interaction.options.getString("channel_id") ?? null;
+  const clearAll = interaction.options.getBoolean("all") ?? false;
   const sm = getSessionManager();
 
-  if (channelId) {
-    // 搜尋 sessionKey 包含此 channelId 的 session
-    const session = sm.list().find(s => s.channelId === channelId);
-    if (session) {
-      sm.delete(session.sessionKey);
-      await interaction.reply(`✅ 已刪除 channel \`${channelId}\` 的 session（${session.sessionKey}）`);
-    } else {
-      await interaction.reply(`ℹ️ 找不到 channel \`${channelId}\` 的 session`);
-    }
-    log.info(`[slash] /reset-session channel=${channelId} by=${interaction.user.tag}`);
-  } else {
+  if (clearAll) {
+    // 明確指定 all=true 才走全清
     const sessions = sm.list();
     const count = sessions.length;
     for (const s of sessions) sm.delete(s.sessionKey);
     await interaction.reply(`✅ 已清除全部 ${count} 個 session`);
     log.info(`[slash] /reset-session all (${count} sessions) by=${interaction.user.tag}`);
+  } else {
+    // 預設清當前頻道（或指定頻道）
+    const targetChannelId = channelId ?? interaction.channelId;
+    const sessions = sm.list().filter(s => s.channelId === targetChannelId);
+    if (sessions.length > 0) {
+      for (const s of sessions) sm.delete(s.sessionKey);
+      await interaction.reply(`✅ 已刪除 channel \`${targetChannelId}\` 的 ${sessions.length} 個 session（含 subagent）`);
+    } else {
+      await interaction.reply(`ℹ️ 找不到 channel \`${targetChannelId}\` 的 session`);
+    }
+    log.info(`[slash] /reset-session channel=${targetChannelId} (${sessions.length} deleted) by=${interaction.user.tag}`);
   }
 }
 
