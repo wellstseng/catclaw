@@ -599,36 +599,11 @@ export class CliBridge {
         if (pids.length > 0) log.info(`[cli-bridge:${this.label}] 已殺 ${pids.length} 個孤兒 process`);
       } catch { /* pgrep 找不到 */ }
 
-      // 遞增延遲重試迴圈（在 handleCrash 內完成，不依賴 re-entry）
-      const retryDelays = [2000, 5000, 10000];
-      while (this._alreadyInUseCount <= retryDelays.length) {
-        const delay = retryDelays[this._alreadyInUseCount - 1]!;
-        log.warn(`[cli-bridge:${this.label}] session "${sid}" 被佔用，等待 ${delay / 1000}s 後重試 (${this._alreadyInUseCount}/${retryDelays.length})`);
-        await new Promise(r => setTimeout(r, delay));
-        try {
-          await this.spawnProcess();
-          // spawn 成功，但需確認 process 存活超過 2 秒才算真成功
-          await new Promise(r => setTimeout(r, 2000));
-          if (this.process?.alive) {
-            this._status = "idle";
-            this.restartAttempt = 0;
-            this._alreadyInUseCount = 0;
-            this._crashHandling = false;
-            this.startKeepAlive();
-            log.info(`[cli-bridge:${this.label}] session resume 成功（已驗證存活）`);
-            return;
-          }
-          // process 已死 → 繼續下一輪
-          log.warn(`[cli-bridge:${this.label}] session resume 後 process 快速死亡，繼續重試`);
-          this._alreadyInUseCount++;
-        } catch {
-          this._alreadyInUseCount++;
-        }
-      }
-
-      // 重試次數用盡 → 放棄此 session
-      log.warn(`[cli-bridge:${this.label}] session "${sid}" 重試 ${retryDelays.length} 次仍被佔用，放棄舊 session`);
-      this.clearSessionId();
+      // --resume 已取代 --session-id，理論上不會再觸發 "already in use"
+      // 保險：若仍發生，清除 runtime session 讓 fallthrough 用新 session 啟動
+      log.warn(`[cli-bridge:${this.label}] session "${sid}" 被佔用（不預期），清除 session 改用新 session`);
+      this.sessionId = null;
+      (this.channelConfig as { sessionId?: string | null }).sessionId = null;
       this._alreadyInUseCount = 0;
       // fallthrough 到正常重啟流程（不帶 session ID）
     }

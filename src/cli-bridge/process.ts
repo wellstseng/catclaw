@@ -76,7 +76,8 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
     }
 
     if (this.config.sessionId) {
-      args.push("--session-id", this.config.sessionId);
+      // --resume 會載入既有 session（不像 --session-id 會因 .jsonl 存在報 "already in use"）
+      args.push("--resume", this.config.sessionId);
     }
 
     const label = this.config.label;
