@@ -23,10 +23,12 @@ import type {
   BridgeStatus,
   StdoutLogEntry,
 } from "./types.js";
+import type { BridgeSender } from "./discord-sender.js";
 
 // ── 預設值 ──────────────────────────────────────────────────────────────────
 
-const DEFAULT_KEEP_ALIVE_MS = 60_000;
+const DEFAULT_KEEP_ALIVE_MS = 60_000; // 60s 送一次 ping 保活
+
 const DEFAULT_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000];
 const INTERRUPT_TIMEOUT_MS = 5000;
 const DEFAULT_TURN_TIMEOUT_MS = 300_000; // 5 分鐘
@@ -44,7 +46,7 @@ export class CliBridge {
   // Turn 追蹤
   private activeTurnId: string | null = null;
   private turnListeners = new Map<string, {
-    resolve: (event: CliBridgeEvent) => void;
+    resolve: ((event: CliBridgeEvent) => void) | null;
     queue: CliBridgeEvent[];
     done: boolean;
   }>();
@@ -57,6 +59,9 @@ export class CliBridge {
     record: TurnRecord;
     textParts: string[];
   }>();
+
+  // Discord 發送器（由 index.ts 注入）
+  private _sender: BridgeSender | null = null;
 
   constructor(
     public readonly label: string,
@@ -86,9 +91,9 @@ export class CliBridge {
       this.startKeepAlive();
       log.info(`[cli-bridge:${this.label}] started`);
     } catch (err) {
-      this._status = "dead";
       log.error(`[cli-bridge:${this.label}] start failed: ${err instanceof Error ? err.message : String(err)}`);
-      throw err;
+      // 進入自動重啟迴路（session ID 衝突等暫態問題可自動恢復）
+      void this.handleCrash();
     }
   }
 
@@ -105,7 +110,7 @@ export class CliBridge {
 
     // 建立 turn 追蹤
     const turnState = {
-      resolve: (_event: CliBridgeEvent) => {},
+      resolve: null as ((event: CliBridgeEvent) => void) | null,
       queue: [] as CliBridgeEvent[],
       done: false,
     };
@@ -186,7 +191,8 @@ export class CliBridge {
     const listener = this.turnListeners.get(turnId);
     if (listener && !listener.done) {
       listener.done = true;
-      listener.resolve({ type: "error", message: `使用者選擇${action === "interrupt" ? "中斷" : "重啟"}` });
+      if (listener.resolve) listener.resolve({ type: "error", message: `使用者選擇${action === "interrupt" ? "中斷" : "重啟"}` });
+      else listener.queue.push({ type: "error", message: `使用者選擇${action === "interrupt" ? "中斷" : "重啟"}` });
     }
 
     if (action === "restart") {
@@ -256,6 +262,10 @@ export class CliBridge {
     if (this.process?.alive) {
       await this.process.shutdown();
     }
+    if (this._sender) {
+      await this._sender.destroy();
+      this._sender = null;
+    }
     this._status = "dead";
   }
 
@@ -281,13 +291,30 @@ export class CliBridge {
     return this.stdoutLogger;
   }
 
+  getSender(): BridgeSender {
+    if (!this._sender) throw new Error(`[cli-bridge:${this.label}] sender 尚未初始化`);
+    return this._sender;
+  }
+
+  setSender(sender: BridgeSender): void {
+    this._sender = sender;
+  }
+
+  getChannelConfig(): CliBridgeChannelConfig {
+    return this.channelConfig;
+  }
+
+  getBridgeConfig(): CliBridgeConfig {
+    return this.bridgeConfig;
+  }
+
   // ── 內部：process 建立 ────────────────────────────────────────────────────
 
   private async spawnProcess(): Promise<void> {
     const procConfig: CliProcessConfig = {
       claudeBin: this.bridgeConfig.claudeBin ?? "claude",
       workingDir: this.bridgeConfig.workingDir,
-      sessionId: this.channelConfig.sessionId ?? this.sessionId ?? undefined,
+      sessionId: this.channelConfig.sessionId ?? undefined,
       dangerouslySkipPermissions: this.channelConfig.dangerouslySkipPermissions ?? true,
       label: this.label,
     };
@@ -356,8 +383,9 @@ export class CliBridge {
       const listener = this.turnListeners.get(turnId);
       if (listener && !listener.done) {
         if (listener.resolve) {
-          listener.resolve(evt);
-          listener.resolve = () => {};
+          const r = listener.resolve;
+          listener.resolve = null;
+          r(evt);
         } else {
           listener.queue.push(evt);
         }
@@ -426,7 +454,9 @@ export class CliBridge {
       const listener = this.turnListeners.get(turnId);
       if (listener && !listener.done) {
         listener.done = true;
-        listener.resolve({ type: "error", message: `turn idle 超時（連續 ${Math.round(timeoutMs / 1000)}s 無事件）` });
+        const errEvt: CliBridgeEvent = { type: "error", message: `turn idle 超時（連續 ${Math.round(timeoutMs / 1000)}s 無事件）` };
+        if (listener.resolve) listener.resolve(errEvt);
+        else listener.queue.push(errEvt);
       }
 
       if (action === "restart") {
@@ -443,8 +473,14 @@ export class CliBridge {
   private handleClose(code: number | null): void {
     if (this._status === "dead" || this._status === "restarting") return;
 
-    log.warn(`[cli-bridge:${this.label}] process 意外關閉 code=${code}`);
-    this.failAllPendingTurns(`process 意外退出 (code=${code})`);
+    const hasPending = this.turnListeners.size > 0;
+    if (code === 0 && !hasPending) {
+      // 正常退出（idle timeout）且無 pending turn → 靜默重啟
+      log.info(`[cli-bridge:${this.label}] process 正常退出，靜默重啟`);
+    } else {
+      log.warn(`[cli-bridge:${this.label}] process 意外關閉 code=${code}`);
+      this.failAllPendingTurns(`process 意外退出 (code=${code})`);
+    }
     void this.handleCrash();
   }
 
@@ -483,6 +519,7 @@ export class CliBridge {
   private startKeepAlive(): void {
     this.stopKeepAlive();
     const interval = this.bridgeConfig.keepAliveIntervalMs ?? DEFAULT_KEEP_ALIVE_MS;
+    if (interval <= 0) return; // 0 = 不送 ping
     this.keepAliveTimer = setInterval(() => {
       if (!this.process?.ping()) {
         log.warn(`[cli-bridge:${this.label}] keep-alive 失敗`);
@@ -534,7 +571,9 @@ export class CliBridge {
     const listener = this.turnListeners.get(turnId);
     if (listener && !listener.done) {
       listener.done = true;
-      listener.resolve({ type: "error", message: "turn 已取消" });
+      const errEvt: CliBridgeEvent = { type: "error", message: "turn 已取消" };
+      if (listener.resolve) listener.resolve(errEvt);
+      else listener.queue.push(errEvt);
     }
     if (this.activeTurnId === turnId) {
       void this.interrupt();
@@ -560,7 +599,9 @@ export class CliBridge {
     for (const [turnId, listener] of this.turnListeners) {
       if (!listener.done) {
         listener.done = true;
-        listener.resolve({ type: "error", message: reason });
+        const errEvt: CliBridgeEvent = { type: "error", message: reason };
+        if (listener.resolve) listener.resolve(errEvt);
+        else listener.queue.push(errEvt);
       }
     }
     for (const [turnId, pending] of this.pendingTurns) {

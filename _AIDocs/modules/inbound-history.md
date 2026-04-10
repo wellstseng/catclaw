@@ -36,7 +36,14 @@ interface InboundEntry {
 
 ## 儲存
 
-JSONL 格式，路徑：`{dataDir}/inbound/discord_{channelId}.jsonl`（channelId 經 sanitize）
+JSONL 格式，路徑：`{dataDir}/inbound/discord_{channelId}_{scope}.jsonl`（channelId + scope 經 sanitize）
+
+### Scope 隔離
+
+每個 bot/agent 有獨立的 inbound history 檔案：
+- 主 bot：scope = `"main"`（預設）
+- CLI Bridge bot：scope = bridge label（如 `"judy-cli"`）
+- 同一訊息可同時寫入多個 scope（`appendToScopes()`）
 
 ### 全域單例
 
@@ -47,9 +54,13 @@ JSONL 格式，路徑：`{dataDir}/inbound/discord_{channelId}.jsonl`（channelI
 
 | 方法 | 說明 |
 |------|------|
-| `listChannels()` | 列出所有有記錄的頻道 |
-| `readEntries(channelId)` | 讀取指定頻道的所有 entries |
-| `clearChannel(channelId)` | 清除指定頻道的記錄 |
+| `append(channelId, entry, scope?)` | 追加 entry 到指定 scope（預設 "main"） |
+| `appendToScopes(channelId, entry, scopes)` | 追加 entry 到多個 scope |
+| `consumeForInjection(..., scope?)` | 消費指定 scope 的 entries 並注入 |
+| `listChannels()` | 列出所有有記錄的頻道（含 scope 資訊） |
+| `readEntries(channelId, scope?)` | 讀取指定頻道 + scope 的 entries |
+| `clearChannel(channelId, scope?)` | 清除指定頻道 + scope 的記錄 |
+| `clearChannelAllScopes(channelId)` | 清除指定頻道所有 scope 的記錄 |
 | `clearAll()` | 清除所有頻道記錄 |
 
 ## 與 message-pipeline 的關係

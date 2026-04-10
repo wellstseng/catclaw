@@ -12,6 +12,7 @@
 import type { Skill } from "../types.js";
 import { getPlatformSessionManager } from "../../core/platform.js";
 import { getSessionSnapshotStore } from "../../core/session-snapshot.js";
+import { getTraceStore } from "../../core/message-trace.js";
 
 // ── 全域 AbortController 登錄表（session → controller） ───────────────────────
 // agent-loop 執行時呼叫 registerTurnAbort / clearTurnAbort 管理
@@ -182,11 +183,10 @@ export const clearSkill: Skill = {
       return { text: "ℹ️ 此頻道尚無 session 歷史。" };
     }
 
-    const msgCount = session.messages.length;
-    session.messages = [];
-    session.turnCount = 0;
+    const msgCount = sessionManager.clearMessages(session.sessionKey);
+    const tracesDeleted = getTraceStore()?.deleteBySession(session.sessionKey) ?? 0;
 
-    return { text: `🧹 Session 已清除（${msgCount} 條訊息已刪除）。` };
+    return { text: `🧹 Session 已清除（${msgCount} 條訊息、${tracesDeleted} 筆 trace 已刪除）。` };
   },
 };
 

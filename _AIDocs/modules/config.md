@@ -79,6 +79,7 @@ export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronActio
 | `toolBudget` | `{ resultTokenCap?, perTurnTotalCap?, toolTimeoutMs?, maxWriteFileBytes? }` | Tool 呼叫 token Budget（含 File Size Guard） |
 | `mcpServers` | `Record<string, McpServerEntry>` | 外部 MCP Server 設定 |
 | `hooks` | `HookDefinition[]` | Hook 系統（agent-loop 關鍵時機點執行 shell command） |
+| `botCircuitBreaker` | `BotCircuitBreakerConfig` | Bot-to-Bot 對話防呆（enabled / maxRounds / maxDurationMs） |
 
 > **重構變更**：`claude.cwd` / `claude.command` 已移除，改由環境變數控制。`turnTimeoutMs` / `sessionTtlHours` 從 `claude.*` 提升至頂層。`sessionTtlHours` 已移至 `session.ttlHours`。
 
@@ -317,6 +318,7 @@ export interface ModePreset;
 export interface ModeConfig;
 export const BUILTIN_MODE_PRESETS;
 export interface SubagentsConfig;
+export interface BotCircuitBreakerConfig;
 ```
 
 ## 注意事項
