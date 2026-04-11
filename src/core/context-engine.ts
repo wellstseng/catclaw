@@ -223,7 +223,7 @@ export class DecayStrategy implements ContextStrategy {
     this.cfg = {
       mode: cfg.mode ?? "auto",
       levels: cfg.levels ?? DEFAULT_DECAY_LEVELS,
-      baseDecay: cfg.baseDecay ?? 0.15,
+      baseDecay: cfg.baseDecay ?? 0.3,
       minRetainRatio: cfg.minRetainRatio ?? 0.05,
       referenceIntervalSec: cfg.referenceIntervalSec ?? 60,
       tempoRange: cfg.tempoRange ?? [0.5, 2.0],

@@ -110,7 +110,7 @@ interface ContextBreakdown {
 |------|------|------|
 | `enabled` | true | 開關 |
 | `mode` | "auto" | discrete / continuous / time-aware / auto |
-| `baseDecay` | 0.15 | 指數衰減係數 |
+| `baseDecay` | 0.3 | 指數衰減係數 |
 | `referenceIntervalSec` | 60 | tempo 參考間隔（秒） |
 | `tempoRange` | [0.5, 2.0] | tempo multiplier 上下限 |
 | `levels` | 見上表 | 自訂 decay level 定義 |

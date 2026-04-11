@@ -524,6 +524,20 @@ label.cfg-toggle { min-width: 36px; }
     <h2>Message Lifecycle Traces（全域）
       <button class="btn btn-sm" style="float:right" onclick="loadTraces()">↻</button>
       <input id="trace-agent-filter" placeholder="Agent ID" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px;width:100px;font-size:0.78rem" oninput="loadTraces()">
+      <select id="trace-status-filter" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-size:0.78rem" onchange="loadTraces()">
+        <option value="">Status: All</option>
+        <option value="completed">✅ completed</option>
+        <option value="in_progress">⏳ in_progress</option>
+        <option value="aborted">⏹ aborted</option>
+        <option value="error">❌ error</option>
+      </select>
+      <select id="trace-category-filter" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-size:0.78rem" onchange="loadTraces()">
+        <option value="">Category: All</option>
+        <option value="discord">discord</option>
+        <option value="subagent">subagent</option>
+        <option value="cron">cron</option>
+        <option value="api">api</option>
+      </select>
       <select id="trace-ce-filter" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-size:0.78rem" onchange="loadTraces()">
         <option value="">CE: All</option>
         <option value="any">CE: Any triggered</option>
@@ -1488,7 +1502,7 @@ const CFG_SCHEMA = [
     {k:'contextEngineering.strategies.decay',l:'Decay（漸進衰減）',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'漸進式訊息衰減：依 turn 年齡逐步壓縮/移除舊訊息'},
       {k:'mode',t:'select',l:'Mode',opts:['auto','discrete','continuous','time-aware'],d:'auto=三合一（推薦），discrete=固定閾值，continuous=指數衰減，time-aware=含對話節奏調整'},
-      {k:'baseDecay',t:'num',l:'Base Decay',d:'指數衰減係數（預設 0.15），越大衰減越快'},
+      {k:'baseDecay',t:'num',l:'Base Decay',d:'指數衰減係數（預設 0.3），越大衰減越快'},
       {k:'referenceIntervalSec',t:'num',l:'Reference Interval (sec)',d:'對話節奏參考間隔（預設 60 秒），用於計算 tempo multiplier'},
     ]},
     {k:'contextEngineering.strategies.compaction',l:'Compaction',fields:[
@@ -1501,6 +1515,12 @@ const CFG_SCHEMA = [
       {k:'enabled',t:'bool',l:'啟用',d:'緊急截斷：context 超硬上限時只保留最近 4 條'},
       {k:'hardLimitUtilization',t:'num',l:'Hard Limit %',d:'context window 使用率閾值（預設 0.95 = 95%）'},
       {k:'contextWindowTokens',t:'num',l:'Context Window Tokens',d:'context window 大小（預設 100000）'},
+    ]},
+    {k:'contextEngineering.toolBudget',l:'Tool Budget',fields:[
+      {k:'resultTokenCap',t:'num',l:'Result Token Cap',d:'單次 tool 回傳結果的 token 上限（預設 8000，0=無限制）'},
+      {k:'perTurnTotalCap',t:'num',l:'Per Turn Total Cap',d:'單 turn 內所有 tool 結果的 token 總上限（預設 0=無限制）'},
+      {k:'toolTimeoutMs',t:'num',l:'Tool Timeout (ms)',d:'單次 tool 執行逾時（預設 30000ms，0=無限制）'},
+      {k:'maxWriteFileBytes',t:'num',l:'Max Write Bytes',d:'write/edit 單次上限 bytes（預設 512000=500KB，0=無限制）'},
     ]},
   ]},
   { key:'inboundHistory', label:'Inbound History', fields:[
@@ -1521,12 +1541,6 @@ const CFG_SCHEMA = [
     {k:'botCircuitBreaker.enabled',t:'bool',l:'啟用',d:'Bot-to-Bot 對話防呆（同頻道 bot 互相回覆過度活躍時暫停）'},
     {k:'botCircuitBreaker.maxRounds',t:'num',l:'最大輪數',d:'連續 bot 互動來回幾輪後觸發暫停（預設 10）'},
     {k:'botCircuitBreaker.maxDurationMs',t:'num',l:'最大持續時間 (ms)',d:'連續 bot 互動持續多久後觸發暫停（預設 180000 = 3 分鐘）'},
-  ]},
-  { key:'contextEngineering.toolBudget', label:'Tool Budget (CE)', fields:[
-    {k:'contextEngineering.toolBudget.resultTokenCap',t:'num',l:'Result Token Cap',d:'單次 tool 回傳結果的 token 上限（預設 8000，0=無限制）'},
-    {k:'contextEngineering.toolBudget.perTurnTotalCap',t:'num',l:'Per Turn Total Cap',d:'單 turn 內所有 tool 結果的 token 總上限（預設 0=無限制）'},
-    {k:'contextEngineering.toolBudget.toolTimeoutMs',t:'num',l:'Tool Timeout (ms)',d:'單次 tool 執行逾時（預設 30000ms，0=無限制）'},
-    {k:'contextEngineering.toolBudget.maxWriteFileBytes',t:'num',l:'Max Write Bytes',d:'write/edit 單次上限 bytes（預設 512000=500KB，0=無限制）'},
   ]},
   { key:'subagents', label:'Subagents', fields:[
     {k:'subagents.maxConcurrent',t:'num',l:'Max Concurrent',d:'同時最多運行幾個子 agent'},
@@ -2063,7 +2077,19 @@ function _traceRowHtml(t) {
   const ch = (t.channelId ?? '').slice(-6);
   const isLive = t.status === 'in_progress';
   const statusIcon = isLive ? '⏳' : t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
-  const ce = t.contextEngineering?.strategiesApplied?.length > 0 ? '📦' + t.contextEngineering.strategiesApplied.join(',') : '-';
+  const ceData = t.contextEngineering;
+  let ce = '-';
+  if (ceData?.strategiesApplied?.length > 0) {
+    const parts = ceData.strategiesApplied.map(s => {
+      const detail = ceData.strategyDetails?.find(d => d.name === s);
+      if (detail) {
+        const saved = detail.tokensBefore - detail.tokensAfter;
+        return s + (saved > 0 ? '(-' + (saved > 1000 ? (saved/1000).toFixed(1)+'K' : saved) + ')' : '');
+      }
+      return s;
+    });
+    ce = '📦 ' + parts.join(' ');
+  }
   const prev = (t.inbound?.textPreview ?? '').slice(0, 40);
   const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
   const ctxIcon = t.hasContextSnapshot ? '<span title="有 Context Snapshot，點擊查看" style="cursor:pointer">📋</span>' : '';
@@ -2126,6 +2152,10 @@ async function loadTraces() {
     // Agent ID 篩選
     const agentFilter = (document.getElementById('trace-agent-filter')?.value ?? '').trim();
     if (agentFilter) merged = merged.filter(t => t.agentId && t.agentId.includes(agentFilter));
+    const statusFilter = (document.getElementById('trace-status-filter')?.value ?? '').trim();
+    if (statusFilter) merged = merged.filter(t => t.status === statusFilter);
+    const categoryFilter = (document.getElementById('trace-category-filter')?.value ?? '').trim();
+    if (categoryFilter) merged = merged.filter(t => t.category === categoryFilter);
     const ceFilter = (document.getElementById('trace-ce-filter')?.value ?? '').trim();
     if (ceFilter === 'any') merged = merged.filter(t => t.contextEngineering?.strategiesApplied?.length > 0);
     else if (ceFilter) merged = merged.filter(t => t.contextEngineering?.strategiesApplied?.includes(ceFilter));
