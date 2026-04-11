@@ -33,7 +33,7 @@ export interface PermissionContext {
 
 // ── 預設保護路徑 ──────────────────────────────────────────────────────────────
 
-const PROTECTED_WRITE_PATHS_DEFAULT = [
+export const PROTECTED_WRITE_PATHS_DEFAULT = [
   "~/.catclaw/catclaw.json",
   "~/.catclaw/accounts/",
   "~/.catclaw/tools/",
@@ -50,7 +50,7 @@ const AUTH_PROFILE_PATTERNS = [
   /-profiles\.json$/,       // {providerId}-profiles.json 狀態檔
 ];
 
-const PROTECTED_READ_PATHS_DEFAULT = [
+export const PROTECTED_READ_PATHS_DEFAULT = [
   "~/.catclaw/catclaw.json",
   "~/.catclaw/accounts/",
   "~/.catclaw/_invites.json",

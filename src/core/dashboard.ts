@@ -1589,7 +1589,10 @@ function renderField(f, val, prefix) {
     const rows = items.map((item, i) =>
       \`<div class="cfg-list-item"><input value="\${esc(item)}" data-path="\${id}[\${i}]"><button class="btn-x" onclick="this.parentElement.remove()">✕</button></div>\`
     ).join('');
-    return \`<div class="cfg-row" style="align-items:start"><label>\${f.l}\${hint}</label><div class="cfg-list" id="list_\${id}">\${rows}<button class="cfg-add" onclick="addListItem('list_\${id}','\${id}')">+ 新增</button></div></div>\`;
+    const defaultsHtml = Array.isArray(f.defaults) && f.defaults.length
+      ? \`<div style="font-size:0.7rem;color:#9ca3af;margin-top:4px;padding:4px 6px;background:#0f1117;border-left:2px solid #818cf8;border-radius:2px">🔒 預設保護（不可移除）：\${f.defaults.map(esc).join(', ')}</div>\`
+      : '';
+    return \`<div class="cfg-row" style="align-items:start"><label>\${f.l}\${hint}</label><div class="cfg-list" id="list_\${id}">\${rows}<button class="cfg-add" onclick="addListItem('list_\${id}','\${id}')">+ 新增</button>\${defaultsHtml}</div></div>\`;
   }
   const inputType = f.t === 'pw' ? 'password' : f.t === 'num' ? 'number' : 'text';
   const step = f.step ? \` step="\${f.step}"\` : '';

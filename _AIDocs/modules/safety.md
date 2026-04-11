@@ -1,7 +1,9 @@
 # modules/safety — 安全攔截
 
 > 檔案：`src/safety/guard.ts` + `src/safety/collab-conflict.ts`
-> 更新日期：2026-04-05
+> 更新日期：2026-04-12
+
+> 註：`PROTECTED_WRITE_PATHS_DEFAULT` / `PROTECTED_READ_PATHS_DEFAULT` 為 export 常數，供 dashboard 匯入顯示。
 
 ## 職責
 

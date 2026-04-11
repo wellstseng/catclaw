@@ -1,7 +1,7 @@
 # modules/dashboard — Web Dashboard + REST API
 
 > 檔案：`src/core/dashboard.ts` (~4830 行)
-> 更新日期：2026-04-09
+> 更新日期：2026-04-12
 
 ## 職責
 
@@ -184,3 +184,4 @@ Dashboard 內嵌互動式對話介面，支援：
 - GET 時敏感欄位（token/apiKey/api_key/password/credential）遮罩為 `***`
 - POST 時 `***` 自動還原為原始值（`restoreMasked`）
 - 每次寫入前自動備份（保留最近 5 份 `.bak.{timestamp}`）
+- Safety → Protected Paths 欄位從 `guard.ts` 匯入 `PROTECTED_WRITE_PATHS_DEFAULT`，以唯讀 hint 顯示 hardcoded 預設保護路徑（`~/.claude/`、`~/.ssh/` 等），使用者看得到但改不掉
