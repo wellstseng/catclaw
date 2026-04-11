@@ -524,6 +524,13 @@ label.cfg-toggle { min-width: 36px; }
     <h2>Message Lifecycle Traces（全域）
       <button class="btn btn-sm" style="float:right" onclick="loadTraces()">↻</button>
       <input id="trace-agent-filter" placeholder="Agent ID" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px;width:100px;font-size:0.78rem" oninput="loadTraces()">
+      <select id="trace-ce-filter" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-size:0.78rem" onchange="loadTraces()">
+        <option value="">CE: All</option>
+        <option value="any">CE: Any triggered</option>
+        <option value="decay">CE: decay</option>
+        <option value="compaction">CE: compaction</option>
+        <option value="overflow-hard-stop">CE: overflow</option>
+      </select>
       <select id="trace-limit" style="float:right;margin-right:8px;background:var(--bg3);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px" onchange="loadTraces()">
         <option value="20">20</option>
         <option value="50" selected>50</option>
@@ -1478,11 +1485,22 @@ const CFG_SCHEMA = [
   { key:'contextEngineering', label:'Context Engineering', fields:[
     {k:'contextEngineering.enabled',t:'bool',l:'啟用',d:'Context Engineering 總開關：管理 context window 使用策略'},
   ], sub:[
+    {k:'contextEngineering.strategies.decay',l:'Decay（漸進衰減）',fields:[
+      {k:'enabled',t:'bool',l:'啟用',d:'漸進式訊息衰減：依 turn 年齡逐步壓縮/移除舊訊息'},
+      {k:'mode',t:'select',l:'Mode',opts:['auto','discrete','continuous','time-aware'],d:'auto=三合一（推薦），discrete=固定閾值，continuous=指數衰減，time-aware=含對話節奏調整'},
+      {k:'baseDecay',t:'num',l:'Base Decay',d:'指數衰減係數（預設 0.15），越大衰減越快'},
+      {k:'referenceIntervalSec',t:'num',l:'Reference Interval (sec)',d:'對話節奏參考間隔（預設 60 秒），用於計算 tempo multiplier'},
+    ]},
     {k:'contextEngineering.strategies.compaction',l:'Compaction',fields:[
-      {k:'enabled',t:'bool',l:'啟用',d:'對話壓縮：超過觸發輪數後用 LLM 摘要早期對話'},
+      {k:'enabled',t:'bool',l:'啟用',d:'對話壓縮：超過觸發 token 數後用 LLM 摘要早期對話'},
       {k:'model',t:'text',l:'Model',d:'用於壓縮的模型（建議用便宜的如 claude-haiku）'},
-      {k:'triggerTurns',t:'num',l:'Trigger Turns',d:'累積幾輪後觸發壓縮'},
+      {k:'triggerTokens',t:'num',l:'Trigger Tokens',d:'累積超過多少 token 後觸發壓縮（預設 20000）'},
       {k:'preserveRecentTurns',t:'num',l:'Preserve Recent Turns',d:'壓縮時保留最近幾輪不壓縮'},
+    ]},
+    {k:'contextEngineering.strategies.overflowHardStop',l:'Overflow Hard Stop',fields:[
+      {k:'enabled',t:'bool',l:'啟用',d:'緊急截斷：context 超硬上限時只保留最近 4 條'},
+      {k:'hardLimitUtilization',t:'num',l:'Hard Limit %',d:'context window 使用率閾值（預設 0.95 = 95%）'},
+      {k:'contextWindowTokens',t:'num',l:'Context Window Tokens',d:'context window 大小（預設 100000）'},
     ]},
   ]},
   { key:'inboundHistory', label:'Inbound History', fields:[
@@ -1504,10 +1522,11 @@ const CFG_SCHEMA = [
     {k:'botCircuitBreaker.maxRounds',t:'num',l:'最大輪數',d:'連續 bot 互動來回幾輪後觸發暫停（預設 10）'},
     {k:'botCircuitBreaker.maxDurationMs',t:'num',l:'最大持續時間 (ms)',d:'連續 bot 互動持續多久後觸發暫停（預設 180000 = 3 分鐘）'},
   ]},
-  { key:'toolBudget', label:'Tool Budget', fields:[
-    {k:'toolBudget.resultTokenCap',t:'num',l:'Result Token Cap',d:'單次 tool 回傳結果的 token 上限，超過會被截斷'},
-    {k:'toolBudget.perTurnTotalCap',t:'num',l:'Per Turn Total Cap',d:'單 turn 內所有 tool 結果的 token 總上限'},
-    {k:'toolBudget.toolTimeoutMs',t:'num',l:'Tool Timeout (ms)',d:'單次 tool 執行逾時（毫秒）'},
+  { key:'contextEngineering.toolBudget', label:'Tool Budget (CE)', fields:[
+    {k:'contextEngineering.toolBudget.resultTokenCap',t:'num',l:'Result Token Cap',d:'單次 tool 回傳結果的 token 上限（預設 8000，0=無限制）'},
+    {k:'contextEngineering.toolBudget.perTurnTotalCap',t:'num',l:'Per Turn Total Cap',d:'單 turn 內所有 tool 結果的 token 總上限（預設 0=無限制）'},
+    {k:'contextEngineering.toolBudget.toolTimeoutMs',t:'num',l:'Tool Timeout (ms)',d:'單次 tool 執行逾時（預設 30000ms，0=無限制）'},
+    {k:'contextEngineering.toolBudget.maxWriteFileBytes',t:'num',l:'Max Write Bytes',d:'write/edit 單次上限 bytes（預設 512000=500KB，0=無限制）'},
   ]},
   { key:'subagents', label:'Subagents', fields:[
     {k:'subagents.maxConcurrent',t:'num',l:'Max Concurrent',d:'同時最多運行幾個子 agent'},
@@ -2107,6 +2126,9 @@ async function loadTraces() {
     // Agent ID 篩選
     const agentFilter = (document.getElementById('trace-agent-filter')?.value ?? '').trim();
     if (agentFilter) merged = merged.filter(t => t.agentId && t.agentId.includes(agentFilter));
+    const ceFilter = (document.getElementById('trace-ce-filter')?.value ?? '').trim();
+    if (ceFilter === 'any') merged = merged.filter(t => t.contextEngineering?.strategiesApplied?.length > 0);
+    else if (ceFilter) merged = merged.filter(t => t.contextEngineering?.strategiesApplied?.includes(ceFilter));
 
     if (merged.length === 0) { el.innerHTML = '<div style="color:var(--fg2)">無 trace 記錄</div>'; return; }
 
@@ -2325,6 +2347,20 @@ async function showTraceDetail(traceId) {
       html += '<div>Strategies: ' + t.contextEngineering.strategiesApplied.join(', ') + '</div>';
       html += '<div>Before: ' + t.contextEngineering.tokensBeforeCE.toLocaleString() + ' → After: ' + t.contextEngineering.tokensAfterCE.toLocaleString() + '</div>';
       html += '<div style="color:var(--green2)">Saved: ' + t.contextEngineering.tokensSaved.toLocaleString() + ' tokens</div>';
+      if (t.contextEngineering.overflowSignaled) html += '<div style="color:var(--red)">⚠ Overflow Hard Stop triggered</div>';
+      if (t.contextEngineering.strategyDetails?.length) {
+        html += '<table style="font-size:0.78rem;margin-top:4px;width:100%;border-collapse:collapse">';
+        html += '<tr style="color:var(--fg2)"><th style="text-align:left;padding:2px 4px">Strategy</th><th style="text-align:right;padding:2px 4px">Before</th><th style="text-align:right;padding:2px 4px">After</th><th style="text-align:right;padding:2px 4px">Saved</th><th style="text-align:right;padding:2px 4px">Removed</th></tr>';
+        for (const sd of t.contextEngineering.strategyDetails) {
+          const saved = sd.tokensBefore - sd.tokensAfter;
+          html += '<tr><td style="padding:2px 4px">' + esc(sd.name) + '</td>';
+          html += '<td style="text-align:right;padding:2px 4px">' + sd.tokensBefore.toLocaleString() + '</td>';
+          html += '<td style="text-align:right;padding:2px 4px">' + sd.tokensAfter.toLocaleString() + '</td>';
+          html += '<td style="text-align:right;padding:2px 4px;color:var(--green2)">' + (saved > 0 ? '-' + saved.toLocaleString() : '0') + '</td>';
+          html += '<td style="text-align:right;padding:2px 4px">' + (sd.messagesRemoved || 0) + '</td></tr>';
+        }
+        html += '</table>';
+      }
       html += '</div>';
     } else { html += '<div style="color:var(--fg2);font-size:0.82rem">Not triggered</div>'; }
     html += '</div>';

@@ -78,8 +78,8 @@ export const tool: Tool = {
       : content.replace(oldStr, newStr);
 
     // File size guard（檢查替換後的結果大小）
-    const maxBytes = config.toolBudget?.maxWriteFileBytes
-      ? config.toolBudget.maxWriteFileBytes * 2  // edit 允許 2 倍，因為是增量修改
+    const maxBytes = config.contextEngineering?.toolBudget?.maxWriteFileBytes
+      ? config.contextEngineering.toolBudget.maxWriteFileBytes * 2  // edit 允許 2 倍，因為是增量修改
       : DEFAULT_MAX_WRITE_BYTES;
     if (maxBytes > 0) {
       const byteLen = Buffer.byteLength(updated, "utf-8");

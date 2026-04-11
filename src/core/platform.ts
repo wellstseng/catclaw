@@ -101,7 +101,7 @@ export async function initPlatform(
   }
 
   // ── 2. Tool Registry ───────────────────────────────────────────────────────
-  _toolRegistry = initToolRegistry({ defaultTimeoutMs: config.toolBudget?.toolTimeoutMs ?? 30_000 });
+  _toolRegistry = initToolRegistry({ defaultTimeoutMs: config.contextEngineering?.toolBudget?.toolTimeoutMs ?? 30_000 });
   const builtinDir = join(distDir, "tools", "builtin");
   await _toolRegistry.loadFromDirectory(builtinDir);
 
@@ -208,7 +208,9 @@ export async function initPlatform(
   const ceCfg = config.contextEngineering;
   if (ceCfg?.enabled !== false) {
     const ce = initContextEngine({
+      decay: ceCfg?.strategies?.decay,
       compaction: ceCfg?.strategies?.compaction,
+      overflowHardStop: ceCfg?.strategies?.overflowHardStop,
     });
     // 若 compaction 指定了 model，取得或建立專用 CE provider 並注入
     const ceModel = ceCfg?.strategies?.compaction?.model;

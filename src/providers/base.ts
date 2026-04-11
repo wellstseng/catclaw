@@ -51,6 +51,17 @@ export interface Message {
   content: string | ContentBlock[];
   /** 此訊息的 token 數（LLM 回傳 or 字元數÷4 估算），CE 用來做精準 cost 計算 */
   tokens?: number;
+  // ── CE metadata ──
+  /** 所屬 turn index（用於計算衰減年齡） */
+  turnIndex?: number;
+  /** 建立時間戳（用於 time-aware 衰減） */
+  timestamp?: number;
+  /** 壓縮等級 0=原始, 1=精簡, 2=核心, 3=stub */
+  compressionLevel?: number;
+  /** 壓縮前的原始 token 數 */
+  originalTokens?: number;
+  /** 執行壓縮的策略名稱 */
+  compressedBy?: string;
 }
 
 // ── Tool 定義 ─────────────────────────────────────────────────────────────────

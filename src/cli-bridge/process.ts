@@ -381,6 +381,10 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
   }
 
   private parseAssistantEvent(obj: Record<string, unknown>): CliBridgeEvent | null {
+    // Subagent（Task tool 內部）的 assistant 訊息不轉發到 Discord —
+    // 主 agent 已透過 Task tool_call 告知有 subagent 在跑，subagent 內部敘述屬於實作細節。
+    if (obj["parent_tool_use_id"]) return null;
+
     const msg = obj["message"] as AssistantMessage | undefined;
     if (!msg?.content) return null;
 

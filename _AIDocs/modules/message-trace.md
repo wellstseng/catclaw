@@ -38,7 +38,7 @@
 | ① Inbound | discord.ts | `recordInbound()` | 原始文字 preview、字數、附件數、debounce 資訊、是否中斷前次 |
 | ② Context | discord.ts / agent-loop | `recordContextStart/End()` + `recordMemoryRecall()` + `recordPromptAssembly()` + `recordProviderSelection()` + `recordInboundHistory()` + `appendAgentLoopBlocks()` | memory recall（atom 命中明細、blind-spot、cache hit）、prompt 組裝模組、provider 選擇、inbound history |
 | ③ LLM Loop | agent-loop.ts | `recordLLMCallStart/End()` + `recordToolCall()` | 每次 LLM call 的 model、input/output/cache tokens、estimated 標記、duration、tool calls（含 paramsPreview） |
-| ④ CE | agent-loop.ts | `recordCE()` | 觸發的 strategy、壓縮前後 token 差 |
+| ④ CE | agent-loop.ts | `recordCE()` | ���發的 strategy、壓縮前後 token 差、per-strategy details（tokensBefore/After、messagesRemoved）、overflowSignaled |
 | ⑤ Abort | agent-loop.ts | `recordAbort()` | 觸發原因（stop/timeout/interrupt）、是否 rollback |
 | ⑥ PostProcess | agent-loop.ts | `recordPostProcess()` | extract 是否執行、snapshot 是否保留、session note、tool log 路徑 |
 | ⑦ Response | agent-loop.ts | `recordResponse()` | 回覆 preview、字數、總 duration |

@@ -6,18 +6,17 @@
 ## 職責
 
 Strategy Pattern 架構的 Context Engineering 引擎。
-管理 messages 歷史的 token 使用量，在超出閾值時自動壓縮。
+管理 messages 歷史的 token 使用量，透過漸進式衰減 + 壓縮控制 context window。
 
 ## 策略一覽
 
 | 策略 | 預設啟用 | 觸發條件 | 行為 |
 |------|---------|---------|------|
-| `compaction` | ✓ | tokens > triggerTokens (4000) | LLM 摘要壓縮舊訊息 |
-| `budget-guard` | ✓ | tokens > window × 0.8 | 從最舊 message 開始刪 |
-| `sliding-window` | ✗ | messages > maxTurns × 2 | 保留最近 N 輪 |
+| `decay` | ✓ | 每次 build（always） | 依 turn age 漸進壓縮/移除舊訊息 |
+| `compaction` | ✓ | tokens > triggerTokens (20000) | LLM 摘要壓縮舊訊息 |
 | `overflow-hard-stop` | ✓ | tokens > window × 0.95 | 緊急截斷至 4 條 |
 
-執行順序：compaction → budget-guard → sliding-window → overflow-hard-stop
+執行順序：decay → compaction → overflow-hard-stop
 
 ## 核心型別
 
@@ -52,13 +51,73 @@ interface ContextBreakdown {
   strategiesApplied: string[];
   tokensBeforeCE?: number;
   tokensAfterCE?: number;
-  overflowSignaled?: boolean;  // 第三段 failover 觸發
+  overflowSignaled?: boolean;
+  strategyDetails?: StrategyDetail[];  // per-strategy token 變化
 }
 ```
 
+### Message CE Metadata
+
+每條 Message 可攜帶 CE metadata（`providers/base.ts`）：
+
+| 欄位 | 說明 |
+|------|------|
+| `turnIndex` | 所屬 turn index |
+| `timestamp` | 建立時間戳 |
+| `compressionLevel` | 0=原始, 1=精簡, 2=核心, 3=stub |
+| `originalTokens` | 壓縮前的原始 token 數 |
+| `compressedBy` | 執行壓縮的策略名稱 |
+
+## DecayStrategy（漸進式衰減）
+
+每次 build 都執行。依據 message 的 turn age 計算 targetLevel，漸進壓縮。
+
+### 模式
+
+- **auto**（預設）：`targetLevel = max(discrete, continuous with tempo)` — 三合一
+- **discrete**：固定閾值，依 minAge 跳級
+- **continuous**：`retainRatio = e^(-baseDecay × age)`，平滑曲線
+- **time-aware**：continuous + tempo multiplier（依對話節奏調整）
+
+### Decay Levels
+
+| Level | 預設 minAge | maxTokens | 行為 |
+|-------|-----------|-----------|------|
+| L1 | 1 | 2000 | 精簡（截斷長內容） |
+| L2 | 3 | 500 | 核心（只保留關鍵內容） |
+| L3 | 6 | 80 | stub（極簡佔位） |
+| L4 | 10 | — | 移除 |
+
+### Continuous Retain Ratio → Level 映射
+
+| retainRatio 範圍 | Level |
+|-----------------|-------|
+| > 0.80 | L0（原始） |
+| > 0.40 | L1 |
+| > 0.10 | L2 |
+| > 0.05 | L3 |
+| ≤ 0.05 | L4（移除） |
+
+### Tempo Multiplier
+
+`tempoMultiplier = clamp(avgIntervalSec / referenceIntervalSec, 0.5, 2.0)`
+
+高頻對話（間隔短）→ multiplier < 1 → 衰減慢；低頻對話 → multiplier > 1 → 衰減快。
+
+### DecayStrategyConfig
+
+| 欄位 | 預設 | 說明 |
+|------|------|------|
+| `enabled` | true | 開關 |
+| `mode` | "auto" | discrete / continuous / time-aware / auto |
+| `baseDecay` | 0.15 | 指數衰減係數 |
+| `referenceIntervalSec` | 60 | tempo 參考間隔（秒） |
+| `tempoRange` | [0.5, 2.0] | tempo multiplier 上下限 |
+| `levels` | 見上表 | 自訂 decay level 定義 |
+
 ## CompactionStrategy
 
-觸發條件：`estimatedTokens > triggerTokens`（預設 4000）
+觸發條件：`estimatedTokens > triggerTokens`（預設 20000）
 
 有 ceProvider → LLM 摘要壓縮：
 1. 保留最近 `preserveRecentTurns × 2` 條 messages
@@ -73,15 +132,8 @@ interface ContextBreakdown {
 | 欄位 | 預設 | 說明 |
 |------|------|------|
 | `enabled` | true | 開關 |
-| `triggerTokens` | 4000 | 觸發閾值 |
+| `triggerTokens` | 20000 | 觸發閾值 |
 | `preserveRecentTurns` | 5 | 保留最近 N 輪不壓縮 |
-
-## BudgetGuardStrategy
-
-觸發條件：`estimatedTokens > contextWindowTokens × maxUtilization`
-
-從最舊非 system message 逐條刪除，直到 tokens < targetTokens（contextWindowTokens × maxUtilization（預設 0.8）× 0.7）。
-刪除後執行 `repairToolPairing`。
 
 ## OverflowHardStopStrategy
 
@@ -103,6 +155,25 @@ interface ContextBreakdown {
 ## 全域單例
 
 ```typescript
-initContextEngine(cfg?)  → ContextEngine
+initContextEngine(cfg?)  → ContextEngine   // 接受 decay / compaction / overflowHardStop 設定
 getContextEngine()       → ContextEngine | null
+```
+
+## 設定路徑
+
+CE 設定統一在 `catclaw.json` 的 `contextEngineering` 區塊：
+
+```json
+{
+  "contextEngineering": {
+    "enabled": true,
+    "toolBudget": { "resultTokenCap": 8000, ... },
+    "memoryBudget": 2000,
+    "strategies": {
+      "decay": { "enabled": true, "mode": "auto", "baseDecay": 0.15 },
+      "compaction": { "enabled": true, "triggerTokens": 20000 },
+      "overflowHardStop": { "enabled": true, "hardLimitUtilization": 0.95 }
+    }
+  }
+}
 ```

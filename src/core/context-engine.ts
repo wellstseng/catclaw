@@ -10,10 +10,19 @@
  */
 
 import { log } from "../logger.js";
-import type { Message } from "../providers/base.js";
+import type { Message, ContentBlock } from "../providers/base.js";
 import type { LLMProvider } from "../providers/base.js";
+import type { DecayStrategyConfig, DecayLevel } from "./config.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
+
+export interface StrategyDetail {
+  name: string;
+  tokensBefore: number;
+  tokensAfter: number;
+  messagesRemoved?: number;
+  messagesDecayed?: number;
+}
 
 export interface ContextBreakdown {
   totalMessages: number;
@@ -23,6 +32,7 @@ export interface ContextBreakdown {
   tokensAfterCE?: number;
   /** 三段 failover 的第三段觸發：截斷後仍超硬上限，需要停止執行 */
   overflowSignaled?: boolean;
+  strategyDetails?: StrategyDetail[];
 }
 
 export interface ContextBuildContext {
@@ -112,6 +122,219 @@ export function estimateTokens(messages: Message[]): number {
     total += Math.ceil(chars / 4);
   }
   return total;
+}
+
+// ── DecayStrategy（漸進式衰減）─────────────────────────────────────────────────
+
+const DEFAULT_DECAY_LEVELS: DecayLevel[] = [
+  { minAge: 1,  maxTokens: 2000 },  // L1: 精簡
+  { minAge: 3,  maxTokens: 500 },   // L2: 核心
+  { minAge: 6,  maxTokens: 80 },    // L3: stub
+  { minAge: 10, action: "remove" },  // L4: 移除
+];
+
+const RETAIN_RATIO_THRESHOLDS: [number, number][] = [
+  [0.80, 0],  // > 80% → L0 (原始)
+  [0.40, 1],  // > 40% → L1
+  [0.10, 2],  // > 10% → L2
+  [0.05, 3],  // > 5%  → L3
+];
+
+function discreteLevel(age: number, levels: DecayLevel[]): number {
+  let level = 0;
+  for (let i = 0; i < levels.length; i++) {
+    if (age >= levels[i].minAge) level = i + 1;
+  }
+  return level;
+}
+
+function continuousLevel(age: number, baseDecay: number, tempoMultiplier: number): number {
+  const retainRatio = Math.exp(-baseDecay * tempoMultiplier * age);
+  for (const [threshold, level] of RETAIN_RATIO_THRESHOLDS) {
+    if (retainRatio > threshold) return level;
+  }
+  return 4; // remove
+}
+
+function truncateContent(content: string, maxTokens: number): string {
+  const maxChars = maxTokens * 4;
+  if (content.length <= maxChars) return content;
+  return content.slice(0, maxChars) + "\n…[truncated]";
+}
+
+function truncateBlocks(blocks: ContentBlock[], maxTokens: number): ContentBlock[] {
+  const maxChars = maxTokens * 4;
+  let totalChars = 0;
+  const result: ContentBlock[] = [];
+
+  for (const b of blocks) {
+    if (b.type === "tool_result") {
+      const remaining = Math.max(0, maxChars - totalChars);
+      if (remaining <= 0) {
+        result.push({ ...b, content: "[truncated]" });
+      } else if (b.content.length > remaining) {
+        result.push({ ...b, content: b.content.slice(0, remaining) + "\n…[truncated]" });
+        totalChars += remaining;
+      } else {
+        result.push(b);
+        totalChars += b.content.length;
+      }
+    } else if (b.type === "tool_use") {
+      const input = JSON.stringify(b.input);
+      totalChars += input.length;
+      result.push(b);
+    } else if (b.type === "text") {
+      const remaining = Math.max(0, maxChars - totalChars);
+      if (b.text.length > remaining) {
+        result.push({ ...b, text: b.text.slice(0, remaining) + "\n…[truncated]" });
+        totalChars += remaining;
+      } else {
+        result.push(b);
+        totalChars += b.text.length;
+      }
+    } else {
+      result.push(b);
+    }
+  }
+  return result;
+}
+
+function stubMessage(m: Message): Message {
+  const role = m.role;
+  if (typeof m.content === "string") {
+    return { ...m, content: `[${role} stub]`, compressionLevel: 3, originalTokens: m.originalTokens ?? m.tokens };
+  }
+  const stubBlocks: ContentBlock[] = m.content.map(b => {
+    if (b.type === "tool_use") return { ...b, input: {} };
+    if (b.type === "tool_result") return { ...b, content: "[stub]" };
+    if (b.type === "text") return { ...b, text: `[${role} stub]` };
+    return b;
+  });
+  return { ...m, content: stubBlocks, compressionLevel: 3, originalTokens: m.originalTokens ?? m.tokens };
+}
+
+export class DecayStrategy implements ContextStrategy {
+  name = "decay";
+  enabled: boolean;
+  private cfg: Required<Pick<DecayStrategyConfig, "mode" | "baseDecay" | "minRetainRatio" | "referenceIntervalSec">> & { levels: DecayLevel[]; tempoRange: [number, number] };
+
+  constructor(cfg: Partial<DecayStrategyConfig> = {}) {
+    this.enabled = cfg.enabled ?? true;
+    this.cfg = {
+      mode: cfg.mode ?? "auto",
+      levels: cfg.levels ?? DEFAULT_DECAY_LEVELS,
+      baseDecay: cfg.baseDecay ?? 0.15,
+      minRetainRatio: cfg.minRetainRatio ?? 0.05,
+      referenceIntervalSec: cfg.referenceIntervalSec ?? 60,
+      tempoRange: cfg.tempoRange ?? [0.5, 2.0],
+    };
+  }
+
+  shouldApply(_ctx: ContextBuildContext): boolean {
+    return this.enabled;
+  }
+
+  async apply(ctx: ContextBuildContext): Promise<ContextBuildContext> {
+    const { messages, turnIndex } = ctx;
+    const now = Date.now();
+    const tempoMultiplier = this._calcTempoMultiplier(messages);
+
+    const result: Message[] = [];
+    let removed = 0;
+
+    for (const m of messages) {
+      const age = (m.turnIndex != null) ? turnIndex - m.turnIndex : 0;
+      if (age <= 0) { result.push(m); continue; }
+
+      const currentLevel = m.compressionLevel ?? 0;
+      const targetLevel = this._calcTargetLevel(age, tempoMultiplier);
+
+      if (targetLevel >= 4) {
+        removed++;
+        continue;
+      }
+
+      if (targetLevel <= currentLevel) { result.push(m); continue; }
+
+      const levelCfg = this.cfg.levels[targetLevel - 1];
+      if (!levelCfg) { result.push(m); continue; }
+
+      if (levelCfg.action === "remove") {
+        removed++;
+        continue;
+      }
+
+      const maxTokens = levelCfg.maxTokens ?? Infinity;
+      const decayed = this._compressMessage(m, maxTokens, targetLevel);
+      result.push(decayed);
+    }
+
+    if (removed > 0) {
+      log.info(`[context-engine:decay] removed ${removed} messages, ${messages.length} → ${result.length}`);
+    }
+
+    const repaired = repairToolPairing(result);
+    return { ...ctx, messages: repaired, estimatedTokens: estimateTokens(repaired) };
+  }
+
+  private _calcTargetLevel(age: number, tempoMultiplier: number): number {
+    const mode = this.cfg.mode;
+
+    if (mode === "discrete") {
+      return discreteLevel(age, this.cfg.levels);
+    }
+    if (mode === "continuous") {
+      return continuousLevel(age, this.cfg.baseDecay, 1.0);
+    }
+    if (mode === "time-aware") {
+      return continuousLevel(age, this.cfg.baseDecay, tempoMultiplier);
+    }
+    // auto: max(discrete, continuous with tempo)
+    const d = discreteLevel(age, this.cfg.levels);
+    const c = continuousLevel(age, this.cfg.baseDecay, tempoMultiplier);
+    return Math.max(d, c);
+  }
+
+  private _calcTempoMultiplier(messages: Message[]): number {
+    const timestamps = messages.filter(m => m.timestamp != null).map(m => m.timestamp!);
+    if (timestamps.length < 2) return 1.0;
+
+    const sorted = [...timestamps].sort((a, b) => a - b);
+    let totalInterval = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      totalInterval += sorted[i] - sorted[i - 1];
+    }
+    const avgIntervalMs = totalInterval / (sorted.length - 1);
+    const avgIntervalSec = avgIntervalMs / 1000;
+
+    const raw = avgIntervalSec / this.cfg.referenceIntervalSec;
+    const [min, max] = this.cfg.tempoRange;
+    return Math.max(min, Math.min(max, raw));
+  }
+
+  private _compressMessage(m: Message, maxTokens: number, targetLevel: number): Message {
+    if (targetLevel === 3) return stubMessage(m);
+
+    const originalTokens = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
+    if (typeof m.content === "string") {
+      return {
+        ...m,
+        content: truncateContent(m.content, maxTokens),
+        compressionLevel: targetLevel,
+        compressedBy: "decay",
+        originalTokens,
+      };
+    }
+
+    const compressed = truncateBlocks(m.content, maxTokens);
+    return {
+      ...m,
+      content: compressed,
+      compressionLevel: targetLevel,
+      compressedBy: "decay",
+      originalTokens,
+    };
+  }
 }
 
 // ── CompactionStrategy ────────────────────────────────────────────────────────
@@ -282,6 +505,7 @@ export class ContextEngine {
   lastAppliedStrategy: string | undefined;
 
   constructor() {
+    this.register(new DecayStrategy());
     this.register(new CompactionStrategy());
     this.register(new OverflowHardStopStrategy());
   }
@@ -310,17 +534,29 @@ export class ContextEngine {
     };
 
     const applied: string[] = [];
+    const details: StrategyDetail[] = [];
 
-    const order = ["compaction", "overflow-hard-stop"];
+    const order = ["decay", "compaction", "overflow-hard-stop"];
     const effectiveCeProvider = opts.ceProvider ?? this._ceProvider;
 
     for (const name of order) {
       const strategy = this.strategies.get(name);
       if (!strategy?.enabled) continue;
       if (strategy.shouldApply(ctx)) {
+        const tokensBefore = ctx.estimatedTokens;
+        const msgsBefore = ctx.messages.length;
         ctx = await strategy.apply(ctx, effectiveCeProvider);
         applied.push(name);
-        log.debug(`[context-engine] strategy=${name} applied`);
+        const detail: StrategyDetail = {
+          name,
+          tokensBefore,
+          tokensAfter: ctx.estimatedTokens,
+        };
+        if (ctx.messages.length < msgsBefore) {
+          detail.messagesRemoved = msgsBefore - ctx.messages.length;
+        }
+        details.push(detail);
+        log.debug(`[context-engine] strategy=${name} applied, tokens ${tokensBefore}→${ctx.estimatedTokens}`);
       }
     }
 
@@ -332,8 +568,9 @@ export class ContextEngine {
       tokensBeforeCE,
       tokensAfterCE: applied.length > 0 ? ctx.estimatedTokens : undefined,
       overflowSignaled: overflowStrategy?.lastOverflowSignaled ?? false,
+      strategyDetails: details.length > 0 ? details : undefined,
     };
-    if (overflowStrategy) overflowStrategy.lastOverflowSignaled = false; // reset for next build
+    if (overflowStrategy) overflowStrategy.lastOverflowSignaled = false;
     this.lastAppliedStrategy = applied.at(-1);
 
     return ctx.messages;
@@ -350,11 +587,19 @@ let _contextEngine: ContextEngine | null = null;
 
 export function initContextEngine(cfg?: {
   compaction?: Partial<CompactionConfig> & { model?: string };
+  decay?: Partial<DecayStrategyConfig>;
+  overflowHardStop?: Partial<OverflowHardStopConfig>;
 }): ContextEngine {
   _contextEngine = new ContextEngine();
 
+  if (cfg?.decay) {
+    _contextEngine.register(new DecayStrategy(cfg.decay));
+  }
   if (cfg?.compaction) {
     _contextEngine.register(new CompactionStrategy(cfg.compaction));
+  }
+  if (cfg?.overflowHardStop) {
+    _contextEngine.register(new OverflowHardStopStrategy(cfg.overflowHardStop));
   }
 
   return _contextEngine;

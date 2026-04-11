@@ -184,8 +184,9 @@ function resolveResultTokenCap(
 ): number {
   if (perToolCap !== undefined) return perToolCap;
   // 模式覆寫 > global config > 預設
-  const globalDefault = modeOverride ?? config.toolBudget?.resultTokenCap ?? DEFAULT_RESULT_TOKEN_CAP;
-  const perTurnCap = config.toolBudget?.perTurnTotalCap ?? 0;
+  const tb = config.contextEngineering?.toolBudget;
+  const globalDefault = modeOverride ?? tb?.resultTokenCap ?? DEFAULT_RESULT_TOKEN_CAP;
+  const perTurnCap = tb?.perTurnTotalCap ?? 0;
   if (perTurnCap === 0) return globalDefault;
   const remaining = perTurnCap - turnTokensUsed;
   if (remaining <= 0) return 50; // budget 耗盡，幾乎截空
@@ -710,6 +711,8 @@ export async function* agentLoop(
         strategiesApplied: bd.strategiesApplied,
         tokensBeforeCE: bd.tokensBeforeCE ?? bd.estimatedTokens,
         tokensAfterCE: bd.tokensAfterCE ?? bd.estimatedTokens,
+        strategyDetails: bd.strategyDetails,
+        overflowSignaled: bd.overflowSignaled,
       });
     }
   }
@@ -1532,9 +1535,11 @@ export async function* agentLoop(
   if (!sessionClearedDuringTurn) {
     const promptTokens = Math.ceil(prompt.length / 4);
     const responseTokens = totalOutputTokens > 0 ? totalOutputTokens : Math.ceil(fullResponse.length / 4);
+    const turnTs = Date.now();
+    const turnIdx = session.turnCount;
     sessionManager.addMessages(sessionKey, [
-      { role: "user", content: prompt, tokens: promptTokens },
-      { role: "assistant", content: fullResponse, tokens: responseTokens },
+      { role: "user", content: prompt, tokens: promptTokens, turnIndex: turnIdx, timestamp: turnTs },
+      { role: "assistant", content: fullResponse, tokens: responseTokens, turnIndex: turnIdx, timestamp: turnTs },
       ...extraMessages,
     ]);
   } else {

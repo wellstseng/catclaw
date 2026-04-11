@@ -46,6 +46,13 @@ const PATCH_WHITELIST = [
   "session.maxHistoryTurns",
   "session.compactAfterTurns",
   "contextEngineering.enabled",
+  "contextEngineering.toolBudget.*",
+  "contextEngineering.memoryBudget",
+  "contextEngineering.strategies.decay.*",
+  "contextEngineering.strategies.dedup.*",
+  "contextEngineering.strategies.turnSummary.*",
+  "contextEngineering.strategies.compaction.*",
+  "contextEngineering.strategies.overflowHardStop.*",
 ];
 
 function matchesWhitelist(path: string): boolean {

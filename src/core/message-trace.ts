@@ -153,6 +153,14 @@ export interface MessageTraceEntry {
     tokensBeforeCE: number;
     tokensAfterCE: number;
     tokensSaved: number;
+    strategyDetails?: Array<{
+      name: string;
+      tokensBefore: number;
+      tokensAfter: number;
+      messagesRemoved?: number;
+      messagesDecayed?: number;
+    }>;
+    overflowSignaled?: boolean;
   };
 
   // Phase 5: Abort/Interrupt
@@ -462,6 +470,14 @@ export class MessageTrace {
     strategiesApplied: string[];
     tokensBeforeCE: number;
     tokensAfterCE: number;
+    strategyDetails?: Array<{
+      name: string;
+      tokensBefore: number;
+      tokensAfter: number;
+      messagesRemoved?: number;
+      messagesDecayed?: number;
+    }>;
+    overflowSignaled?: boolean;
   }): void {
     if (opts.strategiesApplied.length === 0) return;
     this.entry.contextEngineering = {
@@ -469,6 +485,8 @@ export class MessageTrace {
       tokensBeforeCE: opts.tokensBeforeCE,
       tokensAfterCE: opts.tokensAfterCE,
       tokensSaved: opts.tokensBeforeCE - opts.tokensAfterCE,
+      strategyDetails: opts.strategyDetails,
+      overflowSignaled: opts.overflowSignaled,
     };
   }
 

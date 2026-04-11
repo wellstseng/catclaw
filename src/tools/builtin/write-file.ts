@@ -40,7 +40,7 @@ export const tool: Tool = {
     if (!filePath) return { error: "path 不能為空" };
 
     // File size guard
-    const maxBytes = config.toolBudget?.maxWriteFileBytes ?? DEFAULT_MAX_WRITE_BYTES;
+    const maxBytes = config.contextEngineering?.toolBudget?.maxWriteFileBytes ?? DEFAULT_MAX_WRITE_BYTES;
     if (maxBytes > 0) {
       const byteLen = Buffer.byteLength(content, "utf-8");
       if (byteLen > maxBytes) {

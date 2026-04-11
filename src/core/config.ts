@@ -457,12 +457,47 @@ export interface AccountsConfig {
 /** 速率限制（per-role） */
 export type RateLimitConfig = Record<string, { requestsPerMinute: number }>;
 
+/** Tool Budget 設定 */
+export interface ToolBudgetConfig {
+  /** 單一工具結果 token 上限（預設 8000，0 = 無限制） */
+  resultTokenCap?: number;
+  /** 每個 turn 所有工具結果合計 token 上限（預設 0 = 無限制） */
+  perTurnTotalCap?: number;
+  /** 單一 tool 執行超時毫秒（預設 30000，0 = 無限制） */
+  toolTimeoutMs?: number;
+  /** write_file / edit_file 單次寫入上限 bytes（預設 512000 = 500KB，0 = 無限制） */
+  maxWriteFileBytes?: number;
+}
+
+/** 衰減 Level 定義 */
+export interface DecayLevel {
+  minAge: number;
+  maxTokens?: number;
+  action?: "remove";
+}
+
+/** Decay Strategy 設定 */
+export interface DecayStrategyConfig {
+  enabled?: boolean;
+  mode?: "discrete" | "continuous" | "time-aware" | "auto";
+  levels?: DecayLevel[];
+  baseDecay?: number;
+  minRetainRatio?: number;
+  referenceIntervalSec?: number;
+  tempoRange?: [number, number];
+}
+
 /** Context Engineering 設定 */
 export interface ContextEngineeringConfig {
   enabled: boolean;
+  toolBudget?: ToolBudgetConfig;
+  memoryBudget?: number;
   strategies?: {
-    /** Compaction：LLM 壓縮策略，model 只在此處需要 */
+    decay?: DecayStrategyConfig;
+    dedup?: { enabled?: boolean; minRepeat?: number };
+    turnSummary?: { enabled?: boolean; model?: string; maxConcurrent?: number };
     compaction?: { enabled?: boolean; model?: string; triggerTurns?: number; triggerTokens?: number; preserveRecentTurns?: number };
+    overflowHardStop?: { enabled?: boolean; hardLimitUtilization?: number; contextWindowTokens?: number };
   };
 }
 
@@ -624,17 +659,6 @@ export interface BridgeConfig {
   modes?: ModeConfig;
   /** Token Usage Dashboard 設定 */
   dashboard?: { enabled: boolean; port: number; token?: string };
-  /** Tool 呼叫 token Budget */
-  toolBudget?: {
-    /** 單一工具結果 token 上限（預設 8000，0 = 無限制） */
-    resultTokenCap?: number;
-    /** 每個 turn 所有工具結果合計 token 上限（預設 0 = 無限制） */
-    perTurnTotalCap?: number;
-    /** 單一 tool 執行超時毫秒（預設 30000，0 = 無限制） */
-    toolTimeoutMs?: number;
-    /** write_file / edit_file 單次寫入上限 bytes（預設 512000 = 500KB，0 = 無限制） */
-    maxWriteFileBytes?: number;
-  };
   /** Prompt Assembler 模組設定 */
   promptAssembler?: PromptAssemblerConfig;
   /**
@@ -770,7 +794,6 @@ interface RawConfig {
   homeClaudeCode?: Partial<HomeClaudeCodeConfig>;
   agents?: AgentsConfig;
   dashboard?: { enabled?: boolean; port?: number; token?: string };
-  toolBudget?: { resultTokenCap?: number; perTurnTotalCap?: number; toolTimeoutMs?: number; maxWriteFileBytes?: number };
   contextEngineering?: ContextEngineeringConfig;
   inboundHistory?: InboundHistoryConfig;
   subagents?: Partial<SubagentsConfig>;
@@ -1286,7 +1309,6 @@ function loadConfig(): BridgeConfig {
       port: raw.dashboard.port ?? 8088,
       token: raw.dashboard.token,
     } : undefined,
-    toolBudget: raw.toolBudget,
     contextEngineering: raw.contextEngineering,
     inboundHistory: raw.inboundHistory,
     subagents: raw.subagents ? {
