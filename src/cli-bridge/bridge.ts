@@ -694,6 +694,10 @@ export class CliBridge {
   }
 
   private abortTurn(turnId: string): void {
+    // 清除 idle timer，避免 orphan timer 5 分鐘後才跑
+    const timer = this.turnTimeouts.get(turnId);
+    if (timer) { clearTimeout(timer); this.turnTimeouts.delete(turnId); }
+
     const listener = this.turnListeners.get(turnId);
     if (listener && !listener.done) {
       listener.done = true;
