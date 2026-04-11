@@ -12,9 +12,10 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { log } from "../logger.js";
 import type { CliProcessConfig, StreamJsonMessage, CliBridgeEvent } from "./types.js";
 
@@ -81,8 +82,14 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
     }
 
     if (this.config.sessionId) {
-      // --resume 會載入既有 session（不像 --session-id 會因 .jsonl 存在報 "already in use"）
-      args.push("--resume", this.config.sessionId);
+      // --resume 前先驗證 .jsonl 是否還在 ~/.claude/projects/*/；
+      // 若不在，跳過 --resume 讓 CLI 開新 session（避免 "No conversation found" 死循環）
+      if (this.sessionJsonlExists(this.config.sessionId)) {
+        args.push("--resume", this.config.sessionId);
+      } else {
+        log.warn(`[cli-bridge:${this.config.label}] session ${this.config.sessionId} 的 .jsonl 不存在，跳過 --resume 改用新 session`);
+        this.config.sessionId = undefined;
+      }
     }
 
     // 寫入 per-bridge MCP config：catclaw-bridge-discord 用 bridge 自己的 bot token
@@ -146,6 +153,28 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
 
     if (!this.alive) {
       throw new Error(`[cli-bridge:${label}] process 啟動失敗`);
+    }
+  }
+
+  // ── session .jsonl 檢查 ──────────────────────────────────────────────────
+
+  /**
+   * 檢查 Claude CLI 的 session .jsonl 是否還存在。
+   * Claude CLI 將 session 存在 `~/.claude/projects/<slug>/<sid>.jsonl`，
+   * slug 會因 Claude 版本不同而略有差異，直接掃描所有 project 子目錄最穩。
+   */
+  private sessionJsonlExists(sid: string): boolean {
+    try {
+      const projectsDir = join(homedir(), ".claude", "projects");
+      if (!existsSync(projectsDir)) return false;
+      const target = `${sid}.jsonl`;
+      for (const sub of readdirSync(projectsDir, { withFileTypes: true })) {
+        if (!sub.isDirectory()) continue;
+        if (existsSync(join(projectsDir, sub.name, target))) return true;
+      }
+      return false;
+    } catch {
+      return false;
     }
   }
 
