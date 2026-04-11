@@ -511,6 +511,7 @@ export class CliBridge {
     if (existing) clearTimeout(existing);
 
     const timeoutMs = this.bridgeConfig.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
+    if (timeoutMs <= 0) return; // 0 or negative = disabled
     const action = this.bridgeConfig.turnTimeoutAction ?? "ask";
     const timer = setTimeout(() => {
       log.warn(`[cli-bridge:${this.label}] turn=${turnId.slice(0, 8)} idle timeout (${timeoutMs}ms 無事件) action=${action}`);

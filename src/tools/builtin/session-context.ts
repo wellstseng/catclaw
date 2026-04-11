@@ -42,7 +42,7 @@ export const tool: Tool = {
     const overflow = ce?.getStrategy("overflow-hard-stop") as { enabled: boolean; cfg?: { hardLimitUtilization: number; contextWindowTokens: number } } | undefined;
 
     // Extract thresholds from strategies
-    const compactionTrigger = (compaction as any)?.cfg?.triggerTokens ?? 4000;
+    const compactionTrigger = (compaction as any)?.cfg?.triggerTokens ?? 20000;
     const bgMaxUtil = (budgetGuard as any)?.cfg?.maxUtilization ?? 0.8;
     const bgWindow = (budgetGuard as any)?.cfg?.contextWindowTokens ?? contextWindow;
     const bgTrigger = Math.floor(bgWindow * bgMaxUtil);

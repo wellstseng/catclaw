@@ -268,7 +268,7 @@ async function handleContext(interaction: ChatInputCommandInteraction): Promise<
   const utilization = tokens / contextWindow;
 
   // CE thresholds
-  const compactionTrigger = (ce?.getStrategy("compaction") as any)?.cfg?.triggerTokens ?? 4000;
+  const compactionTrigger = (ce?.getStrategy("compaction") as any)?.cfg?.triggerTokens ?? 20000;
   const bgCfg = (ce?.getStrategy("budget-guard") as any)?.cfg;
   const bgTrigger = Math.floor((bgCfg?.contextWindowTokens ?? contextWindow) * (bgCfg?.maxUtilization ?? 0.8));
   const ohCfg = (ce?.getStrategy("overflow-hard-stop") as any)?.cfg;

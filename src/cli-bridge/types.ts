@@ -83,7 +83,7 @@ export interface CliBridgeConfig {
   keepAliveIntervalMs?: number;
   /** 重啟退避間隔毫秒清單（預設 [1000, 2000, 4000, 8000, 16000, 30000]） */
   restartBackoffMs?: number[];
-  /** Turn idle 超時毫秒（預設 300000 = 5 分鐘） */
+  /** Turn idle 超時毫秒（預設 300000 = 5 分鐘，設 0 關閉） */
   turnTimeoutMs?: number;
   /** 超時行為："ask" = Discord 按鈕讓使用者選（預設）| "interrupt" = 自動 SIGINT | "warn" = 僅通知 | "restart" = 重啟 process */
   turnTimeoutAction?: "ask" | "interrupt" | "warn" | "restart";

@@ -462,7 +462,7 @@ export interface ContextEngineeringConfig {
   enabled: boolean;
   strategies?: {
     /** Compaction：LLM 壓縮策略，model 只在此處需要 */
-    compaction?: { enabled?: boolean; model?: string; triggerTurns?: number; preserveRecentTurns?: number };
+    compaction?: { enabled?: boolean; model?: string; triggerTurns?: number; triggerTokens?: number; preserveRecentTurns?: number };
     /** BudgetGuard：純 token 計算，無需 LLM */
     budgetGuard?: { enabled?: boolean; maxUtilization?: number; contextWindowTokens?: number };
     /** SlidingWindow：純視窗裁切，無需 LLM */

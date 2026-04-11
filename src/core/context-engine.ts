@@ -135,7 +135,7 @@ export class CompactionStrategy implements ContextStrategy {
   constructor(cfg: Partial<CompactionConfig> & { triggerTurns?: number } = {}) {
     this.cfg = {
       enabled: cfg.enabled ?? true,
-      triggerTokens: cfg.triggerTokens ?? 4000,
+      triggerTokens: cfg.triggerTokens ?? 20_000,
       preserveRecentTurns: cfg.preserveRecentTurns ?? 5,
     };
     this.enabled = this.cfg.enabled;
