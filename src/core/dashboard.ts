@@ -20,6 +20,7 @@ import { getTraceStore, getTraceContextStore, MessageTrace, type MessageTraceEnt
 import { getSessionManager } from "./session.js";
 import { getContextEngine } from "./context-engine.js";
 import { getInboundHistoryStore } from "../discord/inbound-history.js";
+import { PROTECTED_WRITE_PATHS_DEFAULT, PROTECTED_READ_PATHS_DEFAULT } from "../safety/guard.js";
 
 // ── Codex OAuth 狀態 ────────────────────────────────────────────────────────
 let _codexOAuthState: { status: string; authUrl?: string; expiresAt?: string; error?: string } | null = null;
@@ -1453,7 +1454,7 @@ const CFG_SCHEMA = [
     {k:'safety.enabled',t:'bool',l:'啟用',d:'安全系統總開關（強烈建議保持啟用）'},
     {k:'safety.selfProtect',t:'bool',l:'Self Protect',d:'保護 catclaw.json、accounts/ 等核心檔案不被 AI 直接修改'},
     {k:'safety.bash.blacklist',t:'list',l:'Bash Blacklist',d:'Bash 指令黑名單（正則表達式），匹配的指令會被阻擋'},
-    {k:'safety.filesystem.protectedPaths',t:'list',l:'Protected Paths',d:'額外受保護路徑，AI 不可寫入'},
+    {k:'safety.filesystem.protectedPaths',t:'list',l:'Protected Paths',d:'額外受保護路徑，AI 不可寫入',defaults:${JSON.stringify(PROTECTED_WRITE_PATHS_DEFAULT)}},
     {k:'safety.filesystem.credentialPatterns',t:'list',l:'Credential Patterns',d:'憑證檔案模式（正則），匹配的檔案禁止存取'},
   ], sub:[
     {k:'safety.execApproval',l:'Exec Approval',fields:[
@@ -2079,6 +2080,7 @@ function _traceRowHtml(t) {
   const statusIcon = isLive ? '⏳' : t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
   const ceData = t.contextEngineering;
   let ce = '-';
+  let ceTooltip = '';
   if (ceData?.strategiesApplied?.length > 0) {
     const parts = ceData.strategiesApplied.map(s => {
       const detail = ceData.strategyDetails?.find(d => d.name === s);
@@ -2089,6 +2091,24 @@ function _traceRowHtml(t) {
       return s;
     });
     ce = '📦 ' + parts.join(' ');
+    // hover tooltip: per-strategy + per-message level changes
+    const tipLines = [];
+    for (const s of ceData.strategiesApplied) {
+      const detail = ceData.strategyDetails?.find(d => d.name === s);
+      if (!detail) continue;
+      const saved = detail.tokensBefore - detail.tokensAfter;
+      const affected = (detail.messagesDecayed ?? 0) + (detail.messagesRemoved ?? 0);
+      tipLines.push(s + ': ' + affected + ' messages, 省 ' + saved.toLocaleString() + ' tokens');
+      if (detail.levelChanges?.length) {
+        for (const lc of detail.levelChanges.slice(0, 5)) {
+          const tb = lc.tokensBefore > 1000 ? (lc.tokensBefore/1000).toFixed(1)+'K' : lc.tokensBefore;
+          const ta = lc.tokensAfter > 1000 ? (lc.tokensAfter/1000).toFixed(1)+'K' : lc.tokensAfter;
+          tipLines.push('  msg#' + lc.messageIndex + ': L' + lc.fromLevel + '→L' + lc.toLevel + ' (' + tb + '→' + ta + ')');
+        }
+        if (detail.levelChanges.length > 5) tipLines.push('  …+' + (detail.levelChanges.length - 5) + ' more');
+      }
+    }
+    ceTooltip = tipLines.join('\\n');
   }
   const prev = (t.inbound?.textPreview ?? '').slice(0, 40);
   const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
@@ -2104,7 +2124,7 @@ function _traceRowHtml(t) {
   html += '<td style="padding:4px;text-align:right;color:var(--fg2)">' + (t.totalCacheRead ?? 0).toLocaleString() + '/' + (t.totalCacheWrite ?? 0).toLocaleString() + '</td>';
   html += '<td style="padding:4px;text-align:right">' + (t.totalToolCalls ?? 0) + '</td>';
   html += '<td style="padding:4px;text-align:right">' + (t.llmCalls?.length ?? 0) + '</td>';
-  html += '<td style="padding:4px;text-align:center">' + ce + '</td>';
+  html += '<td style="padding:4px;text-align:center"' + (ceTooltip ? ' title="' + ceTooltip.replace(/"/g, '&quot;') + '"' : '') + '>' + ce + '</td>';
   html += '<td style="padding:4px;text-align:center">' + statusIcon + '</td>';
   html += '<td style="padding:4px;text-align:right;color:var(--warn)">' + cost + '</td>';
   html += '<td style="padding:4px;text-align:center">' + ctxIcon + '</td>';
@@ -2198,6 +2218,21 @@ function toggleCollapse(btn, targetId) {
   btn.textContent = btn.textContent.replace(hidden ? '▶' : '▼', hidden ? '▼' : '▶');
 }
 
+/** CE 壓縮 Level 標籤 */
+function ceLevelBadge(m) {
+  const ce = m._ce || (m.compressionLevel != null && m.compressionLevel > 0 ? { compressed: true, compressionLevel: m.compressionLevel, originalTokens: m.originalTokens, currentTokens: m.tokens, compressedBy: m.compressedBy } : null);
+  if (!ce?.compressed) return '';
+  const lvl = ce.compressionLevel;
+  const colors = ['', '#3b82f6', '#f59e0b', '#ef4444'];
+  const labels = ['', 'L1 精簡', 'L2 核心', 'L3 stub'];
+  const color = colors[lvl] || '#ef4444';
+  const label = labels[lvl] || 'L' + lvl;
+  const orig = ce.originalTokens ? ce.originalTokens.toLocaleString() : '?';
+  const cur = ce.currentTokens ? ce.currentTokens.toLocaleString() : '?';
+  const by = ce.compressedBy ? ' by ' + ce.compressedBy : '';
+  return ' <span style="background:' + color + ';color:#fff;font-size:0.65rem;padding:1px 4px;border-radius:3px;cursor:help" title="原始 ' + orig + ' tokens → 壓縮後 ' + cur + ' tokens（' + label + by + '）">' + label + '</span>';
+}
+
 /** 渲染 messages 陣列為 HTML（truncated per-message） */
 function renderMessages(msgs, containerId) {
   if (!msgs || msgs.length === 0) return '<div style="color:var(--fg2)">（空）</div>';
@@ -2219,8 +2254,10 @@ function renderMessages(msgs, containerId) {
     }
     const preview = contentText.length > 300 ? contentText.slice(0, 300) + '…' : contentText;
     const msgId = containerId + '_msg_' + i;
-    html += '<div style="border-top:1px solid var(--border);padding:4px 0">';
-    html += '<span style="color:' + roleColor + ';font-weight:bold">[' + role + ']</span> ';
+    const ceInfo = m._ce || (m.compressionLevel != null && m.compressionLevel > 0);
+    const bgStyle = ceInfo ? 'background:rgba(59,130,246,0.06);' : '';
+    html += '<div style="border-top:1px solid var(--border);padding:4px 0;' + bgStyle + '">';
+    html += '<span style="color:' + roleColor + ';font-weight:bold">[' + role + ']</span>' + ceLevelBadge(m) + ' ';
     html += '<span style="color:var(--fg2)" id="' + msgId + '_short">' + esc(preview) + '</span>';
     if (contentText.length > 300) {
       html += '<span id="' + msgId + '_full" style="display:none;color:var(--fg2);white-space:pre-wrap;word-break:break-all">' + esc(contentText) + '</span>';
@@ -2388,6 +2425,14 @@ async function showTraceDetail(traceId) {
           html += '<td style="text-align:right;padding:2px 4px">' + sd.tokensAfter.toLocaleString() + '</td>';
           html += '<td style="text-align:right;padding:2px 4px;color:var(--green2)">' + (saved > 0 ? '-' + saved.toLocaleString() : '0') + '</td>';
           html += '<td style="text-align:right;padding:2px 4px">' + (sd.messagesRemoved || 0) + '</td></tr>';
+          if (sd.levelChanges?.length) {
+            html += '<tr><td colspan="5" style="padding:2px 4px 6px 16px;color:var(--fg2);font-size:0.72rem">';
+            for (const lc of sd.levelChanges.slice(0, 10)) {
+              html += 'msg#' + lc.messageIndex + ': L' + lc.fromLevel + '→L' + lc.toLevel + ' (' + lc.tokensBefore.toLocaleString() + '→' + lc.tokensAfter.toLocaleString() + ')&nbsp;&nbsp;';
+            }
+            if (sd.levelChanges.length > 10) html += '…+' + (sd.levelChanges.length - 10) + ' more';
+            html += '</td></tr>';
+          }
         }
         html += '</table>';
       }
@@ -4408,15 +4453,26 @@ export class DashboardServer {
         if (!sessionKey) { res.writeHead(400); res.end(JSON.stringify({ error: "missing sessionKey" })); return; }
         const sm = getSessionManager();
         const messages = sm.getHistory(sessionKey);
-        // 只回傳 role + 純文字 content（過濾 tool_use/tool_result blocks）
+        // 回傳 role + 純文字 content + _ce 壓縮標記
         const simplified = messages
           .filter(m => m.role === "user" || m.role === "assistant")
-          .map(m => ({
-            role: m.role,
-            content: typeof m.content === "string"
+          .map(m => {
+            const content = typeof m.content === "string"
               ? m.content
-              : (m.content as any[]).filter((b: any) => b.type === "text").map((b: any) => b.text).join(""),
-          }))
+              : (m.content as any[]).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+            const entry: Record<string, unknown> = { role: m.role, content };
+            if ((m as any).compressionLevel != null && (m as any).compressionLevel > 0) {
+              const msg = m as any;
+              entry._ce = {
+                compressed: true,
+                compressionLevel: msg.compressionLevel,
+                originalTokens: msg.originalTokens ?? null,
+                currentTokens: msg.tokens ?? Math.ceil((content?.length ?? 0) / 4),
+                compressedBy: msg.compressedBy ?? null,
+              };
+            }
+            return entry;
+          })
           .filter(m => m.content);
         res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
         res.end(JSON.stringify(simplified));

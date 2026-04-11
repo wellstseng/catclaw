@@ -712,6 +712,7 @@ export async function* agentLoop(
         tokensBeforeCE: bd.tokensBeforeCE ?? bd.estimatedTokens,
         tokensAfterCE: bd.tokensAfterCE ?? bd.estimatedTokens,
         strategyDetails: bd.strategyDetails,
+        originalMessageDigest: bd.originalMessageDigest,
         overflowSignaled: bd.overflowSignaled,
       });
     }

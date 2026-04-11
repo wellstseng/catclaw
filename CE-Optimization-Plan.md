@@ -382,7 +382,7 @@ Phase 1 是截斷（丟細節），Phase 2 是濃縮（保留語意）。
     "memoryBudget": 2000              // context-builder.ts 的 token 上限
   }
   
-  // "toolBudget" 頂層欄位仍支援（向後相容），讀取時 merge 到 contextEngineering.toolBudget
+  // "toolBudget" 頂層欄位已移除（決策 #6），偵測到舊設定時 log.warn 提示遷移
 }
 ```
 

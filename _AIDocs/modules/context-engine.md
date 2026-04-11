@@ -1,7 +1,7 @@
 # modules/context-engine — Context 壓縮策略
 
 > 檔案：`src/core/context-engine.ts`
-> 更新日期：2026-04-11
+> 更新日期：2026-04-12
 
 ## 職責
 
@@ -42,6 +42,45 @@ interface ContextBuildContext {
 }
 ```
 
+### LevelChange
+
+```typescript
+interface LevelChange {
+  messageIndex: number;
+  fromLevel: number;
+  toLevel: number;
+  tokensBefore: number;
+  tokensAfter: number;
+}
+```
+
+### StrategyDetail
+
+```typescript
+interface StrategyDetail {
+  name: string;
+  tokensBefore: number;
+  tokensAfter: number;
+  messagesRemoved?: number;
+  messagesDecayed?: number;
+  levelChanges?: LevelChange[];  // decay 專屬：per-message level 變化
+}
+```
+
+### OriginalMessageDigest
+
+```typescript
+interface OriginalMessageDigest {
+  index: number;
+  role: string;
+  turnIndex: number;
+  originalTokens: number;
+  currentTokens: number;
+  compressionLevel: number;
+  toolName?: string;
+}
+```
+
 ### ContextBreakdown
 
 ```typescript
@@ -52,7 +91,8 @@ interface ContextBreakdown {
   tokensBeforeCE?: number;
   tokensAfterCE?: number;
   overflowSignaled?: boolean;
-  strategyDetails?: StrategyDetail[];  // per-strategy token 變化
+  strategyDetails?: StrategyDetail[];
+  originalMessageDigest?: OriginalMessageDigest[];  // CE 前 message 摘要
 }
 ```
 

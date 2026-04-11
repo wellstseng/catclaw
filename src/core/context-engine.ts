@@ -16,12 +16,31 @@ import type { DecayStrategyConfig, DecayLevel } from "./config.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
+export interface LevelChange {
+  messageIndex: number;
+  fromLevel: number;
+  toLevel: number;
+  tokensBefore: number;
+  tokensAfter: number;
+}
+
 export interface StrategyDetail {
   name: string;
   tokensBefore: number;
   tokensAfter: number;
   messagesRemoved?: number;
   messagesDecayed?: number;
+  levelChanges?: LevelChange[];
+}
+
+export interface OriginalMessageDigest {
+  index: number;
+  role: string;
+  turnIndex: number;
+  originalTokens: number;
+  currentTokens: number;
+  compressionLevel: number;
+  toolName?: string;
 }
 
 export interface ContextBreakdown {
@@ -33,6 +52,7 @@ export interface ContextBreakdown {
   /** 三段 failover 的第三段觸發：截斷後仍超硬上限，需要停止執行 */
   overflowSignaled?: boolean;
   strategyDetails?: StrategyDetail[];
+  originalMessageDigest?: OriginalMessageDigest[];
 }
 
 export interface ContextBuildContext {
@@ -216,6 +236,7 @@ function stubMessage(m: Message): Message {
 export class DecayStrategy implements ContextStrategy {
   name = "decay";
   enabled: boolean;
+  lastLevelChanges: LevelChange[] = [];
   private cfg: Required<Pick<DecayStrategyConfig, "mode" | "baseDecay" | "minRetainRatio" | "referenceIntervalSec">> & { levels: DecayLevel[]; tempoRange: [number, number] };
 
   constructor(cfg: Partial<DecayStrategyConfig> = {}) {
@@ -236,13 +257,14 @@ export class DecayStrategy implements ContextStrategy {
 
   async apply(ctx: ContextBuildContext): Promise<ContextBuildContext> {
     const { messages, turnIndex } = ctx;
-    const now = Date.now();
     const tempoMultiplier = this._calcTempoMultiplier(messages);
 
     const result: Message[] = [];
+    const changes: LevelChange[] = [];
     let removed = 0;
 
-    for (const m of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
       const age = (m.turnIndex != null) ? turnIndex - m.turnIndex : 0;
       if (age <= 0) { result.push(m); continue; }
 
@@ -250,6 +272,8 @@ export class DecayStrategy implements ContextStrategy {
       const targetLevel = this._calcTargetLevel(age, tempoMultiplier);
 
       if (targetLevel >= 4) {
+        const tokBefore = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
+        changes.push({ messageIndex: i, fromLevel: currentLevel, toLevel: 4, tokensBefore: tokBefore, tokensAfter: 0 });
         removed++;
         continue;
       }
@@ -260,14 +284,23 @@ export class DecayStrategy implements ContextStrategy {
       if (!levelCfg) { result.push(m); continue; }
 
       if (levelCfg.action === "remove") {
+        const tokBefore = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
+        changes.push({ messageIndex: i, fromLevel: currentLevel, toLevel: 4, tokensBefore: tokBefore, tokensAfter: 0 });
         removed++;
         continue;
       }
 
       const maxTokens = levelCfg.maxTokens ?? Infinity;
+      const tokBefore = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
       const decayed = this._compressMessage(m, maxTokens, targetLevel);
+      const tokAfter = estimateTokens([decayed]);
+      if (targetLevel !== currentLevel) {
+        changes.push({ messageIndex: i, fromLevel: currentLevel, toLevel: targetLevel, tokensBefore: tokBefore, tokensAfter: tokAfter });
+      }
       result.push(decayed);
     }
+
+    this.lastLevelChanges = changes;
 
     if (removed > 0) {
       log.info(`[context-engine:decay] removed ${removed} messages, ${messages.length} → ${result.length}`);
@@ -526,6 +559,28 @@ export class ContextEngine {
 
   async build(messages: Message[], opts: BuildOpts): Promise<Message[]> {
     const tokensBeforeCE = estimateTokens(messages);
+
+    // originalMessageDigest: 壓縮前的 message 摘要
+    const originalMessageDigest = messages.map((m, i) => {
+      const tokens = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
+      let toolName: string | undefined;
+      if (typeof m.content !== "string") {
+        for (const b of m.content) {
+          if (b.type === "tool_use") { toolName = b.name; break; }
+          if (b.type === "tool_result") { toolName = `result:${b.tool_use_id?.slice(-6) ?? "?"}`; break; }
+        }
+      }
+      return {
+        index: i,
+        role: m.role,
+        turnIndex: m.turnIndex ?? 0,
+        originalTokens: tokens,
+        currentTokens: tokens,
+        compressionLevel: m.compressionLevel ?? 0,
+        toolName,
+      };
+    });
+
     let ctx: ContextBuildContext = {
       messages,
       sessionKey: opts.sessionKey,
@@ -555,6 +610,14 @@ export class ContextEngine {
         if (ctx.messages.length < msgsBefore) {
           detail.messagesRemoved = msgsBefore - ctx.messages.length;
         }
+        // decay 專屬：附加 levelChanges
+        if (name === "decay") {
+          const decayStrategy = strategy as DecayStrategy;
+          if (decayStrategy.lastLevelChanges.length > 0) {
+            detail.levelChanges = decayStrategy.lastLevelChanges;
+            detail.messagesDecayed = decayStrategy.lastLevelChanges.filter(c => c.toLevel < 4).length;
+          }
+        }
         details.push(detail);
         log.debug(`[context-engine] strategy=${name} applied, tokens ${tokensBefore}→${ctx.estimatedTokens}`);
       }
@@ -569,6 +632,7 @@ export class ContextEngine {
       tokensAfterCE: applied.length > 0 ? ctx.estimatedTokens : undefined,
       overflowSignaled: overflowStrategy?.lastOverflowSignaled ?? false,
       strategyDetails: details.length > 0 ? details : undefined,
+      originalMessageDigest: applied.length > 0 ? originalMessageDigest : undefined,
     };
     if (overflowStrategy) overflowStrategy.lastOverflowSignaled = false;
     this.lastAppliedStrategy = applied.at(-1);

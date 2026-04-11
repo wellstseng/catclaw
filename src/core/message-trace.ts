@@ -159,6 +159,22 @@ export interface MessageTraceEntry {
       tokensAfter: number;
       messagesRemoved?: number;
       messagesDecayed?: number;
+      levelChanges?: Array<{
+        messageIndex: number;
+        fromLevel: number;
+        toLevel: number;
+        tokensBefore: number;
+        tokensAfter: number;
+      }>;
+    }>;
+    originalMessageDigest?: Array<{
+      index: number;
+      role: string;
+      turnIndex: number;
+      originalTokens: number;
+      currentTokens: number;
+      compressionLevel: number;
+      toolName?: string;
     }>;
     overflowSignaled?: boolean;
   };
@@ -476,6 +492,22 @@ export class MessageTrace {
       tokensAfter: number;
       messagesRemoved?: number;
       messagesDecayed?: number;
+      levelChanges?: Array<{
+        messageIndex: number;
+        fromLevel: number;
+        toLevel: number;
+        tokensBefore: number;
+        tokensAfter: number;
+      }>;
+    }>;
+    originalMessageDigest?: Array<{
+      index: number;
+      role: string;
+      turnIndex: number;
+      originalTokens: number;
+      currentTokens: number;
+      compressionLevel: number;
+      toolName?: string;
     }>;
     overflowSignaled?: boolean;
   }): void {
@@ -486,6 +518,7 @@ export class MessageTrace {
       tokensAfterCE: opts.tokensAfterCE,
       tokensSaved: opts.tokensBeforeCE - opts.tokensAfterCE,
       strategyDetails: opts.strategyDetails,
+      originalMessageDigest: opts.originalMessageDigest,
       overflowSignaled: opts.overflowSignaled,
     };
   }

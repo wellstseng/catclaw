@@ -1149,6 +1149,11 @@ function loadConfig(): BridgeConfig {
     throw new Error("catclaw.json 中 discord.token 欄位必填");
   }
 
+  // 偵測舊版頂層 toolBudget → 提示遷移
+  if ((raw as Record<string, unknown>)["toolBudget"]) {
+    log.warn("[config] 偵測到頂層 toolBudget 設定，已棄用。請移至 contextEngineering.toolBudget。");
+  }
+
   // S17：safety.enabled/selfProtect 被明確關閉 → 拒絕啟動
   if (raw.safety?.enabled === false) {
     throw new Error("catclaw.json safety.enabled=false 被禁止，拒絕啟動（移除此欄位可恢復預設 true）");
