@@ -43,12 +43,16 @@ export class CliBridge {
   private stdoutLogger: StdoutLogger;
   private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private restartAttempt = 0;
-  private _status: BridgeStatus = "dead";
+  private _status: BridgeStatus = "suspended";
   private sessionId: string | null = null;
   /** "already in use" 連續重試次數 */
   private _alreadyInUseCount = 0;
   /** 最近一次 spawn 時間（偵測快速死亡） */
   private _lastSpawnTime = 0;
+  /** 最後一次使用時間（idle suspend 判定用） */
+  private _lastUsedAt = Date.now();
+  /** ensureAlive mutex — 防止多訊息同時觸發雙 spawn */
+  private _ensureAliveLock: Promise<void> | null = null;
 
   // Turn 追蹤
   private activeTurnId: string | null = null;
@@ -107,6 +111,7 @@ export class CliBridge {
   // ── 送訊息（直送 stdin，不排隊）──────────────────────────────────────────
 
   send(text: string, source: "discord" | "dashboard", meta?: { user?: string; ts?: string }): TurnHandle {
+    this._lastUsedAt = Date.now();
     const turnId = randomUUID();
 
     if (!this.process?.alive) {
@@ -327,6 +332,35 @@ export class CliBridge {
     this._status = "dead";
   }
 
+  // ── Idle Suspend / Resume ──────────────────────────────────────────────────
+
+  async ensureAlive(): Promise<void> {
+    if (this._status === "idle" || this._status === "busy") return;
+    if (this._ensureAliveLock) return this._ensureAliveLock;
+    this._ensureAliveLock = (async () => {
+      try {
+        this._sender?.sendTyping();
+        log.info(`[cli-bridge:${this.label}] 喚醒中（status=${this._status}）`);
+        await this.start();
+      } finally {
+        this._ensureAliveLock = null;
+      }
+    })();
+    return this._ensureAliveLock;
+  }
+
+  async suspend(): Promise<void> {
+    if (this._status === "suspended" || this._status === "dead") return;
+    log.info(`[cli-bridge:${this.label}] idle suspend`);
+    this.stopKeepAlive();
+    this.failAllPendingTurns("bridge idle suspend");
+    if (this.process?.alive) {
+      await this.process.shutdown();
+    }
+    this.process = null;
+    this._status = "suspended";
+  }
+
   // ── 狀態查詢 ──────────────────────────────────────────────────────────────
 
   get status(): BridgeStatus {
@@ -335,6 +369,10 @@ export class CliBridge {
 
   get currentSessionId(): string | null {
     return this.sessionId;
+  }
+
+  get lastUsedAt(): number {
+    return this._lastUsedAt;
   }
 
   getTurnHistory(limit = 50): TurnRecord[] {
@@ -436,6 +474,7 @@ export class CliBridge {
   // ── 內部：事件處理 ────────────────────────────────────────────────────────
 
   private handleEvent(evt: CliBridgeEvent): void {
+    this._lastUsedAt = Date.now();
     // 記錄到 logger
     this.stdoutLogger.append(evt);
 

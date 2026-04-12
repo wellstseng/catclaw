@@ -3109,6 +3109,7 @@ const _cbDefaults = {
   turnTimeoutAction: 'ask',
   showThinking: false,
   editIntervalMs: 800,
+  idleSuspendMs: 600000,
   channels: {},
 };
 const _cbChannelDefaults = {
@@ -3155,6 +3156,7 @@ function _cbRenderBridge(idx, cfg) {
   html += _cbField(p+'turnTimeoutAction', 'Timeout Action', 'select', cfg.turnTimeoutAction || _cbDefaults.turnTimeoutAction, ['ask','interrupt','warn','restart']);
   html += _cbField(p+'showThinking', 'Show Thinking', 'bool', cfg.showThinking ?? _cbDefaults.showThinking);
   html += _cbField(p+'editIntervalMs', 'Edit Interval (ms)', 'num', cfg.editIntervalMs ?? _cbDefaults.editIntervalMs);
+  html += _cbField(p+'idleSuspendMs', 'Idle Suspend (ms)，預設 600000 (10min)。0=常駐不卸載', 'num', cfg.idleSuspendMs ?? _cbDefaults.idleSuspendMs);
 
   // Channels
   html += \`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px"><strong style="font-size:0.82rem">Channels</strong> <button class="btn btn-sm" onclick="cbAddChannel(\${idx})" style="margin-left:8px">+ Channel</button></div>\`;
@@ -3193,6 +3195,7 @@ function _cbCollectForm() {
       turnTimeoutAction: g(p+'turnTimeoutAction') || 'ask',
       showThinking: !!g(p+'showThinking'),
       editIntervalMs: parseInt(g(p+'editIntervalMs')) || 800,
+      idleSuspendMs: parseInt(g(p+'idleSuspendMs')) ?? 600000,
       channels: {},
     };
     // 不儲存空 botToken
@@ -3306,7 +3309,7 @@ async function loadCliBridges() {
       document.getElementById('cb-detail').style.display = 'none';
       return;
     }
-    const statusIcon = s => s === 'idle' ? '🟢' : s === 'busy' ? '🟡' : s === 'restarting' ? '🔄' : '🔴';
+    const statusIcon = s => s === 'idle' ? '🟢' : s === 'busy' ? '🟡' : s === 'restarting' ? '🔄' : s === 'suspended' ? '💤' : '🔴';
     document.getElementById('cb-list').innerHTML = '<table class="tbl"><thead><tr><th>Label</th><th>狀態</th><th>Session</th><th>Channel</th><th></th></tr></thead><tbody>' +
       bridges.map(b => \`<tr><td>\${b.label}</td><td>\${statusIcon(b.status)} \${b.status}</td><td style="font-size:0.72rem;color:var(--fg3)">\${b.sessionId ? b.sessionId.slice(0,8) : '-'}</td><td style="font-size:0.72rem;color:var(--fg3)">\${b.channelId}</td><td><button class="btn btn-sm" onclick="cbSelect('\${b.label}')">開啟</button></td></tr>\`).join('') +
       '</tbody></table>';
@@ -3328,7 +3331,7 @@ async function cbLoadStatus() {
   if (!_cbSelectedLabel) return;
   try {
     const d = await authFetch('/api/cli-bridge/' + encodeURIComponent(_cbSelectedLabel) + '/status').then(r => r.json());
-    const statusIcon = s => s === 'idle' ? '🟢' : s === 'busy' ? '🟡' : s === 'restarting' ? '🔄' : '🔴';
+    const statusIcon = s => s === 'idle' ? '🟢' : s === 'busy' ? '🟡' : s === 'restarting' ? '🔄' : s === 'suspended' ? '💤' : '🔴';
     document.getElementById('cb-detail-info').innerHTML =
       \`狀態：\${statusIcon(d.status)} \${d.status}<br>Session：\${d.sessionId || '-'}<br>Channel：\${d.channelId}\`;
   } catch {}

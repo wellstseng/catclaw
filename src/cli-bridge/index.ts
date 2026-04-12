@@ -92,6 +92,9 @@ const bridgesByLabel = new Map<string, CliBridge>();
 /** 保存 Discord Client 引用（hot-reload 用） */
 let _discordClient: Client | null = null;
 
+/** 已註冊 slash commands 的 Client（避免同 token 多 bridge 重複註冊） */
+const _slashRegistered = new WeakSet<Client>();
+
 /**
  * 從單一 config 初始化所有 bridge（一個 config 可含多個 channel）。
  */
@@ -134,6 +137,7 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
   if (configs.length === 0) {
     log.info("[cli-bridge] 無啟用的 CLI Bridge");
     watchConfigFile();
+    startIdleScanner();
     return;
   }
 
@@ -159,22 +163,32 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
           sender.onMessage((msg: Message) => {
             handleIndependentBotMessage(bridge, msg);
           });
-          // 獨立 bot 也註冊 slash commands（讓沒有主 bot 的伺服器也能用 /cd 等指令）
+          // 同 token 共用 Client — 只註冊一次 slash commands
           try {
-            const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
             const indClient = (sender as import("./discord-sender.js").IndependentBotSender).getClient();
-            await registerSlashCommands(indClient);
-            setupSlashCommands(indClient);
-            log.info(`[cli-bridge] ${bridge.label} slash commands 已註冊到獨立 bot`);
+            if (!_slashRegistered.has(indClient)) {
+              const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
+              await registerSlashCommands(indClient);
+              setupSlashCommands(indClient);
+              _slashRegistered.add(indClient);
+              log.info(`[cli-bridge] ${bridge.label} slash commands 已註冊到獨立 bot`);
+            }
           } catch (err) {
             log.warn(`[cli-bridge] ${bridge.label} slash commands 註冊失敗：${err instanceof Error ? err.message : String(err)}`);
           }
         }
 
-        await bridge.start();
         // 記錄 config snapshot（hot-reload 比對用，排除 sessionId）
         _lastConfigJson.set(bridge.channelId, configSnapshotJson(config, bridge.channelId));
-        log.info(`[cli-bridge] ${bridge.label} 啟動成功`);
+
+        const idleSuspendMs = config.idleSuspendMs ?? DEFAULT_IDLE_SUSPEND_MS;
+        if (idleSuspendMs <= 0) {
+          // keepalive 模式：啟動時立即 spawn process
+          await bridge.start();
+          log.info(`[cli-bridge] ${bridge.label} 啟動成功（keepalive）`);
+        } else {
+          log.info(`[cli-bridge] ${bridge.label} 就緒（suspended，等待訊息喚醒，idle=${idleSuspendMs}ms）`);
+        }
       } catch (err) {
         log.error(`[cli-bridge] ${bridge.label} 啟動失敗：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -183,8 +197,9 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
 
   log.info(`[cli-bridge] 啟動完成（${allBridges.length} 個 bridge）`);
 
-  // 啟動 hot-reload 監聽
+  // 啟動 hot-reload 監聽 + idle scanner
   watchConfigFile();
+  startIdleScanner();
 }
 
 /**
@@ -241,6 +256,7 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
 
   void (async () => {
     try {
+      await bridge.ensureAlive();
       const { handleCliBridgeReply, extractAttachmentText } = await import("./reply.js");
       const attachmentText = extractAttachmentText(msg);
       let fullText = msg.content + attachmentText;
@@ -431,17 +447,26 @@ async function hotReload(): Promise<void> {
             handleIndependentBotMessage(bridge, msg);
           });
           try {
-            const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
             const indClient = (sender as import("./discord-sender.js").IndependentBotSender).getClient();
-            await registerSlashCommands(indClient);
-            setupSlashCommands(indClient);
+            if (!_slashRegistered.has(indClient)) {
+              const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
+              await registerSlashCommands(indClient);
+              setupSlashCommands(indClient);
+              _slashRegistered.add(indClient);
+            }
           } catch { /* slash 註冊失敗不影響 bridge 運作 */ }
         }
 
-        await bridge.start();
         // 記錄 config snapshot（排除 sessionId）
         _lastConfigJson.set(bridge.channelId, configSnapshotJson(config, bridge.channelId));
-        log.info(`[cli-bridge] hot-reload: ${bridge.label} 啟動成功 sender=${sender.mode}`);
+
+        const idleSuspendMs = config.idleSuspendMs ?? DEFAULT_IDLE_SUSPEND_MS;
+        if (idleSuspendMs <= 0) {
+          await bridge.start();
+          log.info(`[cli-bridge] hot-reload: ${bridge.label} 啟動成功（keepalive） sender=${sender.mode}`);
+        } else {
+          log.info(`[cli-bridge] hot-reload: ${bridge.label} 就緒（suspended） sender=${sender.mode}`);
+        }
       } catch (err) {
         log.error(`[cli-bridge] hot-reload: ${bridge.label} 啟動失敗：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -518,11 +543,14 @@ export async function rebuildBridgeForChannel(
         handleIndependentBotMessage(bridge, msg);
       });
       try {
-        const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
         const indClient = (sender as import("./discord-sender.js").IndependentBotSender).getClient();
-        await registerSlashCommands(indClient);
-        setupSlashCommands(indClient);
-      } catch { /* slash 註冊失敗不影響 bridge 運作 */ }
+        if (!_slashRegistered.has(indClient)) {
+          const { registerSlashCommands, setupSlashCommands } = await import("../slash.js");
+          await registerSlashCommands(indClient);
+          setupSlashCommands(indClient);
+          _slashRegistered.add(indClient);
+        }
+      } catch { /* slash 註冊��敗不影響 bridge 運作 */ }
     }
 
     await bridge.start();
@@ -540,6 +568,7 @@ export async function rebuildBridgeForChannel(
  * 關閉所有 bridge（graceful close）。
  */
 export async function shutdownAllBridges(): Promise<void> {
+  stopIdleScanner();
   // 停止監聽
   const configPath = getConfigPath();
   unwatchFile(configPath);
@@ -549,4 +578,42 @@ export async function shutdownAllBridges(): Promise<void> {
   bridges.clear();
   bridgesByLabel.clear();
   log.info(`[cli-bridge] 所有 bridge 已關閉`);
+}
+
+// ── Idle Suspend Scanner ────────────────────────────────────────────────────
+
+const DEFAULT_IDLE_SUSPEND_MS = 600_000; // 10 分鐘
+const IDLE_SCAN_INTERVAL_MS = 30_000;
+let _idleScannerTimer: ReturnType<typeof setInterval> | null = null;
+
+function startIdleScanner(): void {
+  if (_idleScannerTimer) return;
+  _idleScannerTimer = setInterval(() => {
+    void scanIdleBridges();
+  }, IDLE_SCAN_INTERVAL_MS);
+  log.info("[cli-bridge] idle scanner 已啟動");
+}
+
+function stopIdleScanner(): void {
+  if (_idleScannerTimer) {
+    clearInterval(_idleScannerTimer);
+    _idleScannerTimer = null;
+  }
+}
+
+async function scanIdleBridges(): Promise<void> {
+  const now = Date.now();
+  for (const bridge of bridges.values()) {
+    if (bridge.status !== "idle") continue;
+    const idleMs = bridge.getBridgeConfig().idleSuspendMs ?? DEFAULT_IDLE_SUSPEND_MS;
+    if (idleMs <= 0) continue;
+    if (now - bridge.lastUsedAt > idleMs) {
+      log.info(`[cli-bridge] ${bridge.label} 閒置 ${Math.round((now - bridge.lastUsedAt) / 1000)}s，自動 suspend`);
+      try {
+        await bridge.suspend();
+      } catch (err) {
+        log.error(`[cli-bridge] ${bridge.label} suspend 失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
 }

@@ -34,7 +34,7 @@ Bearer token 認證（可選）：
 | Config | catclaw.json 線上編輯 |
 | Memory | Atom Browser（排序/篩選/刪除）+ Recall Tester + Stats Panel |
 | Pipeline | 管線設定總覽 + Embedding/Extract Model 切換 + Ollama 模型管理 + Vector Resync |
-| CLI Bridge | 持久 CLI Bridge 控制台（狀態、即時日誌、turn 歷程、Console 輸入、控制按鈕） |
+| CLI Bridge | 持久 CLI Bridge 控制台（狀態、即時日誌、turn 歷程、Console 輸入、控制按鈕、idleSuspendMs 設定） |
 | Logs | PM2 日誌 tail + SSE 即時串流 |
 
 ## REST API 端點

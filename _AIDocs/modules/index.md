@@ -112,7 +112,9 @@ if (existsSync(signalPath)) {
 SIGINT / SIGTERM
   → _shuttingDown guard（防止重複觸發）
   → stopCron()                  ← 停止排程服務
+  → stopIdleScanner()           ← 停止 CLI bridge idle 掃描
   → await shutdownAllBridges()  ← 關閉所有 CLI bridge process（最多 10s）
+  → destroyAllSharedClients()   ← 清空 SharedBotPool（共用 Discord Client）
   → bot.destroy()               ← 斷開 Discord Gateway
   → process.exit(0)
 ```

@@ -38,7 +38,6 @@ export const PROTECTED_WRITE_PATHS_DEFAULT = [
   "~/.catclaw/accounts/",
   "~/.catclaw/tools/",
   "~/.catclaw/skills/",
-  "~/.claude/",
   "~/.ssh/",
   "~/.gnupg/",
 ];

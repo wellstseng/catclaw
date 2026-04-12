@@ -2,8 +2,9 @@
  * @file cli-bridge/discord-sender.ts
  * @description CLI Bridge 的 Discord 訊息發送抽象層
  *
- * 兩種模式：
- * 1. IndependentBotSender — 有 botToken → 獨立 Discord Client（可自行監聽 messageCreate）
+ * 三種模式：
+ * 1. IndependentBotSender — 有 botToken → 共用 Discord Client（SharedBotPool）
+ *    同 token 多 channel 共用一個 Client，各自獨立 channel binding
  * 2. MainBotSender — fallback → 用主 bot 的 channel 直接發送
  */
 
@@ -57,51 +58,118 @@ export interface BridgeSender {
   destroy(): Promise<void>;
 }
 
+// ── Shared Bot Client Pool ──────────────────────────────────────────────────
+
+interface SharedBotEntry {
+  client: Client;
+  refCount: number;
+  ready: boolean;
+  /** 所有掛在此 Client 上的 sender（messageCreate 分派用） */
+  senders: Set<IndependentBotSender>;
+}
+
+const _botPool = new Map<string, SharedBotEntry>();
+
+async function acquireSharedClient(botToken: string, sender: IndependentBotSender): Promise<Client> {
+  let entry = _botPool.get(botToken);
+  if (entry) {
+    entry.refCount++;
+    entry.senders.add(sender);
+    if (!entry.ready) {
+      await new Promise<void>((resolve) => {
+        if (entry!.client.isReady()) { entry!.ready = true; resolve(); return; }
+        entry!.client.once("ready", () => { entry!.ready = true; resolve(); });
+      });
+    }
+    return entry.client;
+  }
+
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
+  });
+
+  entry = { client, refCount: 1, ready: false, senders: new Set([sender]) };
+  _botPool.set(botToken, entry);
+
+  await client.login(botToken);
+  await new Promise<void>((resolve) => {
+    if (client.isReady()) { resolve(); return; }
+    client.once("ready", () => resolve());
+  });
+  entry.ready = true;
+
+  client.user?.setPresence({ status: "online" });
+
+  // 全域 messageCreate — 分派給所有掛在此 Client 的 sender
+  client.on("messageCreate", (msg) => {
+    if (msg.author.id === client.user?.id) return;
+    const poolEntry = _botPool.get(botToken);
+    if (!poolEntry) return;
+    for (const s of poolEntry.senders) {
+      s.dispatchMessage(msg);
+    }
+  });
+
+  log.info(`[bridge-sender] shared bot pool: ${client.user?.tag} 已建立（token=${botToken.slice(0, 8)}...）`);
+  return client;
+}
+
+async function releaseSharedClient(botToken: string, sender: IndependentBotSender): Promise<void> {
+  const entry = _botPool.get(botToken);
+  if (!entry) return;
+  entry.senders.delete(sender);
+  entry.refCount--;
+  if (entry.refCount <= 0) {
+    entry.client.destroy();
+    _botPool.delete(botToken);
+    log.info(`[bridge-sender] shared bot pool: token=${botToken.slice(0, 8)}... 已銷毀（refCount=0）`);
+  }
+}
+
+/** 清空 pool（graceful shutdown 用） */
+export function destroyAllSharedClients(): void {
+  for (const [token, entry] of _botPool) {
+    entry.client.destroy();
+    log.info(`[bridge-sender] shared bot pool: token=${token.slice(0, 8)}... 強制銷毀`);
+  }
+  _botPool.clear();
+}
+
 // ── IndependentBotSender ──────────────────────────────────────────────────────
 
 export class IndependentBotSender implements BridgeSender {
   readonly mode = "independent-bot" as const;
-  private client: Client;
+  private client: Client | null = null;
   private channel: GuildTextBasedChannel | null = null;
   private messageCallbacks: OnMessageCallback[] = [];
+  private _channelId: string | null = null;
 
-  constructor(private readonly botToken: string) {
-    this.client = new Client({
-      intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-      ],
-    });
-  }
+  constructor(private readonly botToken: string) {}
 
   async init(channelId: string): Promise<void> {
-    await this.client.login(this.botToken);
-    await new Promise<void>((resolve) => {
-      if (this.client.isReady()) { resolve(); return; }
-      this.client.once("ready", () => resolve());
-    });
+    this._channelId = channelId;
+    this.client = await acquireSharedClient(this.botToken, this);
+
     const ch = await this.client.channels.fetch(channelId);
     if (!ch?.isTextBased() || ch.isDMBased()) {
       throw new Error(`[bridge-sender] channel ${channelId} 不是 guild text channel`);
     }
     this.channel = ch;
 
-    // 設定上線狀態
-    this.client.user?.setPresence({ status: "online" });
-
-    // 掛 messageCreate — 獨立 bot 自己監聽訊息
-    this.client.on("messageCreate", (msg) => {
-      // 忽略自己的訊息
-      if (msg.author.id === this.client.user?.id) return;
-      for (const cb of this.messageCallbacks) {
-        try { cb(msg); } catch (err) {
-          log.error(`[bridge-sender] onMessage callback error: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    });
-
     log.info(`[bridge-sender] independent bot ready: ${this.client.user?.tag} → #${this.channel.name}`);
+  }
+
+  /** 由 SharedBotPool 的 messageCreate 呼叫，分派訊息給此 sender 的 callbacks */
+  dispatchMessage(msg: Message): void {
+    for (const cb of this.messageCallbacks) {
+      try { cb(msg); } catch (err) {
+        log.error(`[bridge-sender] onMessage callback error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   async reply(originalMessage: Message, content: string): Promise<Message> {
@@ -133,19 +201,21 @@ export class IndependentBotSender implements BridgeSender {
   }
 
   getBotUserId(): string | null {
-    return this.client.user?.id ?? null;
+    return this.client?.user?.id ?? null;
   }
 
   /** 取得底層 Discord Client（slash command 註冊用） */
   getClient(): Client {
+    if (!this.client) throw new Error("[bridge-sender] client 尚未初始化");
     return this.client;
   }
 
   async destroy(): Promise<void> {
     this.messageCallbacks = [];
-    this.client.destroy();
     this.channel = null;
-    log.info("[bridge-sender] independent bot destroyed");
+    await releaseSharedClient(this.botToken, this);
+    this.client = null;
+    log.info("[bridge-sender] independent bot sender destroyed");
   }
 }
 
@@ -191,7 +261,7 @@ export class MainBotSender implements BridgeSender {
   }
 
   onMessage(_callback: OnMessageCallback): void {
-    // MainBot 模式不自行監聽，由主 bot 的 discord.ts 路由處理
+    // MainBot 模式不自行監聯，由主 bot 的 discord.ts 路由處理
   }
 
   getBotUserId(): string | null {

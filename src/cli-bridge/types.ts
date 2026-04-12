@@ -91,6 +91,8 @@ export interface CliBridgeConfig {
   showThinking?: boolean;
   /** Discord edit 最小間隔毫秒（rate limit 保護，預設 800） */
   editIntervalMs?: number;
+  /** 閒置超過此毫秒後自動卸載 CLI process（預設 0 = 不卸載） */
+  idleSuspendMs?: number;
 }
 
 /** catclaw.json 中的 cliBridges 區塊（陣列，每個 entry 一個獨立 CLI） */
@@ -150,4 +152,4 @@ export interface StdoutLogEntry {
 }
 
 /** Bridge 狀態 */
-export type BridgeStatus = "idle" | "busy" | "dead" | "restarting";
+export type BridgeStatus = "idle" | "busy" | "dead" | "restarting" | "suspended";
