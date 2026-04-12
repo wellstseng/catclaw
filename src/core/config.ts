@@ -476,6 +476,15 @@ export interface DecayLevel {
   action?: "remove";
 }
 
+/** Externalization 子設定（Decay 內建） */
+export interface ExternalizeConfig {
+  enabled?: boolean;          // 預設 true
+  triggerLevel?: number;      // 觸發等級，預設 2（L1→L2 transition）
+  minTokens?: number;         // 最小 token 閾值，預設 300
+  ttlDays?: number;           // 清理天數，預設 14
+  storePath?: string;         // 預設 "data/externalized"
+}
+
 /** Decay Strategy 設定 */
 export interface DecayStrategyConfig {
   enabled?: boolean;
@@ -485,6 +494,7 @@ export interface DecayStrategyConfig {
   minRetainRatio?: number;
   referenceIntervalSec?: number;
   tempoRange?: [number, number];
+  externalize?: ExternalizeConfig;
 }
 
 /** Context Engineering 設定 */

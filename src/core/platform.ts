@@ -216,6 +216,7 @@ export async function initPlatform(
       decay: ceCfg?.strategies?.decay,
       compaction: ceCfg?.strategies?.compaction,
       overflowHardStop: ceCfg?.strategies?.overflowHardStop,
+      dataDir: join(wsDir, "data"),
     });
     // 若 compaction 指定了 model，取得或建立專用 CE provider 並注入
     const ceModel = ceCfg?.strategies?.compaction?.model;

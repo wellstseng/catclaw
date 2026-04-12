@@ -543,6 +543,7 @@ label.cfg-toggle { min-width: 36px; }
         <option value="">CE: All</option>
         <option value="any">CE: Any triggered</option>
         <option value="decay">CE: decay</option>
+        <option value="externalize">CE: externalize</option>
         <option value="compaction">CE: compaction</option>
         <option value="overflow-hard-stop">CE: overflow</option>
       </select>
@@ -1504,6 +1505,10 @@ const CFG_SCHEMA = [
       {k:'mode',t:'select',l:'Mode',opts:['auto','discrete','continuous','time-aware'],d:'auto=三合一（推薦），discrete=固定閾值，continuous=指數衰減，time-aware=含對話節奏調整'},
       {k:'baseDecay',t:'num',l:'Base Decay',d:'指數衰減係數（預設 0.3），越大衰減越快'},
       {k:'referenceIntervalSec',t:'num',l:'Reference Interval (sec)',d:'對話節奏參考間隔（預設 60 秒），用於計算 tempo multiplier'},
+      {k:'externalize.enabled',t:'bool',l:'📄 外部化',d:'長訊息升到 triggerLevel 時存檔為外部檔案，context 只留摘要指標（預設啟用）'},
+      {k:'externalize.triggerLevel',t:'num',l:'Trigger Level',d:'觸發等級（預設 2 = L1→L2 時外部化）'},
+      {k:'externalize.minTokens',t:'num',l:'Min Tokens',d:'最小 token 閾值，低於此值不外部化（預設 300）'},
+      {k:'externalize.ttlDays',t:'num',l:'TTL (days)',d:'外部檔案保留天數（預設 14）'},
     ]},
     {k:'contextEngineering.strategies.compaction',l:'Compaction',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'對話壓縮：超過觸發 token 數後用 LLM 摘要早期對話'},
@@ -2232,7 +2237,11 @@ function ceLevelBadge(m) {
   const orig = ce.originalTokens ? ce.originalTokens.toLocaleString() : '?';
   const cur = ce.currentTokens ? ce.currentTokens.toLocaleString() : '?';
   const by = ce.compressedBy ? ' by ' + ce.compressedBy : '';
-  return ' <span style="background:' + color + ';color:#fff;font-size:0.65rem;padding:1px 4px;border-radius:3px;cursor:help" title="原始 ' + orig + ' tokens → 壓縮後 ' + cur + ' tokens（' + label + by + '）">' + label + '</span>';
+  const isExt = ce.compressedBy === 'externalize';
+  const extBadge = isExt ? ' 📄' : '';
+  const bgColor = isExt ? '#059669' : color;
+  const displayLabel = isExt ? '📄 外部化' : label;
+  return ' <span style="background:' + bgColor + ';color:#fff;font-size:0.65rem;padding:1px 4px;border-radius:3px;cursor:help" title="原始 ' + orig + ' tokens → 壓縮後 ' + cur + ' tokens（' + displayLabel + by + '）">' + displayLabel + '</span>';
 }
 
 /** 渲染 messages 陣列為 HTML（truncated per-message） */

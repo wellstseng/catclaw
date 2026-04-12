@@ -9,10 +9,12 @@
  * - OverflowHardStopStrategy：context 超硬上限時緊急截斷
  */
 
+import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync, rmdirSync } from "node:fs";
+import { join } from "node:path";
 import { log } from "../logger.js";
 import type { Message, ContentBlock } from "../providers/base.js";
 import type { LLMProvider } from "../providers/base.js";
-import type { DecayStrategyConfig, DecayLevel } from "./config.js";
+import type { DecayStrategyConfig, DecayLevel, ExternalizeConfig } from "./config.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -233,11 +235,112 @@ function stubMessage(m: Message): Message {
   return { ...m, content: stubBlocks, compressionLevel: 3, originalTokens: m.originalTokens ?? m.tokens };
 }
 
+// ── Externalization helpers ──────────────────────────────────────────────────
+
+function getMessageText(m: Message): string {
+  if (typeof m.content === "string") return m.content;
+  return m.content
+    .map(b => {
+      if (b.type === "text") return b.text;
+      if (b.type === "tool_result") return b.content;
+      if (b.type === "tool_use") return `[tool:${b.name}]`;
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function safeKey(key: string): string {
+  return key.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** 存原文到外部檔案，回傳相對路徑 */
+function externalizeMessage(
+  m: Message,
+  sessionKey: string,
+  msgIndex: number,
+  dataDir: string,
+): string {
+  const sk = safeKey(sessionKey);
+  const dir = join(dataDir, "externalized", sk);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  const fileName = `msg_t${m.turnIndex ?? 0}_i${msgIndex}.json`;
+  const filePath = join(dir, fileName);
+
+  const record = {
+    sessionKey,
+    turnIndex: m.turnIndex ?? 0,
+    messageIndex: msgIndex,
+    role: m.role,
+    originalTokens: m.originalTokens ?? m.tokens ?? estimateTokens([m]),
+    externalizedAt: new Date().toISOString(),
+    content: typeof m.content === "string" ? m.content : m.content,
+  };
+
+  writeFileSync(filePath, JSON.stringify(record, null, 2), "utf-8");
+  return `externalized/${sk}/${fileName}`;
+}
+
+/** 建立外部化摘要指標訊息 */
+function createExternalizedStub(m: Message, relativePath: string, targetLevel: number): Message {
+  const preview = getMessageText(m).slice(0, 100).replace(/\n/g, " ");
+  const stub = `[📄 外部化] ${m.role} turn ${m.turnIndex ?? "?"}: ${preview}…\n→ ${relativePath}`;
+  return {
+    ...m,
+    content: stub,
+    compressionLevel: targetLevel,
+    compressedBy: "externalize",
+    originalTokens: m.originalTokens ?? m.tokens ?? estimateTokens([m]),
+  };
+}
+
+/** 清理過期外部化檔案 */
+export function cleanupExternalized(dataDir: string, ttlDays: number): number {
+  const dir = join(dataDir, "externalized");
+  if (!existsSync(dir)) return 0;
+
+  const cutoff = Date.now() - ttlDays * 86_400_000;
+  let removed = 0;
+
+  for (const sessionDir of readdirSync(dir)) {
+    const sessionPath = join(dir, sessionDir);
+    try {
+      const stat = statSync(sessionPath);
+      if (!stat.isDirectory()) continue;
+    } catch { continue; }
+
+    for (const file of readdirSync(sessionPath)) {
+      const filePath = join(sessionPath, file);
+      try {
+        const stat = statSync(filePath);
+        if (stat.mtimeMs < cutoff) {
+          unlinkSync(filePath);
+          removed++;
+        }
+      } catch { /* skip */ }
+    }
+
+    // 空目錄清除
+    try {
+      const remaining = readdirSync(sessionPath);
+      if (remaining.length === 0) {
+        rmdirSync(sessionPath);
+      }
+    } catch { /* skip */ }
+  }
+
+  if (removed > 0) log.info(`[context-engine:externalize] cleaned ${removed} expired files (ttl=${ttlDays}d)`);
+  return removed;
+}
+
 export class DecayStrategy implements ContextStrategy {
   name = "decay";
   enabled: boolean;
   lastLevelChanges: LevelChange[] = [];
   private cfg: Required<Pick<DecayStrategyConfig, "mode" | "baseDecay" | "minRetainRatio" | "referenceIntervalSec">> & { levels: DecayLevel[]; tempoRange: [number, number] };
+  private extCfg: Required<ExternalizeConfig>;
+  private _dataDir: string | null = null;
 
   constructor(cfg: Partial<DecayStrategyConfig> = {}) {
     this.enabled = cfg.enabled ?? true;
@@ -249,7 +352,18 @@ export class DecayStrategy implements ContextStrategy {
       referenceIntervalSec: cfg.referenceIntervalSec ?? 60,
       tempoRange: cfg.tempoRange ?? [0.5, 2.0],
     };
+    const ext = cfg.externalize ?? {};
+    this.extCfg = {
+      enabled: ext.enabled ?? true,
+      triggerLevel: ext.triggerLevel ?? 2,
+      minTokens: ext.minTokens ?? 300,
+      ttlDays: ext.ttlDays ?? 14,
+      storePath: ext.storePath ?? "data/externalized",
+    };
   }
+
+  /** 設定 data 目錄（由 initContextEngine 注入） */
+  setDataDir(dir: string): void { this._dataDir = dir; }
 
   shouldApply(_ctx: ContextBuildContext): boolean {
     return this.enabled;
@@ -292,6 +406,25 @@ export class DecayStrategy implements ContextStrategy {
 
       const maxTokens = levelCfg.maxTokens ?? Infinity;
       const tokBefore = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
+
+      // 外部化：在 truncate 之前攔截，趁原文還在時存檔
+      if (this.extCfg.enabled
+        && this._dataDir
+        && targetLevel >= this.extCfg.triggerLevel
+        && tokBefore >= this.extCfg.minTokens
+        && m.compressedBy !== "externalize") {
+        try {
+          const relPath = externalizeMessage(m, ctx.sessionKey, i, this._dataDir);
+          const stub = createExternalizedStub(m, relPath, targetLevel);
+          const tokAfter = estimateTokens([stub]);
+          changes.push({ messageIndex: i, fromLevel: currentLevel, toLevel: targetLevel, tokensBefore: tokBefore, tokensAfter: tokAfter });
+          result.push(stub);
+          continue;
+        } catch (err) {
+          log.warn(`[context-engine:externalize] 存檔失敗，fallback truncate: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       const decayed = this._compressMessage(m, maxTokens, targetLevel);
       const tokAfter = estimateTokens([decayed]);
       if (targetLevel !== currentLevel) {
@@ -653,17 +786,26 @@ export function initContextEngine(cfg?: {
   compaction?: Partial<CompactionConfig> & { model?: string };
   decay?: Partial<DecayStrategyConfig>;
   overflowHardStop?: Partial<OverflowHardStopConfig>;
+  dataDir?: string;
 }): ContextEngine {
   _contextEngine = new ContextEngine();
 
   if (cfg?.decay) {
-    _contextEngine.register(new DecayStrategy(cfg.decay));
+    const decay = new DecayStrategy(cfg.decay);
+    if (cfg.dataDir) decay.setDataDir(cfg.dataDir);
+    _contextEngine.register(decay);
   }
   if (cfg?.compaction) {
     _contextEngine.register(new CompactionStrategy(cfg.compaction));
   }
   if (cfg?.overflowHardStop) {
     _contextEngine.register(new OverflowHardStopStrategy(cfg.overflowHardStop));
+  }
+
+  // 啟動時清理過期外部化檔案
+  if (cfg?.dataDir && cfg.decay?.externalize?.enabled !== false) {
+    const ttl = cfg.decay?.externalize?.ttlDays ?? 14;
+    try { cleanupExternalized(cfg.dataDir, ttl); } catch { /* non-critical */ }
   }
 
   return _contextEngine;
