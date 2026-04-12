@@ -1393,8 +1393,7 @@ const CFG_SCHEMA = [
   ]},
   { key:'memory', label:'Memory', fields:[
     {k:'memory.enabled',t:'bool',l:'啟用',d:'記憶系統總開關'},
-    {k:'memory.root',t:'text',l:'Root Path',d:'記憶 atom 檔案的儲存根目錄'},
-    {k:'memory.vectorDbPath',t:'text',l:'Vector DB Path',d:'LanceDB 向量索引存放路徑'},
+    {k:'memory.vectorDbPath',t:'text',l:'Vector DB Path',d:'LanceDB 共用向量索引路徑（namespace 隔離）'},
     {k:'memory.contextBudget',t:'num',l:'Context Budget (tokens)',d:'每次 turn 注入的記憶 token 上限'},
   ], sub:[
     {k:'memory.contextBudgetRatio',l:'Context Budget Ratio',fields:[
