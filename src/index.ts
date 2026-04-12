@@ -64,12 +64,15 @@ const platformConfig = agentId
 // 設定 boot agent 身份（主體 = "default" + admin，--agent ��式讀 config）
 {
   const { setBootAgent, loadAgentConfig } = await import("./core/agent-loader.js");
+  const bootId = agentId ?? (config as unknown as CoreBridgeConfig).defaultAgent ?? "default";
   if (agentId) {
     const ac = loadAgentConfig(agentId);
-    setBootAgent(agentId, ac?.admin ?? false);
-    log.info(`[bridge] Agent 模式：${agentId}（admin=${ac?.admin ?? false}）`);
+    setBootAgent(bootId, ac?.admin ?? false);
+    log.info(`[bridge] Agent 模式：${bootId}（admin=${ac?.admin ?? false}）`);
   } else {
-    setBootAgent("wendy", true);
+    const ac = loadAgentConfig(bootId);
+    setBootAgent(bootId, ac?.admin ?? true);
+    log.info(`[bridge] Boot agent：${bootId}（admin=${ac?.admin ?? true}）`);
   }
 }
 

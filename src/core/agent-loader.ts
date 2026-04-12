@@ -35,7 +35,7 @@ export function parseAgentArg(argv: string[] = process.argv): string | undefined
 // ── Boot Agent ID singleton ──────────────────────────────────────────────────
 
 /** 啟動時的 agent ID（--agent 模式有值，主體模式 = "default"） */
-let _bootAgentId: string = "wendy";
+let _bootAgentId: string = "default";
 let _bootIsAdmin: boolean = true;
 
 /** index.ts 啟動時呼叫，設定 boot agent 身份 */

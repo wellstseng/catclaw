@@ -178,7 +178,7 @@ export async function initPlatform(
   const defaultMemoryCfg = {
     enabled: true,
     root: join(bootAgentDir, "memory"),
-    vectorDbPath: join(bootAgentDir, "memory", "_vectordb"),
+    vectorDbPath: config.memory?.vectorDbPath ?? join(catclawDir, "_vectordb"),
     contextBudget: 3000,
     contextBudgetRatio: { global: 0.3, project: 0.4, account: 0.3 },
     writeGate: { enabled: true, dedupThreshold: 0.80 },
@@ -190,6 +190,9 @@ export async function initPlatform(
     oscillation: { enabled: false },
   };
   const resolvedMemoryCfg = { ...defaultMemoryCfg, ...memoryConfig };
+  // boot agent 的 memory root 必須指向 agents/{bootAgentId}/memory/（覆蓋 config fallback）
+  resolvedMemoryCfg.root = join(bootAgentDir, "memory");
+  resolvedMemoryCfg.vectorDbPath = config.memory?.vectorDbPath ?? join(catclawDir, "_vectordb");
   _memoryRoot = resolvedMemoryCfg.root;
 
   if (resolvedMemoryCfg.enabled !== false) {

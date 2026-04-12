@@ -651,6 +651,8 @@ export interface BridgeConfig {
   contextEngineering?: ContextEngineeringConfig;
   /** Inbound History 設定 */
   inboundHistory?: InboundHistoryConfig;
+  /** 無 --agent 參數時的預設 boot agent ID（預設 "default"） */
+  defaultAgent?: string;
   /** 多 Agent 設定（用於 --agent <id> 啟動） */
   agents?: AgentsConfig;
   /** Subagent 設定 */
@@ -792,6 +794,7 @@ interface RawConfig {
   rateLimit?: RateLimitConfig;
   /** @deprecated 已移除，保留供 JSON 相容 */
   homeClaudeCode?: Partial<HomeClaudeCodeConfig>;
+  defaultAgent?: string;
   agents?: AgentsConfig;
   dashboard?: { enabled?: boolean; port?: number; token?: string };
   contextEngineering?: ContextEngineeringConfig;
@@ -1043,12 +1046,12 @@ function parseShowToolCalls(value: string | boolean | undefined): "all" | "summa
 
 function defaultMemoryConfig(raw: Partial<MemoryConfig> | undefined, workspaceDir: string): MemoryConfig {
   const r = raw ?? {};
-  // backward compat：舊 globalPath 直接當 root 使用
-  const root = r.root ?? r.globalPath ?? "~/.catclaw/memory";
+  // root 和 vectorDbPath 的最終值由 platform.ts 根據 boot agent 動態設定
+  const root = r.root ?? r.globalPath ?? "";
   return {
     enabled:        r.enabled ?? true,
     root,
-    vectorDbPath:   r.vectorDbPath ?? "~/.catclaw/memory/_vectordb",
+    vectorDbPath:   r.vectorDbPath ?? "",
     contextBudget:  r.contextBudget ?? 3000,
     contextBudgetRatio: r.contextBudgetRatio ?? { global: 0.3, project: 0.4, account: 0.3 },
     writeGate:      r.writeGate ?? { enabled: true, dedupThreshold: 0.80 },
@@ -1308,6 +1311,7 @@ function loadConfig(): BridgeConfig {
       admin:            { requestsPerMinute: 120 },
       "platform-owner": { requestsPerMinute: 300 },
     },
+    defaultAgent: raw.defaultAgent,
     agents: raw.agents,
     dashboard: raw.dashboard?.enabled ? {
       enabled: true,
