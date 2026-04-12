@@ -56,6 +56,8 @@
 | thinking 顯示 | `reply.ts` + `types.ts` `showThinking` | `cliBridge.showThinking: true` → thinking 以 Discord spoiler (`||..||`) 顯示 |
 | 附件支援 | `reply.ts` `extractAttachmentText()` + `discord.ts` 路由 | Discord 附件 → 文字描述（名稱/類型/大小/URL）附加到 stdin |
 | 對話歷程匯出 | `dashboard.ts` `GET /api/cli-bridge/:label/export` + UI 匯出按鈕 | 一鍵匯出 Markdown，含 user/assistant/tools |
+| 中間推理文字格式化 | `reply.ts` `flushIntermediateBuffer()` + `types.ts` `showIntermediateText` | tool_call 前的中間推理文字依設定格式化：`"quote"`（引用區塊，預設）/ `"spoiler"`（摺疊）/ `"none"`（不顯示）/ `"normal"`（原樣） |
+| 外部 bot mention 過濾 | `index.ts` `handleIndependentBotMessage()` | mention 非 CatClaw 註冊的外部 bot 時不回覆（檢查 Discord user.bot flag + allRegisteredBotIds） |
 | rate limit 保護 | `reply.ts` `editIntervalMs` + `lastEditTime` 計數器 | `cliBridge.editIntervalMs` 可設定（預設 800ms），防止 Discord API rate limit |
 | Dashboard 監控 | `dashboard.ts` UI + `_cbAutoRefresh` | 10s 自動刷新狀態、SSE 即時串流、匯出按鈕、刷新按鈕 |
 | `/cd` 工作目錄切換 | `slash.ts` `handleCd()` + `index.ts` `rebuildBridgeForChannel()` | Slash command 切換 bridge cwd，原子重建路徑統一關舊建新，持久化到 `cli-bridges.json` |

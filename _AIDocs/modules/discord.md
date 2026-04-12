@@ -41,6 +41,9 @@ messageCreate
   │     └─ access.allowBot = false → 忽略
   │         NOTE: allowBot=true 但仍受 allowFrom 白名單限制（進入步驟 ⑤）
   │
+  ├─ ④.5 外部 bot mention 過濾
+  │     └─ mentions.users 含 user.bot=true 且不在 allRegisteredBotIds → hasMentionedAnyBot=true → 不是 mention 我 → 忽略
+  │
   ├─ ⑤ allowFrom 白名單過濾
   │     └─ allowFrom 非空 + author.id 不在白名單 → 忽略
   │

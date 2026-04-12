@@ -38,7 +38,6 @@ Permission Gate → Safety Guard → Tool 執行
 - `~/.catclaw/accounts/`
 - `~/.catclaw/tools/`
 - `~/.catclaw/skills/`
-- `~/.claude/`
 - `~/.ssh/`
 - `~/.gnupg/`
 

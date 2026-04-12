@@ -91,6 +91,10 @@ export interface CliBridgeConfig {
   showThinking?: boolean;
   /** Discord edit 最小間隔毫秒（rate limit 保護，預設 800） */
   editIntervalMs?: number;
+  /** 中間推理文字顯示方式（tool 之間的文字）：
+   *  "normal" = 原樣顯示（舊行為），"quote" = 引用區塊（預設），
+   *  "spoiler" = 摺疊，"none" = 不顯示 */
+  showIntermediateText?: "normal" | "quote" | "spoiler" | "none";
   /** 閒置超過此毫秒後自動卸載 CLI process（預設 0 = 不卸載） */
   idleSuspendMs?: number;
 }

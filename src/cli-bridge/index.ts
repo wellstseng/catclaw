@@ -237,7 +237,10 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
     if (contentMentionIds.has(botId)) mentionedBotIds.add(botId);
   }
 
-  const hasMentionedAnyBot = mentionedBotIds.size > 0;
+  // 外部 bot mention 檢查
+  const mentionedExternalBot = msg.mentions.users.some(u => u.bot && !allRegisteredBotIds.has(u.id));
+
+  const hasMentionedAnyBot = mentionedBotIds.size > 0 || mentionedExternalBot;
   const iAmMentioned = myBotId ? mentionedBotIds.has(myBotId) : false;
 
   if (hasMentionedAnyBot && !iAmMentioned) {

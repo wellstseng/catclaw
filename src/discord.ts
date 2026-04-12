@@ -372,7 +372,10 @@ async function handleMessage(
     if (message.mentions.has(botId)) mentionedBotIds.add(botId);
   }
 
-  const hasMentionedAnyBot = mentionedBotIds.size > 0;
+  // 外部 bot mention 檢查：Discord API 的 mentions.users 有 bot flag
+  const mentionedExternalBot = message.mentions.users.some(u => u.bot && !allRegisteredBotIds.has(u.id));
+
+  const hasMentionedAnyBot = mentionedBotIds.size > 0 || mentionedExternalBot;
   const mainBotMentioned = mainBotId ? mentionedBotIds.has(mainBotId) : false;
 
   // Inbound history helper

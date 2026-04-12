@@ -97,6 +97,7 @@ export async function handleCliBridgeReply(
   const showToolCalls = bridgeConfig.showToolCalls;
   const showThinking = cliBridgeConfig?.showThinking ?? false;
   const editIntervalMs = cliBridgeConfig?.editIntervalMs ?? 800;
+  const intermediateStyle = cliBridgeConfig?.showIntermediateText ?? "quote";
 
   let buffer = "";
   let thinkingBuffer = "";
@@ -118,6 +119,35 @@ export async function handleCliBridgeReply(
   const resumeTyping = () => { if (turnDone) return; if (typingInterval) { clearInterval(typingInterval); typingInterval = null; } sender.sendTyping(); typingInterval = setInterval(() => { if (!turnDone) sender.sendTyping(); }, 8_000); };
   // Safety: 最多 10 分鐘 typing（防 generator 掛住永遠不 stopTyping）
   const maxTypingTimer = setTimeout(() => { if (!turnDone) { log.warn(`[cli-bridge-reply] turn=${turnId.slice(0, 8)} typing safety timeout (10min)`); stopTyping(); } }, 10 * 60 * 1000);
+
+  // ── Intermediate text formatting ─────────────────────────────────────────
+
+  function formatIntermediate(text: string): string {
+    if (intermediateStyle === "none") return "";
+    if (intermediateStyle === "spoiler") {
+      const trimmed = text.trim().slice(0, TEXT_LIMIT - 10);
+      return `||${trimmed.replaceAll("||", "| |")}||`;
+    }
+    if (intermediateStyle === "quote") {
+      return text.trim().split("\n").map(l => `> ${l}`).join("\n");
+    }
+    return text; // "normal"
+  }
+
+  /** tool_call 到來時 flush 中間推理文字 */
+  async function flushIntermediateBuffer(): Promise<void> {
+    if (!buffer.trim()) { buffer = ""; return; }
+    cancelEditTimer();
+    const formatted = formatIntermediate(closeFenceIfOpen(buffer));
+    if (formatted && state.editMsg) {
+      try { await sender.edit(state.editMsg, formatted.slice(0, TEXT_LIMIT)); } catch { /* */ }
+    } else if (!formatted && state.editMsg) {
+      // style=none → 刪除已發的 placeholder
+      try { await state.editMsg.delete(); } catch { /* */ }
+    }
+    buffer = "";
+    state.editMsg = null;
+  }
 
   // ── Streaming edit helpers ──────────────────────────────────────────────
 
@@ -222,6 +252,11 @@ export async function handleCliBridgeReply(
 
       // ── tool_call ──
       if (evt.type === "tool_call") {
+        // flush 中間推理文字（quote/spoiler/none）
+        if (intermediateStyle !== "normal") {
+          await flushIntermediateBuffer();
+        }
+
         // 如果有累積的 thinking，先送出
         if (showThinking && thinkingBuffer.trim()) {
           const thinkText = thinkingBuffer.length > TEXT_LIMIT - 20
