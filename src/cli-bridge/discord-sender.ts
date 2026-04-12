@@ -11,7 +11,7 @@ import {
   Client,
   GatewayIntentBits,
   type Message,
-  type TextChannel,
+  type GuildTextBasedChannel,
   type MessageCreateOptions,
   type MessageEditOptions,
 } from "discord.js";
@@ -62,7 +62,7 @@ export interface BridgeSender {
 export class IndependentBotSender implements BridgeSender {
   readonly mode = "independent-bot" as const;
   private client: Client;
-  private channel: TextChannel | null = null;
+  private channel: GuildTextBasedChannel | null = null;
   private messageCallbacks: OnMessageCallback[] = [];
 
   constructor(private readonly botToken: string) {
@@ -85,7 +85,7 @@ export class IndependentBotSender implements BridgeSender {
     if (!ch?.isTextBased() || ch.isDMBased()) {
       throw new Error(`[bridge-sender] channel ${channelId} 不是 guild text channel`);
     }
-    this.channel = ch as TextChannel;
+    this.channel = ch;
 
     // 設定上線狀態
     this.client.user?.setPresence({ status: "online" });
@@ -153,7 +153,7 @@ export class IndependentBotSender implements BridgeSender {
 
 export class MainBotSender implements BridgeSender {
   readonly mode = "main-bot" as const;
-  private channel: TextChannel | null = null;
+  private channel: GuildTextBasedChannel | null = null;
 
   constructor(private readonly mainClient: Client) {}
 
@@ -162,7 +162,7 @@ export class MainBotSender implements BridgeSender {
     if (!ch?.isTextBased() || ch.isDMBased()) {
       throw new Error(`[bridge-sender] channel ${channelId} 不是 guild text channel`);
     }
-    this.channel = ch as TextChannel;
+    this.channel = ch;
     log.info(`[bridge-sender] main-bot fallback → #${this.channel.name}`);
   }
 

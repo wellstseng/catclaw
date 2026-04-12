@@ -1,6 +1,6 @@
 # skills — 內建 Skill 系統
 
-> 更新日期：2026-04-07
+> 更新日期：2026-04-12
 
 ## 檔案結構
 
@@ -8,7 +8,7 @@
 src/skills/
   types.ts          — Skill, SkillContext, SkillResult 型別
   registry.ts       — loadBuiltinSkills(), loadPromptSkills(), matchSkill()
-  builtin/          — TypeScript 執行型 skills（22 檔 / 28 個 skill）
+  builtin/          — TypeScript 執行型 skills（23 檔 / 29 個 skill）
   builtin-prompt/   — SKILL.md 格式 prompt-type skills（3 個）
 ```
 
@@ -68,6 +68,7 @@ interface SkillResult {
 | 檔案 | name | 說明 |
 |------|------|------|
 | `account.ts` | account | 帳號管理 |
+| `add-bridge.ts` | add-bridge | 新增 CLI Bridge 並驗證上線（admin） |
 | `compact.ts` | compact | Session 壓縮 |
 | `config-manage.ts` | config | 設定管理 |
 | `configure.ts` | configure | Provider/model 設定 |
@@ -139,6 +140,25 @@ tier: admin | trigger: `/migrate`
 | `/migrate status` | 查看遷移狀態（~/.claude vs catclaw atom 數量） |
 | `/migrate search <query>` | 直查 LanceDB（不過 LLM，minScore=0） |
 | `/migrate stats` | LanceDB table 清單 + 向量數 |
+
+## /add-bridge skill
+
+tier: admin | trigger: `/add-bridge`、`/addbridge`
+
+用法：`/add-bridge label=<unique> channel=<id> cwd=<absPath> [token=...] [skipPerms=true] [thinking=true] [editInterval=800] [keepAlive=0]`
+
+### 流程
+
+1. admin 權限檢查 + 參數解析
+2. `workingDir` 存在性檢查
+3. `loadAllCliBridgeConfigs()` → label / channelId 唯一性檢查（同 label+channel+cwd 為 idempotent 回報已存在）
+4. 組裝 `CliBridgeConfig` entry → `saveCliBridgeConfigs()`（觸發 cli-bridges.json 的 hot-reload watcher）
+5. 輪詢 `getCliBridgeByLabel()` 最多 6s，確認 status ≠ `dead`
+6. 失敗 → 從 json 移除該 entry 並 save（rollback），回報最後一段 stderr
+
+### 設計對齊
+
+bridge 變更一律走 `saveCliBridgeConfigs` + hot-reload，不再 in-place mutate / 雙重啟。對齊 1d67076 race fix。
 
 ## /session skill
 
