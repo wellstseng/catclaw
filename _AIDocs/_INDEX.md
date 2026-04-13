@@ -1,12 +1,12 @@
 # CatClaw _AIDocs 知識庫索引
 
-> 建立日期：2026-03-18 | 最近更新：2026-04-06 | 專案：catclaw
+> 建立日期：2026-03-18 | 最近更新：2026-04-13 | 專案：catclaw
 
 ## 專案簡介
 
 CatClaw = Codex 版 Claude Code CLI + 多人 AI 開發平台。
-以 Discord 為前端，提供等同 Claude Code 的完整開發能力：multi-turn agent loop、17+ builtin tools、
-31 builtin skills（28 TS + 3 prompt）、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、
+以 Discord 為前端，提供等同 Claude Code 的完整開發能力：multi-turn agent loop、19 builtin tools、
+32 builtin skills（29 TS + 3 prompt）、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、
 帳號/角色/權限系統、Web Dashboard + Trace 追蹤。
 
 ## 架構一句話摘要
@@ -32,7 +32,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | Memory Context | `src/memory/context-builder.ts` | ACT-R 衰減 + budget + staleness check |
 | Accounts | `src/accounts/` | 帳號 + 角色 + 權限 + identity linking |
 | Providers | `src/providers/` | LLM Provider 抽象：claude-api / codex-oauth / cli-claude / cli-gemini / cli-codex / ollama / openai-compat + failover + circuit-breaker |
-| Tools | `src/tools/` | Tool 註冊 + 17 builtin tools（read/write/edit/glob/grep/run/web/memory/subagent/task...） |
+| Tools | `src/tools/` | Tool 註冊 + 19 builtin tools（read/write/edit/glob/grep/run/web/memory/subagent/task/atom_write...） |
 | Skills | `src/skills/` | Skill registry + 28 builtin skills（status/help/configure/mode/plan/restart/...） |
 | Hooks | `src/hooks/` | Hook 系統：registry + runner（tool 前後觸發） |
 | Safety | `src/safety/` | 安全攔截：guard + collab-conflict |
@@ -71,9 +71,9 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/platform.md](modules/platform.md) | `src/core/platform.ts` | 子系統初始化工廠 | 2026-04-05 |
 | [modules/context-engine.md](modules/context-engine.md) | `src/core/context-engine.ts` | Context 壓縮策略 | 2026-04-05 |
 | [modules/prompt-assembler.md](modules/prompt-assembler.md) | `src/core/prompt-assembler.ts` | 模組化 system prompt 組裝 | 2026-04-05 |
-| [modules/dashboard.md](modules/dashboard.md) | `src/core/dashboard.ts` | Web dashboard + REST API | 2026-04-05 |
+| [modules/dashboard.md](modules/dashboard.md) | `src/core/dashboard.ts` | Web dashboard + REST API | 2026-04-13 |
 | [modules/memory-engine.md](modules/memory-engine.md) | `src/memory/` | 三層記憶引擎 | 2026-04-05 |
-| [modules/tool-registry.md](modules/tool-registry.md) | `src/tools/` | Tool 註冊 + builtin tools | 2026-04-05 |
+| [modules/tool-registry.md](modules/tool-registry.md) | `src/tools/` | Tool 註冊 + 19 builtin tools | 2026-04-13 |
 | [modules/message-trace.md](modules/message-trace.md) | `src/core/message-trace.ts` | 7 階段訊息追蹤 + TraceStore + ContextStore | 2026-04-06 |
 | [modules/config.md](modules/config.md) | `src/core/config.ts` | JSON 設定載入 | 2026-04-05 |
 | [modules/discord.md](modules/discord.md) | `src/discord.ts` | Discord 入口 | 2026-04-05 |
@@ -86,7 +86,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/hooks.md](modules/hooks.md) | `src/hooks/` | Hook 系統 | 2026-04-05 |
 | [modules/safety.md](modules/safety.md) | `src/safety/` | 安全攔截 | 2026-04-05 |
 | [modules/workflow.md](modules/workflow.md) | `src/workflow/` | 工作流引擎 | 2026-04-05 |
-| [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn（舊版入口） | 2026-03-22 |
+| [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn（Legacy，僅 cron.ts 使用） | 2026-04-13 |
 | [modules/permission-gate.md](modules/permission-gate.md) | `src/accounts/permission-gate.ts` | 權限閘門（Tier + allow/deny） | 2026-04-06 |
 | [modules/ollama-provider.md](modules/ollama-provider.md) | `src/providers/ollama.ts` | Ollama 本地 LLM Provider | 2026-04-06 |
 | [modules/vector-service.md](modules/vector-service.md) | `src/vector/lancedb.ts` | LanceDB 向量服務 | 2026-04-06 |

@@ -1,22 +1,12 @@
-# modules/acp — Claude CLI 串流對話
+# modules/acp — Claude CLI 串流對話（Legacy）
 
 > 檔案：`src/acp.ts`
+> 狀態：**舊版入口**，已被 CLI Bridge (`src/cli-bridge/`) 取代為主要對話引擎。
+> 目前僅被 `cron.ts` 引用（排程任務的 `runClaudeTurn()`）。
 
 ## 職責
 
-Spawn `claude -p --output-format stream-json` 子程序進行對話，以 `AsyncGenerator<AcpEvent>` 串流事件給上層（session.ts）消費。
-
-## System Prompt（AGENTS.md）
-
-每次 turn 開始時，自動從 `workspace/AGENTS.md` 讀取內容作為 `--system-prompt` 參數傳給 Claude CLI。
-
-| 行為 | 說明 |
-|------|------|
-| 檔案存在 | `--system-prompt <content>`，支援修改後下次 turn 自動生效 |
-| 檔案不存在 | 靜默跳過，不影響主流程 |
-| 讀取失敗 | `log.warn` 後跳過，不中止 |
-
-> `AGENTS.md` 定義 bot 的身份、行為規則、回應風格等。與專案根目錄的 `CLAUDE.md` 不同：`CLAUDE.md` 供 Claude Code CLI 自動載入，`AGENTS.md` 由 catclaw 主動讀取並注入。
+Spawn `claude -p --output-format stream-json` 子程序進行對話，以 `AsyncGenerator<AcpEvent>` 串流事件。
 
 ## Spawn 指令
 
@@ -26,7 +16,6 @@ claude -p \
   --verbose \
   --include-partial-messages \
   --dangerously-skip-permissions \
-  [--system-prompt <agentsContent>] \
   [--resume <sessionId>] \
   "<prompt>"
 ```
@@ -62,7 +51,7 @@ export type AcpEvent =
   | { type: "timeout_warning"; elapsedSec: number }; // 80% timeout 預警（由 session.ts 產生）
 ```
 
-> `session_init` 在 session.ts 中被攔截，reply.ts 永遠不會收到此事件。
+> `session_init` 在 cron.ts 中被攔截，用於追蹤 session ID。
 
 ## 串流 Diff 機制
 

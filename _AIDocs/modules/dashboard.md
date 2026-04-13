@@ -1,7 +1,7 @@
 # modules/dashboard — Web Dashboard + REST API
 
-> 檔案：`src/core/dashboard.ts` (~4830 行)
-> 更新日期：2026-04-12
+> 檔案：`src/core/dashboard.ts` (~5325 行)
+> 更新日期：2026-04-13
 
 ## 職責
 
@@ -134,7 +134,15 @@ Bearer token 認證（可選）：
 | `/api/chat` | POST | Dashboard 內嵌對話（SSE streaming） |
 | `/api/chat/history` | GET | Session 對話歷史 `?sessionKey=xxx`（過濾 tool blocks，只回傳 user/assistant 文字） |
 
+### Agents
+
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/agents` | GET | 列出所有 agent（id, hasMemory, isBoot） |
+
 ### Memory
+
+所有 Memory 端點支援 `?agent=<agentId>` 查詢參數，切換查看不同 agent 的記憶。未指定時使用 boot agent。
 
 | 端點 | 方法 | 說明 |
 |------|------|------|
@@ -161,6 +169,7 @@ Bearer token 認證（可選）：
 | `/api/cli-bridge/:label/restart` | POST | 重啟 bridge process |
 | `/api/cli-bridge/:label/resend/:turnId` | POST | 重送失敗的 turn（用原始 userInput） |
 | `/api/cli-bridge/:label/stream` | GET | SSE 即時串流（init 送最近 50 筆，後續即時推送） |
+| `/api/cli-bridge/:label/export` | GET | 匯出 turn 歷程為 Markdown（Content-Disposition: attachment） |
 
 ### Logs
 

@@ -1,7 +1,7 @@
 # modules/platform — 子系統初始化工廠
 
 > 檔案：`src/core/platform.ts`
-> 更新日期：2026-04-12
+> 更新日期：2026-04-13
 
 ## 職責
 
@@ -18,7 +18,7 @@
 
 平台級設定（catclaw.json、accounts/、workspace/）留在 `~/.catclaw/` root。
 
-## 初始化順序（12 步）
+## 初始化順序（13 步）
 
 ```
 initPlatform(config, catclawDir, distDir, workspaceDir)
