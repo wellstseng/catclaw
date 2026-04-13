@@ -6,7 +6,7 @@
 
 CatClaw = Codex 版 Claude Code CLI + 多人 AI 開發平台。
 以 Discord 為前端，提供等同 Claude Code 的完整開發能力：multi-turn agent loop、19 builtin tools、
-32 builtin skills（29 TS + 3 prompt）、多 provider failover、三層記憶引擎、Context Engineering、subagent 編排、
+32 builtin skills（29 TS + 3 prompt）、多 provider failover、四層記憶引擎、Context Engineering、subagent 編排、
 帳號/角色/權限系統、Web Dashboard + Trace 追蹤。
 
 ## 架構一句話摘要
@@ -72,11 +72,11 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/context-engine.md](modules/context-engine.md) | `src/core/context-engine.ts` | Context 壓縮策略 | 2026-04-05 |
 | [modules/prompt-assembler.md](modules/prompt-assembler.md) | `src/core/prompt-assembler.ts` | 模組化 system prompt 組裝 | 2026-04-05 |
 | [modules/dashboard.md](modules/dashboard.md) | `src/core/dashboard.ts` | Web dashboard + REST API | 2026-04-13 |
-| [modules/memory-engine.md](modules/memory-engine.md) | `src/memory/` | 三層記憶引擎 | 2026-04-05 |
+| [modules/memory-engine.md](modules/memory-engine.md) | `src/memory/` | 四層記憶引擎 + episodic + session-memory | 2026-04-13 |
 | [modules/tool-registry.md](modules/tool-registry.md) | `src/tools/` | Tool 註冊 + 19 builtin tools | 2026-04-13 |
 | [modules/message-trace.md](modules/message-trace.md) | `src/core/message-trace.ts` | 7 階段訊息追蹤 + TraceStore + ContextStore | 2026-04-06 |
 | [modules/config.md](modules/config.md) | `src/core/config.ts` | JSON 設定載入 | 2026-04-05 |
-| [modules/discord.md](modules/discord.md) | `src/discord.ts` | Discord 入口 | 2026-04-05 |
+| [modules/discord.md](modules/discord.md) | `src/discord.ts` + `src/discord/` | Discord 入口 + Bot Circuit Breaker | 2026-04-13 |
 | [modules/providers.md](modules/providers.md) | `src/providers/` | LLM Provider 系統 | 2026-04-05 |
 | [modules/skills.md](modules/skills.md) | `src/skills/` | Skill 系統 | 2026-04-05 |
 | [modules/session.md](modules/session.md) | `src/core/session.ts` | SessionManager | 2026-04-05 |
@@ -89,7 +89,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn（Legacy，僅 cron.ts 使用） | 2026-04-13 |
 | [modules/permission-gate.md](modules/permission-gate.md) | `src/accounts/permission-gate.ts` | 權限閘門（Tier + allow/deny） | 2026-04-06 |
 | [modules/ollama-provider.md](modules/ollama-provider.md) | `src/providers/ollama.ts` | Ollama 本地 LLM Provider | 2026-04-06 |
-| [modules/vector-service.md](modules/vector-service.md) | `src/vector/lancedb.ts` | LanceDB 向量服務 | 2026-04-06 |
+| [modules/vector-service.md](modules/vector-service.md) | `src/vector/` | LanceDB 向量服務 + Embedding Provider 抽象層 | 2026-04-13 |
 | [modules/task-store.md](modules/task-store.md) | `src/core/task-store.ts` | 任務 CRUD + per-session | 2026-04-06 |
 | [modules/task-ui.md](modules/task-ui.md) | `src/core/task-ui.ts` | Discord 任務按鈕互動 | 2026-04-06 |
 | [modules/mcp-client.md](modules/mcp-client.md) | `src/mcp/client.ts` | MCP server 連線 + tool 自動註冊 | 2026-04-06 |

@@ -4,13 +4,13 @@
 
 ## 專案目標
 
-獨立多人 AI 平台 — 以 Discord 為前端介面，內建 Agent Loop、Provider 抽象層、三層記憶系統、權限控制的完整 AI 平台。
+獨立多人 AI 平台 — 以 Discord 為前端介面，內建 Agent Loop、Provider 抽象層、四層記憶系統、權限控制的完整 AI 平台。
 
 - **Agent Loop（一軌制）**：CatClaw 自有 agent loop 控制所有 tool，LLM 只負責思考
 - **HTTP API 直連**：透過 pi-ai `streamSimpleAnthropic` 直接呼叫 Claude API，不 spawn CLI
 - **Provider 抽象**：claude-api / ollama / openai-compat / codex-oauth，hot-swap via registry
 - **models-config.json**：model 設定唯一真相來源（primary / fallbacks / aliases / routing）
-- **三層記憶**：Global + Project + Personal（atom memory + LanceDB vector search）
+- **四層記憶**：Global + Project + Account + Agent（atom memory + LanceDB vector search）
 - **權限系統**：5 級角色（guest → platform-owner）+ Tool Tier 物理移除
 - **Message Trace**：7 階段訊息生命週期追蹤
 - **Web Dashboard**：設定、traces、sessions、auth profiles、model switching
@@ -127,7 +127,7 @@ index.ts                          ← 進入點：Discord login + 事件綁定
   │     ├── tools/registry.ts        Tool 註冊 + 物理過濾
   │     ├── safety/guard.ts          安全防護
   │     ├── core/session.ts          Session 管理 + 持久化
-  │     ├── memory/engine.ts         三層記憶引擎
+  │     ├── memory/engine.ts         四層記憶引擎
   │     ├── core/context-engine.ts   Context 壓縮 + token 追蹤
   │     └── core/message-trace.ts    訊息全鏈路追蹤
   ├── core/agent-loop.ts          Agent Loop 核心迴圈
@@ -191,7 +191,7 @@ providers/
 | **TraceStore** | 統一追蹤系統，持久化所有 MessageTrace 記錄 |
 | **Session** | per-channel 對話上下文（guild 頻道共享），per-user for DM |
 | **SessionManager** | Session 快取 + 磁碟持久化 + TTL + per-channel queue |
-| **MemoryEngine** | 三層記憶引擎（Global + Project + Personal），atom + LanceDB vector search |
+| **MemoryEngine** | 四層記憶引擎（Global + Project + Personal），atom + LanceDB vector search |
 | **Atom Memory** | 原子記憶系統：知識以 atom 為最小單位，分 [固]/[觀]/[臨] 三級 |
 | **LanceDB** | 向量資料庫，用於記憶 recall 時的語義搜尋 |
 | **Dashboard** | Web 監控面板：概覽 / Sessions / 日誌 / 操作 / Config |
@@ -328,7 +328,7 @@ providers/
 │   │   └── builtin-prompt/
 │   │       └── discord/SKILL.md   Discord 平台 skill 提示詞
 │   │
-│   ├── memory/                 ★ 三層記憶系統
+│   ├── memory/                 ★ 四層記憶系統
 │   │   ├── engine.ts              記憶引擎（Global + Project + Personal）
 │   │   ├── recall.ts              記憶召回
 │   │   ├── atom.ts                Atom 讀寫

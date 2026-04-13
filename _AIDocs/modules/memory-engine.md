@@ -21,8 +21,8 @@
 | `atom.ts` | Atom CRUD：讀寫 markdown atom 檔案 |
 | `write-gate.ts` | 寫入閘門：dedup（餘弦相似度閾值） |
 | `index-manager.ts` | MEMORY.md 索引管理 |
-| `episodic.ts` | Episodic memory：session 統計 + rut 偵測 |
-| `session-memory.ts` | Session note：per-channel 對話筆記 |
+| `episodic.ts` | Episodic memory：session 統計 + rut 偵測 + TTL 清理 |
+| `session-memory.ts` | Session note：per-channel 對話筆記（Ollama 萃取） |
 
 ## 目錄結構
 
@@ -210,3 +210,61 @@ getMemoryEngine(): MemoryEngine  // throw on null
 ```
 
 由 `platform.ts` 步驟 9 初始化。
+
+## Episodic Memory（`episodic.ts`）
+
+Session 自動摘要，記錄修改/閱讀軌跡與覆轍信號。
+
+### 觸發
+
+`session:idle` / `platform:shutdown` 事件。
+
+### 生成門檻
+
+- `modifiedFiles ≥ 1` 且 session 持續 `≥ 2min`
+- 或 `readFiles ≥ 5`
+
+### 覆轍偵測（RutWarning）
+
+| type | 條件 | 說明 |
+|------|------|------|
+| `same_file_3x` | 同一檔案修改 ≥ 3 次 | 可能在打轉 |
+| `retry_escalation` | retryCount ≥ 2 | 建議啟動 Fix Escalation |
+
+### 跨 Session 覆轍掃描
+
+```typescript
+detectRutPatterns(episodicDir, currentFile?): RutWarning[]
+```
+
+掃描近期 10 個 episodic，找到跨 session 反覆出現的同一檔案修改或 retry escalation（各需 ≥ 2 次）。
+由 Workflow Guardian 在 session 啟動時注入警告。
+
+### TTL
+
+預設 24 天，`cleanExpired()` 在每次生成前自動清理過期檔案。
+
+### API
+
+```typescript
+generateEpisodic(stats: SessionStats, opts: EpisodicOpts): Promise<string | null>
+detectRutPatterns(episodicDir: string, currentFile?: string): RutWarning[]
+```
+
+## Session Memory（`session-memory.ts`）
+
+對話中自動抄筆記（參考 Claude Code SessionMemory）。
+
+### 機制
+
+- **觸發**：每 `intervalTurns` 輪（預設 10）
+- **萃取**：最近 `maxHistoryTurns` 輪（預設 15）→ Ollama chat → 摘要筆記
+- **儲存**：`{memoryDir}/_session_notes/{channelId後8碼}.md`（覆寫，保留最新）
+- **注入**：turn 開始前讀取，前置到 system prompt
+
+### API
+
+```typescript
+getSessionNote(memoryDir, channelId): string | null           // 讀取筆記（供 prompt 注入）
+checkAndSaveNote(channelId, turnCount, messages, memoryDir, opts): Promise<void>  // fire-and-forget 萃取
+```

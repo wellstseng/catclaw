@@ -11,7 +11,7 @@ CatClaw = **Codex 版 Claude Code CLI + 多人 AI 開發平台**。
 - **多 Provider**：Claude API / Ollama / OpenAI-compat / ACP CLI，failover 自動切換
 - **19 builtin tools**：file read/write/edit、run_command、search、memory、subagent 等
 - **32 builtin skills**：Discord 指令層（/think、/mode、/use、/stop、/plan 等）
-- **三層記憶引擎**：recall（vector + keyword）、extract、consolidate
+- **四層記憶引擎**：recall（vector + keyword）、extract、consolidate
 - **Context Engineering**：compaction / budget-guard / sliding-window / overflow-hard-stop
 - **帳號/角色/權限**：identity linking、role-based tool sets、rate limit
 - **Web Dashboard**：Trace 視覺化 + Web Chat + REST API
@@ -150,7 +150,7 @@ src/
 │   ├── registry.ts          (Skill 註冊 + trigger match)
 │   ├── builtin/             (29 TS skills)
 │   └── builtin-prompt/      (3 prompt skills)
-├── memory/                  (三層記憶引擎)
+├── memory/                  (四層記憶引擎)
 │   ├── engine.ts            (recall + extract + consolidate 統合)
 │   ├── recall.ts / extract.ts / consolidate.ts
 │   ├── atom.ts / context-builder.ts / session-memory.ts

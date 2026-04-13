@@ -32,7 +32,7 @@ initPlatform(config, catclawDir, distDir, workspaceDir)
   ├── 7.  RegistrationManager      — 帳號註冊 + IdentityLinker
   ├── 8.  ProjectManager           — 專案隔離
   ├── 8.5 OllamaClient             — embedding 用（可選）
-  ├── 9.  MemoryEngine             — 三層記憶（recall + extract + consolidate）
+  ├── 9.  MemoryEngine             — 四層記憶（recall + extract + consolidate）
   ├── 9.5 RateLimiter              — 角色分級限速
   ├── 9.6 ContextEngine            — CE 策略（compaction + budget-guard + sliding-window + overflow）
   ├── 9.65 SubagentRegistry        — 子 agent 管理

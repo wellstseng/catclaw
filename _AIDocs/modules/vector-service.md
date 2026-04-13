@@ -1,7 +1,7 @@
 # modules/vector-service — LanceDB 向量服務
 
-> 檔案：`src/vector/lancedb.ts` + `src/vector/embedding.ts`
-> 更新日期：2026-04-06
+> 檔案：`src/vector/lancedb.ts` + `src/vector/embedding.ts` + `src/vector/embedding-provider.ts`
+> 更新日期：2026-04-13
 
 ## 職責
 
@@ -11,7 +11,13 @@ In-process 向量資料庫，提供 embedding 索引與語意搜尋。
 ## 架構
 
 ```
-embedTexts() / embedOne()     ← src/vector/embedding.ts（Ollama /api/embed）
+EmbeddingProvider（抽象層）    ← src/vector/embedding-provider.ts
+  ├── OllamaEmbeddingProvider    （走 OllamaClient）
+  ├── GoogleEmbeddingProvider    （gemini-embedding-001 REST API）
+  ├── OpenAIEmbeddingProvider    （stub）
+  └── VoyageEmbeddingProvider    （stub）
+       ↓
+embedTexts() / embedOne()     ← src/vector/embedding.ts（delegate 到 EmbeddingProvider）
        ↓
 LanceVectorService            ← src/vector/lancedb.ts（@lancedb/lancedb）
   ├── upsert(id, text, namespace)
@@ -19,6 +25,43 @@ LanceVectorService            ← src/vector/lancedb.ts（@lancedb/lancedb）
   ├── delete(id, namespace)
   └── rebuild(namespace)
 ```
+
+## Embedding Provider 抽象層
+
+`src/vector/embedding-provider.ts` 將 embedding 實作從 Ollama 解耦。
+
+### Interface
+
+```typescript
+interface EmbedResult { vectors: number[][]; dim: number }
+
+interface EmbeddingProvider {
+  readonly providerName: EmbeddingProviderType;
+  readonly modelName: string;
+  embed(texts: string[]): Promise<EmbedResult>;
+  getDimensions(): Promise<number>;
+}
+```
+
+### 實作
+
+| Provider | 狀態 | 說明 |
+|----------|------|------|
+| `OllamaEmbeddingProvider` | Active | 走 `OllamaClient.embed()`，graceful skip（回傳空陣列） |
+| `GoogleEmbeddingProvider` | Active | `gemini-embedding-001` REST API，支援 `outputDimensionality` |
+| `OpenAIEmbeddingProvider` | Stub | `throw "Not implemented"` |
+| `VoyageEmbeddingProvider` | Stub | `throw "Not implemented"` |
+
+### Factory + Singleton
+
+```typescript
+createEmbeddingProvider(cfg): EmbeddingProvider   // 依 cfg.provider 建立
+initEmbeddingProvider(cfg): EmbeddingProvider      // 建立 + 設為全域
+getEmbeddingProvider(): EmbeddingProvider           // 取得全域（未初始化 throw）
+hasEmbeddingProvider(): boolean                     // 是否已初始化
+```
+
+由 `platform.ts` 步驟 8.6 初始化。config 來源：`config.memory.memoryPipeline.embedding`。
 
 ## Namespace 設計
 
