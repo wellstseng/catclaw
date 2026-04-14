@@ -3,6 +3,7 @@
 > 知識庫變更紀錄（最新在上，超過 8 筆觸發滾動淘汰）
 
 | 日期 | 變更 | 影響文件 |
+| 2026-04-14 | **feat: Skill 摘要自動注入系統提示** — prompt-assembler 新增 skill-summary module（priority 57）+ setSkillSummary() API，platform.ts 步驟 13 同時注入 tool + skill 摘要，LLM 可引導使用者使用 skill 指令 | src/core/{prompt-assembler,platform}.ts, _AIDocs/modules/prompt-assembler.md |
 | 2026-04-14 | **fix: CLI Bridge quote 模式中間文字累積** — quote/spoiler 模式下所有中間推理文字累積 edit 同一條 Discord 訊息，超過 2000 字才開新訊息，最終回覆用新訊息發送（原本每次 tool_call 各開新訊息造成洗版） | src/cli-bridge/reply.ts, _AIDocs/modules/cli-bridge.md |
 | 2026-04-14 | **feat: atom_delete tool** — 新增刪除記憶 atom 工具（刪檔 + 移除 MEMORY.md 索引 + 移除向量條目），tool count 19→20 | src/tools/builtin/atom-delete.ts, src/core/agent-loop.ts, _AIDocs/modules/tool-registry.md |
 | 2026-04-14 | **feat: /cron skill + agentId 隔離** — ①remind.ts 重寫為 cron skill，支援四種動作（msg/exec/claude/agent）×三種排程（at/every/expr）+ enable/disable/delete/list②cron.ts 新增 updateCronJob() API + CronJobEntry.agentId 欄位③listCronJobs 支援 agentId filter④SkillContext 新增 agentId⑤Dashboard cron table 加 Agent 欄⑥全域 skill 數量更新 29→30 TS / 32→33 total | src/{cron,discord}.ts, src/skills/{types,builtin/remind}.ts, src/core/dashboard.ts, _AIDocs/modules/{skills,cron}.md |

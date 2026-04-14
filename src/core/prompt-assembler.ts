@@ -216,6 +216,28 @@ const toolSummaryModule: PromptModule = {
   build: () => _toolSummaryText,
 };
 
+/** Skill 摘要（由 platform.ts 初始化後注入） */
+let _skillSummaryText = "";
+
+/** 供 platform.ts 呼叫：注入 skill 摘要 */
+export function setSkillSummary(skills: Array<{ name: string; description: string; trigger: string[] }>): void {
+  if (skills.length === 0) { _skillSummaryText = ""; return; }
+  const lines = skills.map(s => `- \`${s.trigger[0]}\`（${s.name}）：${s.description}`);
+  _skillSummaryText = [
+    "## 可用 Skill 指令",
+    "使用者可直接在 Discord 輸入以下指令（不經過 AI，由系統直接執行）：",
+    ...lines,
+    "",
+    "當使用者的需求對應到某個 skill 時，引導他們直接輸入對應指令。",
+  ].join("\n");
+}
+
+const skillSummaryModule: PromptModule = {
+  name: "skill-summary",
+  priority: 57,
+  build: () => _skillSummaryText,
+};
+
 const memoryRulesModule: PromptModule = {
   name: "memory-rules",
   priority: 60,
@@ -319,6 +341,7 @@ const builtinModules: PromptModule[] = [
   outputFormatModule,
   discordReplyModule,
   toolSummaryModule,
+  skillSummaryModule,
   memoryRulesModule,
   failureRecallModule,
 ];

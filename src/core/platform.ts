@@ -312,15 +312,20 @@ export async function initPlatform(
   _ready = true;
   log.info(`[platform] 初始化完成 providers=${Object.keys(config.providers).join(",")}`);
 
-  // ── 13. 工具摘要注入（延遲 2s 等 MCP server 連線完成）─────────────────────
+  // ── 13. 工具 + Skill 摘要注入（延遲 2s 等 MCP server 連線完成）────────────
   setTimeout(async () => {
     try {
-      const { setToolSummary } = await import("./prompt-assembler.js");
+      const { setToolSummary, setSkillSummary } = await import("./prompt-assembler.js");
       const tools = _toolRegistry!.all().map(t => ({ name: t.name, description: t.description }));
       setToolSummary(tools);
       log.info(`[platform] 工具摘要已注入（${tools.length} 個工具）`);
+
+      const { listSkills } = await import("../skills/registry.js");
+      const skills = listSkills().map(s => ({ name: s.name, description: s.description, trigger: s.trigger }));
+      setSkillSummary(skills);
+      log.info(`[platform] Skill 摘要已注入（${skills.length} 個 skill）`);
     } catch (err) {
-      log.warn(`[platform] 工具摘要注入失敗：${err instanceof Error ? err.message : String(err)}`);
+      log.warn(`[platform] 摘要注入失敗：${err instanceof Error ? err.message : String(err)}`);
     }
   }, 2000);
 }

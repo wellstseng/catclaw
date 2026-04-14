@@ -1,7 +1,7 @@
 # modules/prompt-assembler — 模組化 System Prompt 組裝
 
 > 檔案：`src/core/prompt-assembler.ts`
-> 更新日期：2026-04-10
+> 更新日期：2026-04-14
 
 ## 職責
 
@@ -20,6 +20,7 @@
 | `output-format` | 50 | 輸出規則（直球、繁中、不總結） |
 | `discord-reply` | 55 | Discord 回覆規則（有 Discord MCP 才注入） |
 | `tool-summary` | 56 | 可用工具摘要（含 MCP 工具），由 `platform.ts` 延遲注入 |
+| `skill-summary` | 57 | 可用 Skill 指令摘要，由 `platform.ts` 延遲注入 |
 | `failure-recall` | 55 | 跨 session 錯誤學習（已知 tool 陷阱注入） |
 | `memory-rules` | 60 | 記憶系統使用規則 |
 
@@ -109,6 +110,14 @@ setToolSummary(tools: Array<{ name: string; description: string }>): void
 ```
 
 由 `platform.ts` 步驟 13 呼叫（延遲 2s 等 MCP 連線完成），將 ToolRegistry 中所有已註冊工具（含 MCP 工具）的名稱與描述首行注入 system prompt。解決 Agent Loop 冷啟動時 AI 不知道有哪些工具可用的問題。
+
+## Skill Summary 注入
+
+```typescript
+setSkillSummary(skills: Array<{ name: string; description: string; trigger: string[] }>): void
+```
+
+由 `platform.ts` 步驟 13 與 Tool Summary 同時呼叫，將 SkillRegistry 中所有已註冊 skill 的名稱、描述、觸發指令注入 system prompt。讓 LLM 知道有哪些 skill 可用，能引導使用者直接輸入對應指令。
 
 ## Failure Recall Cache
 
