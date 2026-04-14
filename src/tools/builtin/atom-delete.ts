@@ -20,13 +20,13 @@ export const tool: Tool = {
     type: "object",
     properties: {
       name:  { type: "string", description: "atom 名稱（英文 kebab-case，例如 team-roster）" },
-      scope: { type: "string", description: "範圍：global / project / account（預設 global）" },
+      scope: { type: "string", description: "範圍：global / agent / project / account（預設 global）" },
     },
     required: ["name"],
   },
   async execute(params, ctx) {
     const name = String(params["name"] ?? "").trim();
-    const scope = String(params["scope"] ?? "global").trim() as "global" | "project" | "account";
+    const scope = String(params["scope"] ?? "global").trim() as "global" | "agent" | "project" | "account";
 
     if (!name) return { error: "name 不能為空" };
 
@@ -37,7 +37,11 @@ export const tool: Tool = {
 
       let dir: string;
       let namespace: string;
-      if (scope === "project" && ctx.projectId) {
+      if (scope === "agent" && ctx.agentId) {
+        const { resolveAgentDataDir } = await import("../../core/agent-loader.js");
+        dir = join(resolveAgentDataDir(ctx.agentId), "memory");
+        namespace = `agent/${ctx.agentId}`;
+      } else if (scope === "project" && ctx.projectId) {
         dir = join(globalDir, "projects", ctx.projectId);
         namespace = `project/${ctx.projectId}`;
       } else if (scope === "account") {

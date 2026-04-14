@@ -82,8 +82,8 @@ interface ToolContext {
 | Tool | 說明 |
 |------|------|
 | `memory_recall` | 向量+關鍵字記憶搜尋 |
-| `atom_write` | 寫入/更新記憶 atom（自動更新 MEMORY.md 索引 + 向量同步） |
-| `atom_delete` | 刪除記憶 atom（刪檔 + 移除 MEMORY.md 索引 + 移除向量條目） |
+| `atom_write` | 寫入/更新記憶 atom（scope: global/agent/project/account，global 寫入需 `globalMemoryWrite` 權限） |
+| `atom_delete` | 刪除記憶 atom（scope: global/agent/project/account） |
 
 ### Config（admin，deferred）
 

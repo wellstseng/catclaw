@@ -9,7 +9,10 @@ import type { Tool } from "../types.js";
 
 export const tool: Tool = {
   name: "atom_write",
-  description: "寫入或更新一筆記憶 atom。自動更新 MEMORY.md 索引和向量資料庫。",
+  description:
+    "寫入或更新一筆記憶 atom。自動更新 MEMORY.md 索引和向量資料庫。" +
+    "scope 決定寫入位置：global（全域共用）、agent（當前 agent 專屬）、project、account。" +
+    "判斷規則：跨 agent 共用的知識/規則/使用者偏好 → global；agent 專屬的行為校正/工作記錄 → agent。",
   tier: "standard",
   deferred: false,
   resultTokenCap: 500,
@@ -21,7 +24,7 @@ export const tool: Tool = {
       content:     { type: "string",  description: "atom 內容（知識本體）" },
       description: { type: "string",  description: "一行描述（用於索引和向量搜尋）" },
       confidence:  { type: "string",  description: "信心等級：[固] / [觀] / [臨]（預設 [臨]）" },
-      scope:       { type: "string",  description: "範圍：global / project / account（預設 global）" },
+      scope:       { type: "string",  description: "範圍：global（全域共用）/ agent（當前 agent 專屬）/ project / account。預設 global" },
       triggers:    { type: "string",  description: "觸發關鍵字，逗號分隔（例如：團隊名單, 成員查詢）" },
       related:     { type: "string",  description: "相關 atom 名稱，逗號分隔" },
     },
@@ -32,7 +35,7 @@ export const tool: Tool = {
     const content = String(params["content"] ?? "").trim();
     const description = String(params["description"] ?? content.slice(0, 60)).trim();
     const confidence = String(params["confidence"] ?? "[臨]").trim() as "[固]" | "[觀]" | "[臨]";
-    const scope = String(params["scope"] ?? "global").trim() as "global" | "project" | "account";
+    const scope = String(params["scope"] ?? "global").trim() as "global" | "agent" | "project" | "account";
     const triggersRaw = String(params["triggers"] ?? "").trim();
     const relatedRaw = String(params["related"] ?? "").trim();
 
@@ -49,14 +52,39 @@ export const tool: Tool = {
       const { getMemoryEngine } = await import("../../memory/engine.js");
       const engine = getMemoryEngine();
       const { globalDir } = engine.getStatus();
+      const { join } = await import("node:path");
 
       let dir: string;
-      if (scope === "project" && ctx.projectId) {
-        const { join } = await import("node:path");
+      let effectiveScope = scope;
+
+      // Global 寫入權限檢查
+      if (scope === "global" && ctx.agentId) {
+        try {
+          const { loadAgentConfig } = await import("../../core/agent-loader.js");
+          const agentConfig = loadAgentConfig(ctx.agentId);
+          if (agentConfig && !agentConfig.globalMemoryWrite && !agentConfig.admin) {
+            // 沒有全域寫入權限 → 降級為 agent scope 並提示
+            effectiveScope = "agent";
+            return {
+              result: {
+                written: false,
+                reason: `此 agent（${ctx.agentId}）沒有全域記憶寫入權限（globalMemoryWrite=false）。` +
+                  `請改用 scope="agent" 寫入 agent 專屬記憶，或請管理者授權。`,
+                suggestedScope: "agent",
+              },
+            };
+          }
+        } catch { /* agent-loader 未就緒，允許寫入 */ }
+      }
+
+      if (effectiveScope === "agent" && ctx.agentId) {
+        const { resolveAgentDataDir } = await import("../../core/agent-loader.js");
+        dir = join(resolveAgentDataDir(ctx.agentId), "memory");
+        namespace = `agent/${ctx.agentId}`;
+      } else if (effectiveScope === "project" && ctx.projectId) {
         dir = join(globalDir, "projects", ctx.projectId);
         namespace = `project/${ctx.projectId}`;
-      } else if (scope === "account") {
-        const { join } = await import("node:path");
+      } else if (effectiveScope === "account") {
         dir = join(globalDir, "accounts", ctx.accountId);
         namespace = `account/${ctx.accountId}`;
       } else {
@@ -74,7 +102,7 @@ export const tool: Tool = {
       const filePath = writeAtom(dir, name, {
         description,
         confidence,
-        scope,
+        scope: effectiveScope,
         triggers,
         related,
         content,

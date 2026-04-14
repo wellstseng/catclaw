@@ -542,6 +542,8 @@ export interface AgentConfig {
   memory?: { namespace?: string };
   /** 管理者 flag：true 可改 catclaw.json + 其他 agent 設定 */
   admin?: boolean;
+  /** 允許寫入全域記憶（預設 false） */
+  globalMemoryWrite?: boolean;
 }
 
 /** 多 Agent 單一 bot 入口設定 */

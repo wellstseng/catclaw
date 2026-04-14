@@ -3,6 +3,7 @@
 > 知識庫變更紀錄（最新在上，超過 8 筆觸發滾動淘汰）
 
 | 日期 | 變更 | 影響文件 |
+| 2026-04-14 | **feat: 全域記憶寫入權限** — AgentConfig 新增 `globalMemoryWrite` 欄位，atom_write/atom_delete 支援 `scope="agent"`（寫入 `agents/{id}/memory/`），scope=global 時檢查 agent 權限，無權限回傳建議改用 agent scope | src/tools/builtin/{atom-write,atom-delete}.ts, src/core/config.ts |
 | 2026-04-14 | **feat: Agent CATCLAW.md 統一載入** — prompt-assembler catclaw-md module 載入 workspace 全域規則後再疊加 `agents/{bootAgentId}/CATCLAW.md`，所有 agent 統一機制。新增 `templates/CATCLAW.md` 全域 template，setup 和 runtime auto-create 從 template 複製。溫蒂靈魂拆至 `agents/wendy/CATCLAW.md` | src/core/prompt-assembler.ts, setup.{sh,ps1}, templates/CATCLAW.md |
 | 2026-04-14 | **feat: skill tool** — 新增 `skill` tool 讓 LLM 可直接執行 builtin skill 指令（如 `/cron list`），SkillContext.message 改 optional + 5 個 skill fallback 處理，tool count 20→21 | src/tools/builtin/skill.ts, src/skills/types.ts, src/skills/builtin/{compact,session-manage,context,register,help,configure}.ts |
 | 2026-04-14 | **feat: Skill 摘要自動注入系統提示** — prompt-assembler 新增 skill-summary module（priority 57）+ setSkillSummary() API，platform.ts 步驟 13 同時注入 tool + skill 摘要，LLM 可引導使用者使用 skill 指令 | src/core/{prompt-assembler,platform}.ts, _AIDocs/modules/prompt-assembler.md |
