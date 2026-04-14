@@ -1,7 +1,7 @@
 # modules/tool-registry — Tool 註冊 + Builtin Tools
 
 > 檔案：`src/tools/registry.ts` + `src/tools/builtin/`
-> 更新日期：2026-04-13
+> 更新日期：2026-04-14
 
 ## 職責
 
@@ -50,7 +50,7 @@ interface ToolContext {
 }
 ```
 
-## 19 Builtin Tools
+## 20 Builtin Tools
 
 ### 檔案操作（elevated）
 
@@ -83,6 +83,7 @@ interface ToolContext {
 |------|------|
 | `memory_recall` | 向量+關鍵字記憶搜尋 |
 | `atom_write` | 寫入/更新記憶 atom（自動更新 MEMORY.md 索引 + 向量同步） |
+| `atom_delete` | 刪除記憶 atom（刪檔 + 移除 MEMORY.md 索引 + 移除向量條目） |
 
 ### Config（admin，deferred）
 

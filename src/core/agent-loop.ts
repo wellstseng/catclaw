@@ -54,6 +54,7 @@ function toolParamsPreview(name: string, params: unknown): string {
     case "spawn_subagent": return String(p.task ?? "").slice(0, 60);
     case "memory_recall": return String(p.query ?? "").slice(0, 60);
     case "atom_write": return String(p.name ?? p.atomName ?? "");
+    case "atom_delete": return String(p.name ?? "");
     case "fetch_messages": return `ch:${String(p.chat_id ?? p.channelId ?? "").slice(-6)}`;
     default: {
       // 通用：取第一個 string 值
