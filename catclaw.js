@@ -300,9 +300,33 @@ switch (cmd) {
     break;
   }
 
-  default:
-    console.log("用法：catclaw [init|build|start [-f]|stop|restart|logs [-c]|status|reset-session [channelId]]");
-    console.log("      start -f  強制 delete + re-register PM2（重構後或跨環境部署時使用）");
-    console.log("      logs -c   清除 log 後再顯示");
-    process.exit(1);
+  case "help":
+  case "-h":
+  case "--help":
+  default: {
+    const isHelp = ["help", "-h", "--help"].includes(cmd);
+    console.log(`CatClaw — Discord AI Agent Platform
+
+用法：catclaw <command>
+
+指令：
+  init                       初始化 ~/.catclaw/ 目錄結構
+  build                      編譯 TypeScript（不啟動）
+  start [-f]                 編譯 + PM2 啟動（-f 強制重新註冊）
+  stop                       停止
+  restart                    重新編譯 + 重啟
+  logs [-c]                  即時 log（-c 清除後再顯示）
+  status                     PM2 狀態
+  reset-session [channelId]  清除 session（全部或指定頻道）
+  help                       顯示此說明
+
+環境變數：
+  CATCLAW_CONFIG_DIR         catclaw.json 所在目錄（預設 ~/.catclaw）
+  CATCLAW_WORKSPACE          Agent 工作目錄（預設 ~/.catclaw/workspace）
+
+設定檔：
+  ~/.catclaw/catclaw.json    主設定（JSONC 格式）
+  Dashboard：http://localhost:8088`);
+    process.exit(isHelp ? 0 : 1);
+  }
 }
