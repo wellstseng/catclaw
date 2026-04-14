@@ -21,7 +21,7 @@ const SKIP_DIRS = new Set(["_vectordb", "_staging", "_reference", "_session_note
 interface MemoryPaths {
   /** ~/.catclaw/memory/ 的展開絕對路徑 */
   memRoot: string;
-  /** ~/.catclaw/agents/ 的展開絕對路徑 */
+  /** ~/.catclaw/workspace/agents/ 的展開絕對路徑 */
   agentsRoot: string;
 }
 
@@ -39,7 +39,7 @@ function resolveNamespace(filePath: string, paths: MemoryPaths): string | null {
     if (parts.includes(dir)) return null;
   }
 
-  // Agent 層：~/.catclaw/agents/{agentId}/memory/xxx.md
+  // Agent 層：~/.catclaw/workspace/agents/{agentId}/memory/xxx.md
   if (filePath.startsWith(paths.agentsRoot)) {
     const rel = relative(paths.agentsRoot, filePath); // {agentId}/memory/xxx.md
     const segments = rel.split("/");

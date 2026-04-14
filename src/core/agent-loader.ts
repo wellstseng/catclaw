@@ -3,7 +3,7 @@
  * @description CLI `--agent <id>` 支援
  *
  * 啟動時解析 `--agent <id>` 參數，將對應的 agent 設定深合併到頂層 config。
- * Per-agent 資料路徑自動設定為 ~/.catclaw/agents/{id}/。
+ * Per-agent 資料路徑自動設定為 ~/.catclaw/workspace/agents/{id}/。
  *
  * 使用方式：
  *   node dist/index.js --agent support-bot
@@ -50,7 +50,7 @@ export function getBootAgentId(): string { return _bootAgentId; }
 /** 取得 boot agent 是否為 admin */
 export function getBootIsAdmin(): boolean { return _bootIsAdmin; }
 
-/** 取得 boot agent 的資料目錄（~/.catclaw/agents/{bootAgentId}/） */
+/** 取得 boot agent 的資料目錄（~/.catclaw/workspace/agents/{bootAgentId}/） */
 export function getBootAgentDataDir(catclawDir?: string): string {
   return resolveAgentDataDir(_bootAgentId, catclawDir);
 }

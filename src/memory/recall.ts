@@ -51,7 +51,7 @@ export interface RecallPaths {
   globalDir: string;
   projectDir?: string;
   accountDir?: string;
-  /** Agent 專屬記憶目錄（~/.catclaw/agents/{agentId}/memory/） */
+  /** Agent 專屬記憶目錄（~/.catclaw/workspace/agents/{agentId}/memory/） */
   agentDir?: string;
 }
 

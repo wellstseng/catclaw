@@ -21,7 +21,7 @@
  * - 純值 → agent 覆寫頂層
  * - Object → 遞迴合併（agent 優先）
  * - Array → agent 完全替換頂層（不 concat）
- * - Per-agent data 路徑：~/.catclaw/agents/{id}/
+ * - Per-agent data 路徑：~/.catclaw/workspace/agents/{id}/
  */
 
 import { log } from "../logger.js";

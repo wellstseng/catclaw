@@ -322,7 +322,7 @@ export const tool: Tool = {
       keepSession:{ type: "boolean", description: "完成後保留 session（debug 用，預設 false）" },
       mode:       { type: "string",  description: "run（預設，one-shot）| session（持久，需搭配 keepSession:true）" },
       allowNestedSpawn: { type: "boolean", description: "opt-in 允許子 agent 再 spawn（最多 3 層，預設 false）" },
-      agent:      { type: "string",  description: "Agent ID（對應 ~/.catclaw/agents/{id}/），自動載入設定、deterministic session、保留歷史" },
+      agent:      { type: "string",  description: "Agent ID（對應 ~/.catclaw/workspace/agents/{id}/），自動載入設定、deterministic session、保留歷史" },
       model:      { type: "string",  description: "模型 alias 或 provider/model（覆蓋預設）" },
       workspaceDir: { type: "string", description: "工作目錄（覆蓋預設）" },
       isolation:  { type: "string",  description: "worktree = git worktree 隔離分支工作（完成後由 parent 決定 merge 或丟棄）" },
