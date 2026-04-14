@@ -255,13 +255,23 @@ export async function handleCliBridgeReply(
       if (evt.type === "text_delta") {
         // 確保 typing indicator 在運作
         if (!typingInterval) resumeTyping();
+        buffer += evt.text;
+
+        // none 模式：只累積 buffer，不建立 editMsg（避免 "..." 閃爍）
+        if (intermediateStyle === "none") {
+          if (!toolHintSent && !state.editMsg) {
+            void originalMessage.reactions.cache.get("⏳")?.remove().catch(() => {});
+            void originalMessage.react("🤔").catch(() => {});
+          }
+          continue;
+        }
+
         // 移除 ⏳，加 🤔
         if (!state.editMsg) {
           void originalMessage.reactions.cache.get("⏳")?.remove().catch(() => {});
           void originalMessage.react("🤔").catch(() => {});
           await initEditMsg();
         }
-        buffer += evt.text;
         scheduleEdit();
 
         // 超過 TEXT_LIMIT → 送出當前 buffer，開新 edit message
