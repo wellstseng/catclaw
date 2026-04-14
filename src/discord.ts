@@ -491,7 +491,8 @@ async function handleMessage(
         const skillAccountId = isPlatformReady()
           ? resolveDiscordIdentity(firstMessage.author.id, config.admin?.allowedUserIds ?? []).accountId
           : undefined;
-        const skillCtx = { args, message: firstMessage, channelId: firstMessage.channelId, authorId: firstMessage.author.id, accountId: skillAccountId, config };
+        const { getBootAgentId } = await import("./core/agent-loader.js");
+        const skillCtx = { args, message: firstMessage, channelId: firstMessage.channelId, authorId: firstMessage.author.id, accountId: skillAccountId, agentId: getBootAgentId(), config };
 
         if (skill.preflight) {
           const check = await skill.preflight(skillCtx);

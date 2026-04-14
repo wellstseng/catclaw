@@ -6,6 +6,7 @@
 
 定時排程執行任務（發送訊息、呼叫 Claude、或執行 shell 指令），支援三種排程模式。
 Job 定義 + 執行狀態統一存在 `data/cron-jobs.json`，支援 hot-reload。
+每個 job 可帶 `agentId` 欄位做 agent 隔離（skill 建立時自動帶入 boot agent ID）。
 `config.json` 控制 `cron.enabled`、`maxConcurrentRuns`、`defaultAccountId`、`defaultProvider`。
 
 ## 排程模式
@@ -133,10 +134,10 @@ stopCron()                 ← SIGINT/SIGTERM 時呼叫
 |------|------|
 | `addCronJob(entry)` | 新增排程，回傳自動產生的 ID（`name-slug + randomUUID 前 6 碼`）。自動計算 `nextRunAtMs`，寫入 store |
 | `removeCronJob(id)` | 依 ID 刪除排程，回傳是否成功 |
-| `listCronJobs()` | 回傳 `Array<{ id, entry }>` 所有排程 |
+| `listCronJobs(agentId?)` | 回傳排程列表；指定 agentId 時只回傳該 agent 的 job |
 | `updateCronJob(id, patch)` | 部分更新（enabled/name/schedule/action/deleteAfterRun/maxRetries），schedule 變更時自動重算 nextRunAtMs |
 
-`addCronJob` 接受 `CronJobEntry` 中的定義欄位（name、enabled、schedule、action、deleteAfterRun、maxRetries），不需傳入運行狀態欄位（nextRunAtMs、lastRunAtMs 等由系統自動補齊）。
+`addCronJob` 接受 `CronJobEntry` 中的定義欄位（name、enabled、agentId、schedule、action、deleteAfterRun、maxRetries），不需傳入運行狀態欄位（nextRunAtMs、lastRunAtMs 等由系統自動補齊）。
 
 ## 與其他模組的關係
 

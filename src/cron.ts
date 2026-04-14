@@ -34,6 +34,8 @@ interface CronJobEntry {
   // ── 定義（使用者設定）──
   name: string;
   enabled?: boolean;
+  /** 所屬 agent ID（隔離用，skill 建立時自動帶入） */
+  agentId?: string;
   schedule: CronSchedule;
   action: CronAction;
   /** 一次性 job 執行後自動刪除 */
@@ -762,10 +764,13 @@ export function removeCronJob(id: string): boolean {
 }
 
 /**
- * 列出所有 cron job（供 skill / dashboard 使用）
+ * 列出 cron job（供 skill / dashboard 使用）
+ * @param agentId 指定時只回傳該 agent 的 job；省略則回傳全部
  */
-export function listCronJobs(): Array<{ id: string; entry: CronJobEntry }> {
-  return Object.entries(store.jobs).map(([id, entry]) => ({ id, entry }));
+export function listCronJobs(agentId?: string): Array<{ id: string; entry: CronJobEntry }> {
+  const all = Object.entries(store.jobs).map(([id, entry]) => ({ id, entry }));
+  if (agentId === undefined) return all;
+  return all.filter(j => j.entry.agentId === agentId);
 }
 
 /**

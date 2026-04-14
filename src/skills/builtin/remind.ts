@@ -148,29 +148,30 @@ export const skill: Skill = {
 
   async execute(ctx) {
     const args = ctx.args.trim();
+    const agentId = ctx.agentId;
 
     // ── 無參數 or list ──
     if (!args || args === "list") {
-      return handleList();
+      return handleList(agentId);
     }
 
     // ── delete ──
     if (/^(delete|del|刪除)\s+/.test(args)) {
       const target = args.replace(/^(delete|del|刪除)\s+/, "").trim();
-      return handleDelete(target);
+      return handleDelete(target, agentId);
     }
 
     // ── enable / disable ──
     if (/^enable\s+/.test(args)) {
-      return handleToggle(args.replace(/^enable\s+/, "").trim(), true);
+      return handleToggle(args.replace(/^enable\s+/, "").trim(), true, agentId);
     }
     if (/^disable\s+/.test(args)) {
-      return handleToggle(args.replace(/^disable\s+/, "").trim(), false);
+      return handleToggle(args.replace(/^disable\s+/, "").trim(), false, agentId);
     }
 
     // ── add <schedule> <action> <content> ──
     if (args.startsWith("add ")) {
-      return handleAdd(args.slice(4).trim(), ctx.channelId);
+      return handleAdd(args.slice(4).trim(), ctx.channelId, agentId);
     }
 
     // ── 快捷語法：/cron <time> <content> → /cron add at <time> msg <content> ──
@@ -178,7 +179,7 @@ export const skill: Skill = {
     if (looksLikeTime(parts[0])) {
       const content = parts.slice(1).join(" ");
       if (!content) return showUsage();
-      return handleAdd(`at ${parts[0]} msg ${content}`, ctx.channelId);
+      return handleAdd(`at ${parts[0]} msg ${content}`, ctx.channelId, agentId);
     }
 
     return showUsage();
@@ -187,7 +188,7 @@ export const skill: Skill = {
 
 // ── add 子命令解析 ──────────────────────────────────────────────────────────
 
-function handleAdd(rest: string, channelId: string): { text: string; isError?: boolean } {
+function handleAdd(rest: string, channelId: string, agentId?: string): { text: string; isError?: boolean } {
   if (!config.cron?.enabled) {
     return { text: "排程服務未啟用。請在 catclaw.json 設定 `cron.enabled: true` 後重啟。" };
   }
@@ -213,6 +214,7 @@ function handleAdd(rest: string, channelId: string): { text: string; isError?: b
     const id = addCronJob({
       name: content.slice(0, 30),
       enabled: true,
+      agentId,
       schedule: { kind: "at", at: parsed.at },
       action,
       deleteAfterRun: true,
@@ -238,6 +240,7 @@ function handleAdd(rest: string, channelId: string): { text: string; isError?: b
     const id = addCronJob({
       name: content.slice(0, 30),
       enabled: true,
+      agentId,
       schedule: { kind: "every", everyMs: interval.ms },
       action,
     });
@@ -259,6 +262,7 @@ function handleAdd(rest: string, channelId: string): { text: string; isError?: b
     const id = addCronJob({
       name: content.slice(0, 30),
       enabled: true,
+      agentId,
       schedule: { kind: "cron", expr, tz: "Asia/Taipei" },
       action,
     });
@@ -271,8 +275,8 @@ function handleAdd(rest: string, channelId: string): { text: string; isError?: b
 
 // ── list ────────────────────────────────────────────────────────────────────
 
-function handleList(): { text: string } {
-  const jobs = listCronJobs();
+function handleList(agentId?: string): { text: string } {
+  const jobs = listCronJobs(agentId);
   if (jobs.length === 0) return { text: "目前沒有排程。" };
 
   const lines = jobs.map(({ id, entry }) => {
@@ -305,13 +309,13 @@ function formatSchedule(entry: CronJobEntry): string {
 
 // ── delete ──────────────────────────────────────────────────────────────────
 
-function handleDelete(target: string): { text: string; isError?: boolean } {
+function handleDelete(target: string, agentId?: string): { text: string; isError?: boolean } {
   if (removeCronJob(target)) {
     return { text: `已刪除排程：\`${target}\`` };
   }
 
-  // 模糊匹配
-  const jobs = listCronJobs();
+  // 模糊匹配（只在自己 agent 的 job 裡找）
+  const jobs = listCronJobs(agentId);
   const match = jobs.find(j =>
     j.entry.name.toLowerCase().includes(target.toLowerCase()) ||
     j.id.includes(target.toLowerCase())
@@ -326,8 +330,8 @@ function handleDelete(target: string): { text: string; isError?: boolean } {
 
 // ── enable / disable ────────────────────────────────────────────────────────
 
-function handleToggle(target: string, enabled: boolean): { text: string; isError?: boolean } {
-  const jobs = listCronJobs();
+function handleToggle(target: string, enabled: boolean, agentId?: string): { text: string; isError?: boolean } {
+  const jobs = listCronJobs(agentId);
   const match = jobs.find(j => j.id === target)
     ?? jobs.find(j =>
       j.entry.name.toLowerCase().includes(target.toLowerCase()) ||

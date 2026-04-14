@@ -1296,6 +1296,7 @@ async function loadCron() {
       return \`<tr>
         <td title="\${id}">\${id.slice(-8)}</td>
         <td>\${j.name||'-'}</td>
+        <td style="font-size:0.72rem;color:#aaa">\${j.agentId||'-'}</td>
         <td style="font-size:0.72rem;font-family:monospace">\${schedStr}</td>
         <td><span class="badge \${enCls}">\${enLabel}</span></td>
         <td style="font-size:0.72rem">\${lastRun}</td>
@@ -1308,7 +1309,7 @@ async function loadCron() {
         </td>\`;
     }).join('');
     document.getElementById('cron-list').innerHTML =
-      \`<table class="tbl"><thead><tr><th>ID</th><th>名稱</th><th>排程</th><th>狀態</th><th>上次執行</th><th>結果</th><th>下次執行</th><th>操作</th></tr></thead><tbody>\${rows}</tbody></table>\`;
+      \`<table class="tbl"><thead><tr><th>ID</th><th>名稱</th><th>Agent</th><th>排程</th><th>狀態</th><th>上次執行</th><th>結果</th><th>下次執行</th><th>操作</th></tr></thead><tbody>\${rows}</tbody></table>\`;
   } catch(e) { document.getElementById('cron-list').innerHTML = '讀取失敗：' + e; }
 }
 
