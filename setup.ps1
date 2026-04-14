@@ -1,4 +1,4 @@
-# ═══════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════
 # CatClaw — One-Click Setup Script (Windows PowerShell)
 # 用法：powershell -ExecutionPolicy Bypass -File setup.ps1
 # ═══════════════════════════════════════════════════════════════════
@@ -121,19 +121,20 @@ if (-not (Test-Path $CatclawJson)) {
 # 建立 CATCLAW.md（若不存在）
 $CatclawMd = Join-Path $Workspace "CATCLAW.md"
 if (-not (Test-Path $CatclawMd)) {
-    $ticks = '```'
-    @"
-# CATCLAW.md — CatClaw Bot 行為規則
+    $catclawMdContent = @"
+# CATCLAW.md - CatClaw Bot 行為規則
 
 你是 CatClaw，一個整合 Discord 的 AI Agent 平台。
 
 ## 重啟機制
 
 當使用者要求重啟 bot 時：
-${ticks}bash
+``````bash
 node catclaw.js restart
-${ticks}
-"@ | Set-Content -Path $CatclawMd -Encoding UTF8
+``````
+"@
+    $catclawMdContent = $catclawMdContent -replace '``````', '```'
+    Set-Content -Path $CatclawMd -Value $catclawMdContent -Encoding UTF8
     Ok "已建立 CATCLAW.md"
 }
 
@@ -210,7 +211,8 @@ if ($NeedToken) {
     if ($BotToken) {
         # 讀取原始內容，用 regex 替換 token
         $content = Get-Content $CatclawJson -Raw -Encoding UTF8
-        $content = $content -replace '("token"\s*:\s*)"[^"]*"', "`$1`"$BotToken`""
+        $replacement = '$1"' + $BotToken + '"'
+        $content = $content -replace '("token"\s*:\s*)"[^"]*"', $replacement
         Set-Content -Path $CatclawJson -Value $content -Encoding UTF8 -NoNewline
         Ok "Discord Token 已寫入"
     } else {
