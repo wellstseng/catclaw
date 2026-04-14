@@ -142,6 +142,29 @@ export class CliBridge {
       textParts: [],
     });
 
+    // 如果有前一個 turn 還在等 → abort 它（插話場景：CLI 內部會中斷舊 turn，但 listener 不知道）
+    if (this.activeTurnId && this.activeTurnId !== turnId) {
+      const prevTurnId = this.activeTurnId;
+      const prevListener = this.turnListeners.get(prevTurnId);
+      if (prevListener && !prevListener.done) {
+        prevListener.done = true;
+        const errEvt: CliBridgeEvent = { type: "error", message: "被新訊息插話取消" };
+        if (prevListener.resolve) prevListener.resolve(errEvt);
+        else prevListener.queue.push(errEvt);
+        log.debug(`[cli-bridge:${this.label}] 插話：abort 前一個 turn=${prevTurnId.slice(0, 8)}`);
+      }
+      // 清 pending turn record
+      const prev = this.pendingTurns.get(prevTurnId);
+      if (prev) {
+        prev.record.completedAt = new Date().toISOString();
+        prev.record.assistantReply = prev.textParts.join("") || "(interrupted)";
+        this.stdoutLogger.recordTurn(prev.record);
+        this.pendingTurns.delete(prevTurnId);
+      }
+      const timer = this.turnTimeouts.get(prevTurnId);
+      if (timer) { clearTimeout(timer); this.turnTimeouts.delete(prevTurnId); }
+    }
+
     // 標記 busy
     this.activeTurnId = turnId;
     this._status = "busy";
