@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { log } from "../logger.js";
 import type { BridgeConfig, AgentConfig } from "./config.js";
-import { resolveCatclawDir } from "./config.js";
+import { resolveCatclawDir, resolveWorkspaceDir } from "./config.js";
 import { deepMerge } from "./agent-registry.js";
 
 // ── CLI 解析 ──────────────────────────────────────────────────────────────────
@@ -62,6 +62,16 @@ export function resolveAgentDataDir(agentId: string, catclawDir?: string): strin
   return join(base, "agents", agentId);
 }
 
+/** Agent 的 workspace 目錄（~/.catclaw/workspace/agents/{id}/），放 CATCLAW.md、config.json 等文件 */
+export function resolveAgentWorkspaceDir(agentId: string): string {
+  try {
+    return join(resolveWorkspaceDir(), "agents", agentId);
+  } catch {
+    // CATCLAW_WORKSPACE 未設定時 fallback 到 data dir
+    return resolveAgentDataDir(agentId);
+  }
+}
+
 // ── 設定解析 ──────────────────────────────────────────────────────────────────
 
 /**
@@ -104,18 +114,21 @@ export function loadAgentBootConfig(base: BridgeConfig, agentId: string): Bridge
 // ── Agent Config 載入（供 spawn_subagent 使用）──────────────────────────────
 
 /**
- * 讀取 `~/.catclaw/agents/{agentId}/config.json`，回傳 AgentConfig。
- * 檔案不存在時回傳 undefined（agent 目錄可能只有 CATCLAW.md）。
+ * 讀取 agent 的 config.json，回傳 AgentConfig。
+ * 優先從 workspace（~/.catclaw/workspace/agents/{id}/），fallback 到 data dir。
+ * 檔案不存在時回傳 undefined。
  */
 export function loadAgentConfig(agentId: string): AgentConfig | undefined {
-  const configPath = join(resolveAgentDataDir(agentId), "config.json");
-  if (!existsSync(configPath)) {
-    log.debug(`[agent-loader] agent config 不存在：${configPath}`);
+  const wsPath = join(resolveAgentWorkspaceDir(agentId), "config.json");
+  const dataPath = join(resolveAgentDataDir(agentId), "config.json");
+  const configPath = existsSync(wsPath) ? wsPath : existsSync(dataPath) ? dataPath : undefined;
+  if (!configPath) {
+    log.debug(`[agent-loader] agent config 不存在：${agentId}`);
     return undefined;
   }
   try {
     const raw = JSON.parse(readFileSync(configPath, "utf-8")) as AgentConfig;
-    log.info(`[agent-loader] agent config 載入：${agentId}`);
+    log.info(`[agent-loader] agent config 載入：${configPath}`);
     return raw;
   } catch (err) {
     log.warn(`[agent-loader] agent config 解析失敗：${configPath} — ${err instanceof Error ? err.message : String(err)}`);
@@ -125,12 +138,16 @@ export function loadAgentConfig(agentId: string): AgentConfig | undefined {
 
 /**
  * 讀取 agent 的 CATCLAW.md（agent 專屬行為規則），作為 system prompt 的一部分。
+ * 優先從 workspace（~/.catclaw/workspace/agents/{id}/），fallback 到 data dir。
  * 不存在時回傳 undefined。
  */
 export function loadAgentPrompt(agentId: string): string | undefined {
-  const promptPath = join(resolveAgentDataDir(agentId), "CATCLAW.md");
-  if (!existsSync(promptPath)) return undefined;
+  const wsPath = join(resolveAgentWorkspaceDir(agentId), "CATCLAW.md");
+  const dataPath = join(resolveAgentDataDir(agentId), "CATCLAW.md");
+  const promptPath = existsSync(wsPath) ? wsPath : existsSync(dataPath) ? dataPath : undefined;
+  if (!promptPath) return undefined;
   try {
+    log.debug(`[agent-loader] agent CATCLAW.md 載入：${promptPath}`);
     return readFileSync(promptPath, "utf-8");
   } catch {
     return undefined;

@@ -44,7 +44,8 @@ detectIntent(userMessage: string): "coding" | "research" | "conversation"
 ```
 1. Workspace 層級：workspaceDir → 往上搜尋 CATCLAW.md → 直到 filesystem root
    root-level first，project-level last（後者覆寫前者）
-2. Agent 層級：agents/{bootAgentId}/CATCLAW.md（agent 專屬規則，疊加在全域之後）
+2. Agent 層級：workspace/agents/{bootAgentId}/CATCLAW.md（agent 專屬規則，疊加在全域之後）
+   路徑解析：workspace 優先（resolveAgentWorkspaceDir），fallback 到 data dir（resolveAgentDataDir）
 ```
 
 所有 agent 統一機制。spawn 出的 agent 由 spawn-subagent.ts 的 `loadAgentPrompt()` 載入。
