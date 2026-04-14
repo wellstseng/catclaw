@@ -114,11 +114,28 @@ foreach ($d in $dirs) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 }
 
-# 複製 catclaw.json（若不存在）
+# 複製 catclaw.json（若不存在）— 去掉 JSONC 註解寫入乾淨 JSON
 $CatclawJson = Join-Path $ConfigDir "catclaw.json"
 if (-not (Test-Path $CatclawJson)) {
-    Copy-Item (Join-Path $ProjectDir "catclaw.example.json") $CatclawJson
-    Ok "已建立 catclaw.json"
+    $examplePath = Join-Path $ProjectDir "catclaw.example.json"
+    $raw = Get-Content $examplePath -Raw -Encoding UTF8
+    if ($raw.Length -gt 0 -and $raw[0] -eq [char]0xFEFF) { $raw = $raw.Substring(1) }
+    # 逐行去掉 // 註解（字串外）
+    $lines = $raw -split "`n"
+    $cleaned = @()
+    foreach ($line in $lines) {
+        $inStr = $false; $result = ""; $prev = ''
+        for ($j = 0; $j -lt $line.Length; $j++) {
+            $ch = $line[$j]
+            if ($ch -eq '"' -and $prev -ne '\') { $inStr = -not $inStr }
+            if (-not $inStr -and $ch -eq '/' -and $j+1 -lt $line.Length -and $line[$j+1] -eq '/') { break }
+            $result += $ch
+            $prev = $ch
+        }
+        $cleaned += $result
+    }
+    Write-Utf8 $CatclawJson ($cleaned -join "`n")
+    Ok "已建立 catclaw.json（已去除註解）"
 } else {
     Info "catclaw.json 已存在，跳過"
 }

@@ -134,7 +134,10 @@ function ensureInitialized() {
   if (!existsSync(catclawJsonPath)) {
     const examplePath = join(__dirname, "catclaw.example.json");
     if (existsSync(examplePath)) {
-      copyFileSync(examplePath, catclawJsonPath);
+      // 去掉 JSONC 註解後寫入乾淨 JSON
+      const exampleRaw = readFileSync(examplePath, "utf-8");
+      const cleanJson = stripJsoncComments(exampleRaw);
+      writeFileSync(catclawJsonPath, cleanJson, "utf-8");
       console.log(`📄 建立設定檔：${catclawJsonPath}`);
       console.log(`   ⚠️  請編輯此檔，填入 discord.token 後再啟動`);
       needsToken = true;

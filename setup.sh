@@ -92,11 +92,19 @@ step "Step 4/9: 初始化目錄結構"
 # 建立目錄
 mkdir -p "$CONFIG_DIR" "$WORKSPACE/data/sessions" "$WORKSPACE/data/active-turns" "$WORKSPACE/agents/default" "$PROJECT_DIR/signal"
 
-# 複製 catclaw.json（若不存在）
+# 複製 catclaw.json（若不存在）— 去掉 JSONC 註解寫入乾淨 JSON
 CATCLAW_JSON="$CONFIG_DIR/catclaw.json"
 if [ ! -f "$CATCLAW_JSON" ]; then
-  cp "$PROJECT_DIR/catclaw.example.json" "$CATCLAW_JSON"
-  ok "已建立 catclaw.json"
+  node -e "
+    const fs=require('fs'),src=process.argv[1],dst=process.argv[2];
+    let r='',s=false,i=0,t=fs.readFileSync(src,'utf-8');
+    while(i<t.length){const c=t[i];
+      if(c==='\\\\'&&s){r+=c+(t[i+1]||'');i+=2;continue}
+      if(c==='\"'){s=!s;r+=c;i++;continue}
+      if(!s&&c==='/'&&t[i+1]==='/'){while(i<t.length&&t[i]!=='\n')i++;if(i<t.length){r+='\n';i++}continue}
+      r+=c;i++}
+    fs.writeFileSync(dst,r);" "$PROJECT_DIR/catclaw.example.json" "$CATCLAW_JSON"
+  ok "已建立 catclaw.json（已去除註解）"
 else
   info "catclaw.json 已存在，跳過"
 fi
