@@ -93,6 +93,8 @@ export interface CronConfig {
   defaultAccountId?: string;
   /** Cron 預設 provider */
   defaultProvider?: string;
+  /** 預設 agent ID（未指定 agentId 的 job 歸屬此 agent） */
+  defaultAgentId?: string;
 }
 
 export interface HistoryConfig {
@@ -760,7 +762,7 @@ interface RawConfig {
   fileUploadThreshold?: number;
   streamingReply?: boolean;
   logLevel?: string;
-  cron?: { enabled?: boolean; maxConcurrentRuns?: number; defaultAccountId?: string; defaultProvider?: string };
+  cron?: { enabled?: boolean; maxConcurrentRuns?: number; defaultAccountId?: string; defaultProvider?: string; defaultAgentId?: string };
   history?: { enabled?: boolean };
   // 平台擴充 — V2 三層分離
   agentDefaults?: AgentDefaultsConfig;
@@ -1226,6 +1228,7 @@ function loadConfig(): BridgeConfig {
       maxConcurrentRuns: raw.cron?.maxConcurrentRuns ?? 1,
       defaultAccountId: raw.cron?.defaultAccountId,
       defaultProvider: raw.cron?.defaultProvider,
+      defaultAgentId: raw.cron?.defaultAgentId,
     },
     history: { enabled: raw.history?.enabled ?? true },
 

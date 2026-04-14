@@ -741,6 +741,7 @@ export function addCronJob(entry: Omit<CronJobEntry, "nextRunAtMs" | "lastRunAtM
   const nowMs = Date.now();
   const full: CronJobEntry = {
     ...entry,
+    agentId: entry.agentId ?? config.cron.defaultAgentId,
     retryCount: 0,
     nextRunAtMs: computeNextRunAtMs(entry.schedule, nowMs),
   };

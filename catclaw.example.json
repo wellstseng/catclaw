@@ -264,11 +264,15 @@
     "defaultAccountId": "_cron",
     // subagent 任務預設 provider（不填則由 providerRouting 決定）
     "defaultProvider": "claude-oauth",
+    // 預設 agent ID（job 未指定 agentId 時歸屬此 agent）
+    "defaultAgentId": "wendy",
     "jobs": [
       // action.type 可選：
       //   message  → 傳送靜態訊息到指定頻道
       //   command  → 執行 shell 指令
       //   subagent → 啟動 AI agent 執行任務，結果回報到 notify 頻道
+      //
+      // 每個 job 可帶 "agentId": "wendy" 指定所屬 agent（/cron skill 建立時自動帶入）
       //
       // 範例：每天早上 9 點讓 AI 整理當日摘要
       // {

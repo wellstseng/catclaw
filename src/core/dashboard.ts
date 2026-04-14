@@ -1501,6 +1501,7 @@ const CFG_SCHEMA = [
     {k:'cron.maxConcurrentRuns',t:'num',l:'Max Concurrent Runs',d:'同時最多執行幾個 cron job'},
     {k:'cron.defaultAccountId',t:'text',l:'Default Account ID',d:'Cron job 預設使用的帳號 ID'},
     {k:'cron.defaultProvider',t:'text',l:'Default Provider',d:'Cron job 預設使用的模型（alias）'},
+    {k:'cron.defaultAgentId',t:'text',l:'Default Agent ID',d:'Job 未指定 agentId 時歸屬此 agent'},
   ]},
   { key:'contextEngineering', label:'Context Engineering', fields:[
     {k:'contextEngineering.enabled',t:'bool',l:'啟用',d:'Context Engineering 總開關：管理 context window 使用策略'},

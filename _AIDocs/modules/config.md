@@ -38,7 +38,7 @@ export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronActio
 | `fileUploadThreshold` | `number` | `4000` | — | 超過此字數上傳 .md，0=停用 |
 | `streamingReply` | `boolean` | `true` | — | 串流 live-edit 回覆模式（false=chunk） |
 | `logLevel` | `LogLevel` | `"info"` | — | Log 層級 |
-| `cron` | `CronConfig` | — | — | 排程設定（含 `defaultAccountId` / `defaultProvider`） |
+| `cron` | `CronConfig` | — | — | 排程設定（含 `defaultAccountId` / `defaultProvider` / `defaultAgentId`） |
 | `history` | `HistoryConfig` | — | — | 歷史訊息功能開關 |
 
 #### V2 三層分離（新結構）
@@ -132,6 +132,7 @@ export interface CronConfig {
   maxConcurrentRuns: number;
   defaultAccountId?: string;   // Cron 預設執行帳號
   defaultProvider?: string;    // Cron 預設 provider
+  defaultAgentId?: string;     // Job 未指定 agentId 時歸屬此 agent
 }
 ```
 
