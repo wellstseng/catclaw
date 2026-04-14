@@ -221,12 +221,10 @@ if ($NeedToken) {
     $BotToken = Read-Host "  貼上 Bot Token（留空稍後手動設定）"
 
     if ($BotToken) {
-        # 讀取原始內容，用 regex 替換 token（移除 BOM 若存在）
-        $content = Get-Content $CatclawJson -Raw -Encoding UTF8
-        if ($content.Length -gt 0 -and $content[0] -eq [char]0xFEFF) { $content = $content.Substring(1) }
-        $replacement = '$1"' + $BotToken + '"'
-        $content = $content -replace '("token"\s*:\s*)"[^"]*"', $replacement
-        Write-Utf8 $CatclawJson $content
+        # 直接 parse → 修改 → 寫回（乾淨 JSON）
+        $cfg = Read-Jsonc $CatclawJson
+        $cfg.discord.token = $BotToken
+        Write-Utf8 $CatclawJson ($cfg | ConvertTo-Json -Depth 10)
         Ok "Discord Token 已寫入"
     } else {
         Warn "稍後請手動編輯 $CatclawJson 填入 discord.token"
@@ -251,22 +249,22 @@ if ($ExistingGuilds -gt 0) {
 } else {
     Write-Host ""
     Write-Host "  預設 Discord 頻道" -ForegroundColor White
-    Write-Host "  格式：guildId:channelId（多個以逗號分隔）"
-    Write-Host "  範例：123456789:987654321,123456789:111222333"
+    Write-Host "  格式：serverId/channelId 或 serverId:channelId（多個以逗號分隔）"
+    Write-Host "  範例：123456789/987654321,123456789/111222333"
     Write-Host ""
     Write-Host "  取得方式："
     Write-Host "    1. Discord 設定 -> 進階 -> 開啟「開發者模式」"
-    Write-Host "    2. 右鍵點 Server -> 複製 Server ID（= guildId）"
+    Write-Host "    2. 右鍵點 Server -> 複製 Server ID（= serverId）"
     Write-Host "    3. 右鍵點頻道 -> 複製頻道 ID（= channelId）"
     Write-Host ""
     $ChannelsInput = Read-Host "  輸入頻道（留空稍後手動設定）"
 
     if ($ChannelsInput) {
-        # 解析 guildId:channelId 並建立 guilds 結構
+        # 解析 serverId/channelId 或 serverId:channelId
         $guildsObj = @{}
         foreach ($pair in $ChannelsInput -split ',') {
             $pair = $pair.Trim()
-            if ($pair -match '^(\d+):(\d+)$') {
+            if ($pair -match '^(\d+)[:/](\d+)$') {
                 $gid = $Matches[1]; $cid = $Matches[2]
                 if (-not $guildsObj.ContainsKey($gid)) {
                     $guildsObj[$gid] = @{
@@ -283,13 +281,28 @@ if ($ExistingGuilds -gt 0) {
             }
         }
         if ($guildsObj.Count -gt 0) {
-            $content = Get-Content $CatclawJson -Raw -Encoding UTF8
-            if ($content.Length -gt 0 -and $content[0] -eq [char]0xFEFF) { $content = $content.Substring(1) }
-            # 組裝 guilds JSON
-            $guildsJson = ($guildsObj | ConvertTo-Json -Depth 5 -Compress:$false)
-            # 替換 guilds 區塊
-            $content = $content -replace '("guilds"\s*:\s*)\{[^}]*(?:\{[^}]*\}[^}]*)*\}', "`${1}$guildsJson"
-            Write-Utf8 $CatclawJson $content
+            # 直接 parse → 修改 → 寫回（乾淨 JSON，不用 regex）
+            $cfg = Read-Jsonc $CatclawJson
+            # 建立 guilds PSObject
+            $guildsPso = New-Object PSObject
+            foreach ($gid in $guildsObj.Keys) {
+                $chPso = New-Object PSObject
+                foreach ($cid in $guildsObj[$gid].channels.Keys) {
+                    $chPso | Add-Member -NotePropertyName $cid -NotePropertyValue ([PSCustomObject]@{
+                        allow = $true
+                        requireMention = $false
+                    })
+                }
+                $guildsPso | Add-Member -NotePropertyName $gid -NotePropertyValue ([PSCustomObject]@{
+                    allow = $true
+                    requireMention = $true
+                    allowBot = $false
+                    channels = $chPso
+                })
+            }
+            $cfg.discord.guilds = $guildsPso
+            $jsonOut = $cfg | ConvertTo-Json -Depth 10
+            Write-Utf8 $CatclawJson $jsonOut
             Ok "Discord 頻道已寫入"
         }
     } else {
@@ -371,12 +384,11 @@ if ($enableCron -match '^[Yy]') {
     Info "排程已停用（稍後可在 catclaw.json 開啟）"
 }
 
-# 寫入設定
-$content = Get-Content $CatclawJson -Raw -Encoding UTF8
-if ($content.Length -gt 0 -and $content[0] -eq [char]0xFEFF) { $content = $content.Substring(1) }
-$content = $content -replace '("dashboard"\s*:\s*\{[^}]*"enabled"\s*:\s*)(true|false)', "`${1}$dashEnabled"
-$content = $content -replace '("cron"\s*:\s*\{[^}]*"enabled"\s*:\s*)(true|false)', "`${1}$cronEnabled"
-Write-Utf8 $CatclawJson $content
+# 寫入設定（parse → modify → write）
+$cfg = Read-Jsonc $CatclawJson
+$cfg.dashboard.enabled = ($dashEnabled -eq "true")
+$cfg.cron.enabled = ($cronEnabled -eq "true")
+Write-Utf8 $CatclawJson ($cfg | ConvertTo-Json -Depth 10)
 
 # ═══════════════════════════════════════════════════════════════════
 # Step 9: 編譯 & 啟動

@@ -130,35 +130,9 @@ ok "目錄結構就緒"
 # ═══════════════════════════════════════════════════════════════════
 step "Step 5/9: Discord Bot Token 設定"
 
-# 讀取 JSONC，去掉註解
-strip_jsonc() {
-  python3 -c "
-import re, sys
-text = sys.stdin.read()
-result = []
-in_str = False
-i = 0
-while i < len(text):
-    ch = text[i]
-    if ch == '\\\\' and in_str:
-        result.append(ch)
-        i += 1
-        if i < len(text): result.append(text[i])
-        i += 1
-        continue
-    if ch == '\"':
-        in_str = not in_str
-    if not in_str and ch == '/' and i+1 < len(text) and text[i+1] == '/':
-        while i < len(text) and text[i] != '\n': i += 1
-        continue
-    result.append(ch)
-    i += 1
-print(''.join(result))
-" 2>/dev/null || cat  # fallback: 原樣輸出
-}
 
 # 檢查現有 token
-CURRENT_TOKEN=$(cat "$CATCLAW_JSON" | strip_jsonc | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('discord',{}).get('token',''))" 2>/dev/null || echo "")
+CURRENT_TOKEN=$(node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));console.log(c.discord?.token||'')" "$CATCLAW_JSON" 2>/dev/null || echo "")
 
 NEED_TOKEN=true
 if [ -n "$CURRENT_TOKEN" ] && [ "$CURRENT_TOKEN" != "your_discord_bot_token_here" ]; then
@@ -188,16 +162,12 @@ if [ "$NEED_TOKEN" = true ]; then
   read -r BOT_TOKEN
 
   if [ -n "$BOT_TOKEN" ]; then
-    # 用 python3 更新 JSON（保留 JSONC 格式）
-    python3 -c "
-import re, sys
-with open('$CATCLAW_JSON', 'r') as f:
-    content = f.read()
-# 替換 token 欄位值
-content = re.sub(r'(\"token\"\s*:\s*)\"[^\"]*\"', r'\1\"$BOT_TOKEN\"', content, count=1)
-with open('$CATCLAW_JSON', 'w') as f:
-    f.write(content)
-" 2>/dev/null && ok "Discord Token 已寫入" || warn "自動寫入失敗，請手動編輯 $CATCLAW_JSON"
+    node -e "
+      const fs=require('fs'),p=process.argv[1],t=process.argv[2];
+      const c=JSON.parse(fs.readFileSync(p,'utf-8'));
+      c.discord.token=t;
+      fs.writeFileSync(p,JSON.stringify(c,null,2),'utf-8');
+    " "$CATCLAW_JSON" "$BOT_TOKEN" && ok "Discord Token 已寫入" || warn "自動寫入失敗，請手動編輯 $CATCLAW_JSON"
   else
     warn "稍後請手動編輯 $CATCLAW_JSON 填入 discord.token"
   fi
@@ -209,71 +179,41 @@ fi
 step "Step 6/9: Discord 預設頻道設定"
 
 # 檢查是否已有 guilds 設定
-EXISTING_GUILDS=$(cat "$CATCLAW_JSON" | strip_jsonc | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-guilds = d.get('discord', {}).get('guilds', {})
-real = {k: v for k, v in guilds.items() if not k.startswith('//')}
-print(len(real))
-" 2>/dev/null || echo "0")
+EXISTING_GUILDS=$(node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));console.log(Object.keys(c.discord?.guilds||{}).length)" "$CATCLAW_JSON" 2>/dev/null || echo "0")
 
 if [ "$EXISTING_GUILDS" -gt 0 ]; then
   info "已有 $EXISTING_GUILDS 個 Guild 設定，跳過"
 else
   echo ""
   echo -e "  ${BOLD}預設 Discord 頻道${NC}"
-  echo "  格式：guildId:channelId（多個以逗號分隔）"
-  echo "  範例：123456789:987654321,123456789:111222333"
+  echo "  格式：serverId/channelId 或 serverId:channelId（多個以逗號分隔）"
+  echo "  範例：123456789/987654321,123456789/111222333"
   echo ""
   echo "  取得方式："
   echo "    1. Discord 設定 → 進階 → 開啟「開發者模式」"
-  echo "    2. 右鍵點 Server → 複製 Server ID（= guildId）"
+  echo "    2. 右鍵點 Server → 複製 Server ID（= serverId）"
   echo "    3. 右鍵點頻道 → 複製頻道 ID（= channelId）"
   echo ""
   echo -n "  輸入頻道（留空稍後手動設定）: "
   read -r CHANNELS_INPUT
 
   if [ -n "$CHANNELS_INPUT" ]; then
-    python3 - "$CATCLAW_JSON" "$CHANNELS_INPUT" <<'PYEOF'
-import re, json, sys
-
-catclaw_json = sys.argv[1]
-channels_input = sys.argv[2]
-
-pairs = channels_input.split(',')
-guilds = {}
-for pair in pairs:
-    pair = pair.strip()
-    if ':' not in pair:
-        continue
-    gid, cid = pair.split(':', 1)
-    gid, cid = gid.strip(), cid.strip()
-    if not gid or not cid:
-        continue
-    if gid not in guilds:
-        guilds[gid] = {
-            "allow": True,
-            "requireMention": True,
-            "allowBot": False,
-            "channels": {}
-        }
-    guilds[gid]["channels"][cid] = {
-        "allow": True,
-        "requireMention": False
-    }
-
-if not guilds:
-    sys.exit(0)
-
-with open(catclaw_json, 'r') as f:
-    content = f.read()
-
-guilds_json = json.dumps(guilds, indent=6, ensure_ascii=False)
-pattern = r'("guilds"\s*:\s*)\{[^}]*(?:\{[^}]*\}[^}]*)*\}'
-new_content = re.sub(pattern, r'\1' + guilds_json, content, count=1)
-with open(catclaw_json, 'w') as f:
-    f.write(new_content)
-PYEOF
+    node -e "
+      const fs=require('fs'), path=process.argv[1], input=process.argv[2];
+      const cfg=JSON.parse(fs.readFileSync(path,'utf-8'));
+      const guilds={};
+      for(const p of input.split(',')){
+        const m=p.trim().match(/^(\d+)[:/](\d+)$/);
+        if(!m)continue;
+        const[,gid,cid]=m;
+        if(!guilds[gid])guilds[gid]={allow:true,requireMention:true,allowBot:false,channels:{}};
+        guilds[gid].channels[cid]={allow:true,requireMention:false};
+      }
+      if(Object.keys(guilds).length>0){
+        cfg.discord.guilds=guilds;
+        fs.writeFileSync(path,JSON.stringify(cfg,null,2),'utf-8');
+      }
+    " "$CATCLAW_JSON" "$CHANNELS_INPUT"
     if [ $? -eq 0 ]; then
       ok "Discord 頻道已寫入"
     else
@@ -360,34 +300,14 @@ else
   info "排程已停用（稍後可在 catclaw.json 開啟）"
 fi
 
-# 寫入設定
-python3 - "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED" <<'PYEOF'
-import re, sys
-
-catclaw_json = sys.argv[1]
-dash_enabled = sys.argv[2] == 'true'
-cron_enabled = sys.argv[3] == 'true'
-
-with open(catclaw_json, 'r') as f:
-    content = f.read()
-
-# 更新 dashboard.enabled
-content = re.sub(
-    r'("dashboard"\s*:\s*\{[^}]*"enabled"\s*:\s*)(true|false)',
-    r'\1' + str(dash_enabled).lower(),
-    content, count=1
-)
-
-# 更新 cron.enabled
-content = re.sub(
-    r'("cron"\s*:\s*\{[^}]*"enabled"\s*:\s*)(true|false)',
-    r'\1' + str(cron_enabled).lower(),
-    content, count=1
-)
-
-with open(catclaw_json, 'w') as f:
-    f.write(content)
-PYEOF
+# 寫入設定（parse → modify → write）
+node -e "
+  const fs=require('fs'),p=process.argv[1];
+  const c=JSON.parse(fs.readFileSync(p,'utf-8'));
+  c.dashboard.enabled=(process.argv[2]==='true');
+  c.cron.enabled=(process.argv[3]==='true');
+  fs.writeFileSync(p,JSON.stringify(c,null,2),'utf-8');
+" "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED"
 
 # ═══════════════════════════════════════════════════════════════════
 # Step 9: 編譯 & 啟動
