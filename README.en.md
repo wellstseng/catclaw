@@ -270,6 +270,8 @@ catclaw.js        CLI core logic
 ecosystem.config.cjs  PM2 configuration
 setup.sh          One-click install (macOS/Linux)
 setup.ps1         One-click install (Windows PowerShell)
+templates/
+  CATCLAW.md      Global behavior rules template (copied to workspace on init)
 ```
 
 ## Documentation

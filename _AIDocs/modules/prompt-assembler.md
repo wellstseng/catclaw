@@ -39,14 +39,17 @@ detectIntent(userMessage: string): "coding" | "research" | "conversation"
 | `coding`（fallback） | codingScore ≥ 1 | 全部 |
 | `conversation` | 其餘 | date-time, identity, catclaw-md, output-format, discord-reply, memory-rules |
 
-## CATCLAW.md 層級繼承
+## CATCLAW.md 兩層載入
 
 ```
-workspaceDir → 往上搜尋 CATCLAW.md → 直到 filesystem root
-root-level first，project-level last（後者覆寫前者）
+1. Workspace 層級：workspaceDir → 往上搜尋 CATCLAW.md → 直到 filesystem root
+   root-level first，project-level last（後者覆寫前者）
+2. Agent 層級：agents/{bootAgentId}/CATCLAW.md（agent 專屬規則，疊加在全域之後）
 ```
 
-自動建立：workspace 無 CATCLAW.md 時自動生成預設。
+所有 agent（boot / sub）統一機制。子 agent 由 spawn-subagent.ts 的 `loadAgentPrompt()` 載入。
+
+自動建立：workspace 無 CATCLAW.md 時優先從 `templates/CATCLAW.md` 複製，否則用內建預設。
 
 ## 組裝器
 

@@ -138,7 +138,8 @@ catclaw/                          <- 程式碼
 ~/.catclaw/                       <- 執行期資料
 ├── catclaw.json                  設定檔
 └── workspace/
-    ├── CATCLAW.md                bot 行為規則（system prompt）
+    ├── CATCLAW.md                全域行為規則（from templates/CATCLAW.md）
+    ├── agents/{id}/CATCLAW.md    agent 專屬行為規則（靈魂）
     └── data/
         ├── sessions/             per-channel session 持久化
         ├── cron-jobs.json        排程定義 + 狀態

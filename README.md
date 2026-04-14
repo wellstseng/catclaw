@@ -270,6 +270,8 @@ catclaw.js        CLI 核心邏輯
 ecosystem.config.cjs  PM2 設定
 setup.sh          一鍵安裝（macOS/Linux）
 setup.ps1         一鍵安裝（Windows PowerShell）
+templates/
+  CATCLAW.md      全域行為規則 template（初始化時複製到 workspace）
 ```
 
 ## 文件
