@@ -107,6 +107,10 @@ export async function handleCliBridgeReply(
   let isFirst = true;
   let toolHintSent = false;
 
+  // Intermediate 累積（quote/spoiler 模式：所有中間文字 edit 同一條訊息）
+  let intermediateMsg: Message | null = null;
+  let intermediateAccum = "";
+
   // Rate limit 計數器
   let editCount = 0;
   let lastEditTime = 0;
@@ -134,18 +138,50 @@ export async function handleCliBridgeReply(
     return text; // "normal"
   }
 
-  /** tool_call 到來時 flush 中間推理文字 */
+  /** tool_call 到來時 flush 中間推理文字（累積到同一條訊息） */
   async function flushIntermediateBuffer(): Promise<void> {
     if (!buffer.trim()) { buffer = ""; return; }
     cancelEditTimer();
-    const formatted = formatIntermediate(closeFenceIfOpen(buffer));
-    if (formatted && state.editMsg) {
-      try { await sender.edit(state.editMsg, formatted.slice(0, TEXT_LIMIT)); } catch { /* */ }
-    } else if (!formatted && state.editMsg) {
-      // style=none → 刪除已發的 placeholder
-      try { await state.editMsg.delete(); } catch { /* */ }
-    }
+    const raw = closeFenceIfOpen(buffer);
     buffer = "";
+
+    if (intermediateStyle === "none") {
+      // style=none → 刪除 placeholder（如有）
+      if (state.editMsg) { try { await state.editMsg.delete(); } catch { /* */ } }
+      state.editMsg = null;
+      return;
+    }
+
+    // 累積到同一條訊息
+    intermediateAccum += (intermediateAccum ? "\n" : "") + raw.trim();
+    const formatted = formatIntermediate(intermediateAccum);
+
+    // 超過單條上限 → 定稿目前訊息，開新的
+    if (formatted.length > TEXT_LIMIT - 100 && intermediateMsg) {
+      const prevFormatted = formatIntermediate(intermediateAccum.slice(0, -raw.trim().length).trim());
+      if (prevFormatted) {
+        try { await sender.edit(intermediateMsg, prevFormatted.slice(0, TEXT_LIMIT)); } catch { /* */ }
+      }
+      intermediateMsg = null;
+      intermediateAccum = raw.trim();
+    }
+
+    const safe = formatIntermediate(intermediateAccum).slice(0, TEXT_LIMIT);
+
+    if (intermediateMsg) {
+      // edit 既有的中間訊息
+      try { await sender.edit(intermediateMsg, safe); } catch { /* */ }
+    } else if (state.editMsg) {
+      // 首次 flush：複用 streaming edit 的訊息
+      intermediateMsg = state.editMsg;
+      try { await sender.edit(intermediateMsg, safe); } catch { /* */ }
+    } else {
+      // 沒有既有訊息（例如前一條已滿），建新的
+      try {
+        intermediateMsg = await sender.send(safe);
+      } catch { /* */ }
+    }
+
     state.editMsg = null;
   }
 
@@ -322,13 +358,18 @@ export async function handleCliBridgeReply(
 
         // 最後 flush
         cancelEditTimer();
-        if (buffer.trim() && state.editMsg) {
+        const hasFinalText = buffer.trim().length > 0;
+        if (hasFinalText && intermediateStyle !== "normal" && intermediateMsg && state.editMsg === intermediateMsg) {
+          // intermediate 模式：最終回覆是新文字，不要 edit 中間訊息，送新訊息
+          const ok = await retrySend(async () => { await sendText(closeFenceIfOpen(buffer)); });
+          discordDelivery = ok ? "success" : "failed";
+        } else if (hasFinalText && state.editMsg) {
           const final = closeFenceIfOpen(buffer);
           const msg = state.editMsg;
           const ok = await retrySend(async () => { await sender.edit(msg, final.slice(0, TEXT_LIMIT)); });
           discordDelivery = ok ? "success" : "failed";
           discordMessageId = msg.id;
-        } else if (buffer.trim()) {
+        } else if (hasFinalText) {
           const ok = await retrySend(async () => { await sendText(buffer); });
           discordDelivery = ok ? "success" : "failed";
         } else {
