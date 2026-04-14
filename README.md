@@ -16,7 +16,7 @@
 | **Context Engine** | compaction / budget-guard / sliding-window / overflow-hard-stop 四策略 |
 | **帳號權限** | 註冊、identity linking、5 級角色（public/standard/elevated/admin/owner）、per-channel 權限閘門 |
 | **Subagent** | 子任務分派 + Discord thread bridge + 追蹤 |
-| **排程** | cron / every / at — message、subagent、exec 動作 |
+| **排程** | cron / every / at — message、subagent、exec、claude 動作 + `/cron` skill 動態管理 + agent 隔離 |
 | **Discord** | 串流回覆、debounce、thread 繼承、附件處理、crash recovery、bot circuit breaker |
 | **Dashboard** | Web UI（port 8088）— REST API、訊息追蹤視覺化、token 用量、session 管理 |
 
@@ -230,6 +230,7 @@ LLM Provider 憑證，位於 `~/.catclaw/workspace/agents/default/auth-profile.j
 | `/session clear` | standard | 清除目前 session |
 | `/configure show` | admin | 顯示 provider/model 設定 |
 | `/configure model <id>` | admin | 更換模型 |
+| `/cron` | standard | 排程管理（add/list/delete/enable/disable） |
 | `/restart` | admin | 重啟 Bot |
 | `/add-bridge` | admin | 新增 CLI Bridge |
 

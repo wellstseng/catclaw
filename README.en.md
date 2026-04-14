@@ -16,7 +16,7 @@ Discord-based AI Agent platform with full development capabilities — multi-tur
 | **Context Engine** | Compaction / budget-guard / sliding-window / overflow-hard-stop strategies |
 | **Accounts** | Registration, identity linking, 5-tier roles (public/standard/elevated/admin/owner), per-channel permission gate |
 | **Subagent** | Sub-task dispatch + Discord thread bridge + tracking |
-| **Scheduling** | cron / every / at — message, subagent, exec actions |
+| **Scheduling** | cron / every / at — message, subagent, exec, claude actions + `/cron` skill + agent isolation |
 | **Discord** | Streaming reply, debounce, thread inheritance, attachment handling, crash recovery, bot circuit breaker |
 | **Dashboard** | Web UI at port 8088 — REST API, message trace visualization, token usage, session management |
 
@@ -230,6 +230,7 @@ LLM provider credentials, located at `~/.catclaw/workspace/agents/default/auth-p
 | `/session clear` | standard | Clear current session |
 | `/configure show` | admin | Show provider/model config |
 | `/configure model <id>` | admin | Change model |
+| `/cron` | standard | Schedule management (add/list/delete/enable/disable) |
 | `/restart` | admin | Restart the bot |
 | `/add-bridge` | admin | Add CLI Bridge |
 

@@ -341,7 +341,18 @@ Strategy Pattern 架構，4 策略依序執行：
 **動作型別**：`message`（純文字）/ `claude-acp`（CLI spawn）/ `exec`（shell）/ `subagent`（agentLoop）
 
 Job 定義存在 `data/cron-jobs.json`，支援 hot-reload。
+每個 job 帶 `agentId` 做 agent 隔離（`config.cron.defaultAgentId` 設定預設值）。
 失敗時指數退避重試（30s / 1min / 5min）。
+
+**`/cron` skill**（Discord 動態管理）：
+```
+/cron add at <時間> <動作> <內容>       一次性排程
+/cron add every <間隔> <動作> <內容>    重複排程
+/cron add expr <cron五段> <動作> <內容> Cron 表達式
+/cron <時間> <內容>                     快捷（= at + msg）
+/cron list | delete <id> | enable <id> | disable <id>
+```
+動作：`msg`（訊息）/ `exec`（指令）/ `claude`（ACP）/ `agent`（subagent）
 
 > 詳見：[modules/cron.md](modules/cron.md)
 
