@@ -149,7 +149,7 @@ Ok "目錄結構就緒"
 # ═══════════════════════════════════════════════════════════════════
 Step "Step 5/9: Discord Bot Token 設定"
 
-# 讀取 JSONC：去掉 // 註解後 parse
+# 讀取 JSONC：去掉 // 和 /* */ 註解後 parse
 function Read-Jsonc($path) {
     $raw = Get-Content $path -Raw -Encoding UTF8
     # 移除 BOM（若存在）
@@ -158,13 +158,14 @@ function Read-Jsonc($path) {
     $lines = $raw -split "`n"
     $cleaned = @()
     foreach ($line in $lines) {
-        # 簡易處理：若 // 出現在引號外，截斷
         $inStr = $false; $result = ""
+        $prev = ''
         for ($i = 0; $i -lt $line.Length; $i++) {
             $ch = $line[$i]
-            if ($ch -eq '"' -and ($i -eq 0 -or $line[$i-1] -ne '\')) { $inStr = -not $inStr }
+            if ($ch -eq '"' -and $prev -ne '\') { $inStr = -not $inStr }
             if (-not $inStr -and $ch -eq '/' -and $i+1 -lt $line.Length -and $line[$i+1] -eq '/') { break }
             $result += $ch
+            $prev = $ch
         }
         $cleaned += $result
     }
@@ -373,6 +374,16 @@ Info "編譯 TypeScript + 複製 prompt skills..."
 pnpm build
 if ($LASTEXITCODE -ne 0) { Fail "編譯失敗" }
 Ok "編譯完成"
+
+# 驗證 catclaw.json 可被正確解析
+Info "驗證 catclaw.json 格式..."
+try {
+    $null = Read-Jsonc $CatclawJson
+    Ok "catclaw.json 格式正確"
+} catch {
+    Warn "catclaw.json 解析失敗：$($_.Exception.Message)"
+    Warn "請手動檢查 $CatclawJson 的 JSON 格式"
+}
 
 Write-Host ""
 $startNow = Read-Host "  要立即啟動 CatClaw 嗎？(Y/n)"

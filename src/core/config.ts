@@ -823,7 +823,7 @@ interface RawConfig {
 
 /**
  * String-aware JSONC comment stripper
- * 跳過字串內容（包括 URL 的 //），只刪除真正的行注解
+ * 跳過字串內容（包括 URL 的 //），刪除行注解和區塊注解
  */
 function stripJsoncComments(text: string): string {
   let result = "";
@@ -844,6 +844,16 @@ function stripJsoncComments(text: string): string {
     }
     if (!inString && ch === "/" && text[i + 1] === "/") {
       while (i < text.length && text[i] !== "\n") i++;
+      if (i < text.length) { result += "\n"; i++; }
+      continue;
+    }
+    if (!inString && ch === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+        if (text[i] === "\n") result += "\n";
+        i++;
+      }
+      if (i < text.length) i += 2;
       continue;
     }
     result += ch;

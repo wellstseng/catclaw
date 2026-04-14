@@ -32,7 +32,7 @@ if (existsSync(_envPath)) {
   }
 }
 
-/** String-aware JSONC comment stripper（跳過字串內的 //，如 URL） */
+/** String-aware JSONC comment stripper（跳過字串內的 //、/* */，如 URL） */
 function stripJsoncComments(text) {
   let result = "";
   let inString = false;
@@ -43,6 +43,16 @@ function stripJsoncComments(text) {
     if (ch === '"') { inString = !inString; result += ch; i++; continue; }
     if (!inString && ch === "/" && text[i + 1] === "/") {
       while (i < text.length && text[i] !== "\n") i++;
+      if (i < text.length) { result += "\n"; i++; }
+      continue;
+    }
+    if (!inString && ch === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+        if (text[i] === "\n") result += "\n";
+        i++;
+      }
+      if (i < text.length) i += 2;
       continue;
     }
     result += ch; i++;
@@ -143,7 +153,15 @@ function ensureInitialized() {
         needsToken = true;
       }
     } catch(err) {
-      console.warn(`⚠️  無法讀取 ${catclawJsonPath}，請確認格式正確:\n錯誤訊息:${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️  無法讀取 ${catclawJsonPath}，請確認格式正確:\n錯誤訊息: ${msg}`);
+      // 顯示出錯位置的內容以利診斷
+      const posMatch = msg.match(/position (\d+)/);
+      if (posMatch) {
+        const pos = Number(posMatch[1]);
+        const snippet = raw.substring(Math.max(0, pos - 40), pos + 40);
+        console.warn(`出錯位置附近內容（position ${pos}）：\n...${snippet}...`);
+      }
       needsToken = true;
     }
   }
