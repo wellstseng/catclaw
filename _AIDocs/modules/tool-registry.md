@@ -50,7 +50,7 @@ interface ToolContext {
 }
 ```
 
-## 20 Builtin Tools
+## 21 Builtin Tools
 
 ### 檔案操作（elevated）
 
@@ -117,6 +117,12 @@ interface ToolContext {
 | Tool | 說明 |
 |------|------|
 | `llm_task` | 委派子任務給 LLM（非 agent loop，單次推理） |
+
+### Skill（standard）
+
+| Tool | 說明 |
+|------|------|
+| `skill` | 執行 builtin skill 指令（LLM 傳入完整指令如 `/cron list`，橋接 SkillContext 執行） |
 
 ### Meta（public）
 

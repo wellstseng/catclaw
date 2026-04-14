@@ -18,8 +18,8 @@ export type SkillTier = "public" | "standard" | "elevated" | "admin" | "owner";
 export interface SkillContext {
   /** trigger 後的剩餘文字（參數） */
   args: string;
-  /** 原始 Discord 訊息物件 */
-  message: Message;
+  /** 原始 Discord 訊息物件（Tool 呼叫時為 undefined） */
+  message?: Message;
   channelId: string;
   authorId: string;
   /** 平台帳號 ID（如 discord:{discordId}），平台就緒時有值 */

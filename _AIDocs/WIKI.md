@@ -22,7 +22,7 @@
 ### CatClaw 是什麼
 
 CatClaw 是一套以 Discord 為前端的多人 AI 開發平台，提供等同 Claude Code 的完整開發能力：
-multi-turn agent loop、20 builtin tools、33 builtin skills、多 provider failover、
+multi-turn agent loop、21 builtin tools、33 builtin skills、多 provider failover、
 四層記憶引擎、Context Engineering、subagent 編排、帳號/角色/權限系統、Web Dashboard。
 
 ### 一鍵安裝
@@ -109,7 +109,7 @@ Discord 訊息
 | **Context Engine** | 4 策略壓縮：compaction / budget-guard / sliding-window / overflow-hard-stop |
 | **Session** | Per-channel 串行佇列 + 磁碟持久化 + TTL |
 | **Accounts** | 5 級角色（guest → platform-owner）+ Tool Tier 物理移除 |
-| **Tools** | 20 builtin tools + MCP tool 自動整合 |
+| **Tools** | 21 builtin tools + MCP tool 自動整合 |
 | **Skills** | 33 builtin skills（30 TS + 3 prompt） |
 | **Dashboard** | Web 監控面板 + REST API + Web Chat |
 | **Cron** | 排程服務（cron/every/at）+ 4 種動作型別 |
@@ -123,7 +123,7 @@ catclaw/                          <- 程式碼
 ├── src/
 │   ├── core/                     核心模組（agent-loop, session, dashboard...）
 │   ├── providers/                LLM Provider 抽象層
-│   ├── tools/                    20 builtin tools
+│   ├── tools/                    21 builtin tools
 │   ├── skills/                   33 builtin skills
 │   ├── memory/                   四層記憶引擎
 │   ├── accounts/                 帳號/角色/權限
@@ -209,7 +209,7 @@ catclaw/                          <- 程式碼
 
 > 詳見：[modules/agent-loop.md](modules/agent-loop.md)
 
-### 4.2 Tool 系統（20 builtin tools）
+### 4.2 Tool 系統（21 builtin tools）
 
 自動掃描載入 + register/execute + hot-reload + MCP tool 整合。
 

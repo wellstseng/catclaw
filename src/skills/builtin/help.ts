@@ -143,8 +143,8 @@ export const skill: Skill = {
         void (async () => {
           for (const page of rest) {
             try {
-              const ch = ctx.message.channel;
-              if ("send" in ch) await ch.send(page);
+              const ch = ctx.message?.channel;
+              if (ch && "send" in ch) await ch.send(page);
             } catch (err) {
               log.warn(`[skill:help] 分段發送失敗：${err instanceof Error ? err.message : String(err)}`);
             }

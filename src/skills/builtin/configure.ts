@@ -184,6 +184,11 @@ const CODEX_AUTH_PATH = resolve(homedir(), ".codex/auth.json");
 async function handleLoginCodex(ctx: SkillContext): Promise<SkillResult> {
   const { message } = ctx;
 
+  // 需要 Discord Message（OAuth 流程需要互動）
+  if (!message) {
+    return { text: "❌ codex-oauth 需要透過 Discord 互動，無法從 tool 呼叫", isError: true };
+  }
+
   // 確保 channel 可發送訊息
   if (!("send" in message.channel)) {
     return { text: "❌ 此頻道不支援發送訊息", isError: true };

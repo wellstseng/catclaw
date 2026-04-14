@@ -2,14 +2,14 @@
 
 **English** | [繁體中文](README.md)
 
-Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 19 builtin tools, 33 builtin skills, multi-provider failover, four-layer memory engine, and web dashboard.
+Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 21 builtin tools, 33 builtin skills, multi-provider failover, four-layer memory engine, and web dashboard.
 
 ## Features
 
 | Category | Capabilities |
 |----------|-------------|
 | **Agent Loop** | Multi-turn reasoning loop, tool execution, output token recovery, auto-compact |
-| **Tools** | 19 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management |
+| **Tools** | 21 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management |
 | **Skills** | 33 builtin skills (30 TypeScript + 3 prompt-type) — config, session, account, status, restart, plan, remind, and more |
 | **Multi-Provider** | claude-api / ollama / openai-compat / codex-oauth / cli-* + circuit-breaker failover |
 | **Memory** | Four-layer engine (Global / Project / Account / Agent) — vector recall + keyword search + auto-extraction + consolidation |
@@ -36,7 +36,7 @@ agent-loop.ts ─── Multi-turn Reasoning Loop (LLM <-> Tool Execution)
     |                         |
     v                         v
 providers/ ───────── tools/ + skills/
-LLM Abstraction      19 Tools + 32 Skills
+LLM Abstraction      21 Tools + 32 Skills
 + Failover
     |
     v
@@ -254,7 +254,7 @@ src/
                   Prompt Assembler, Reply Handler, Event Bus, Message Pipeline
   memory/         Four-layer memory engine (engine, recall, extract, consolidate)
   providers/      LLM Provider abstraction (claude-api, ollama, openai-compat, cli-*)
-  tools/          Tool Registry + 19 builtin tools
+  tools/          Tool Registry + 21 builtin tools
   skills/         Skill Registry + 33 builtin skills (30 TS + 3 prompt)
   hooks/          Hook system (pre/post tool execution)
   safety/         Safety interception (guard, collab-conflict)

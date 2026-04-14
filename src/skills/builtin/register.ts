@@ -42,7 +42,7 @@ export const skill: Skill = {
         username,
         "discord",
         ctx.authorId,
-        ctx.message.author.displayName,
+        ctx.message?.author.displayName ?? ctx.authorId,
       );
 
       if (!result.ok) {

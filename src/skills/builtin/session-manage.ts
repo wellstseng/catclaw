@@ -17,7 +17,7 @@ import { getTraceStore } from "../../core/message-trace.js";
 
 /** 從 SkillContext 推算當前頻道的 session key */
 function currentSessionKey(ctx: SkillContext): string {
-  const isDm = ctx.message.channel.isDMBased();
+  const isDm = ctx.message?.channel.isDMBased() ?? false;
   return makeSessionKey(ctx.channelId, ctx.authorId, isDm);
 }
 
