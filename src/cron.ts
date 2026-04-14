@@ -768,4 +768,21 @@ export function listCronJobs(): Array<{ id: string; entry: CronJobEntry }> {
   return Object.entries(store.jobs).map(([id, entry]) => ({ id, entry }));
 }
 
+/**
+ * 更新 cron job 的部分欄位（保留 ID，持久化）
+ * @returns 是否成功更新
+ */
+export function updateCronJob(id: string, patch: Partial<Pick<CronJobEntry, "enabled" | "name" | "schedule" | "action" | "deleteAfterRun" | "maxRetries">>): boolean {
+  const entry = store.jobs[id];
+  if (!entry) return false;
+  Object.assign(entry, patch);
+  // schedule 變更時重算 nextRunAtMs
+  if (patch.schedule) {
+    entry.nextRunAtMs = computeNextRunAtMs(entry.schedule, Date.now());
+  }
+  saveStore();
+  log.info(`[cron] 動態更新 job: ${entry.name} (${id})`);
+  return true;
+}
+
 export type { CronJobEntry };

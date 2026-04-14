@@ -127,20 +127,21 @@ stopCron()                 ← SIGINT/SIGTERM 時呼叫
 
 ## 公開 CRUD API
 
-供 skill（如 `/remind`）在執行期動態新增/刪除/列出排程，不需手動編輯 cron-jobs.json。
+供 `/cron` skill 在執行期動態管理排程，不需手動編輯 cron-jobs.json。
 
 | 函式 | 說明 |
 |------|------|
-| `addCronJob(entry)` | 新增排程，回傳自動產生的 ID（`name-slug + randomUUID 前 4 碼`）。自動計算 `nextRunAtMs`，寫入 store |
+| `addCronJob(entry)` | 新增排程，回傳自動產生的 ID（`name-slug + randomUUID 前 6 碼`）。自動計算 `nextRunAtMs`，寫入 store |
 | `removeCronJob(id)` | 依 ID 刪除排程，回傳是否成功 |
 | `listCronJobs()` | 回傳 `Array<{ id, entry }>` 所有排程 |
+| `updateCronJob(id, patch)` | 部分更新（enabled/name/schedule/action/deleteAfterRun/maxRetries），schedule 變更時自動重算 nextRunAtMs |
 
-`addCronJob` 接受 `CronJobEntry` 中的定義欄位（name、enabled、schedule、action、deleteAfterRun），不需傳入運行狀態欄位（nextRunAtMs、lastRunAtMs 等由系統自動補齊）。
+`addCronJob` 接受 `CronJobEntry` 中的定義欄位（name、enabled、schedule、action、deleteAfterRun、maxRetries），不需傳入運行狀態欄位（nextRunAtMs、lastRunAtMs 等由系統自動補齊）。
 
 ## 與其他模組的關係
 
 - **config.ts**：`CronSchedule`、`CronAction` 型別定義；`CronConfig` 含 `enabled`、`maxConcurrentRuns`、`defaultAccountId?: string`、`defaultProvider?: string`
-- **skills/builtin/remind.ts**：`/remind` skill 透過 `addCronJob()`/`removeCronJob()`/`listCronJobs()` 動態管理排程
+- **skills/builtin/remind.ts**：`/cron` skill 透過 `addCronJob()`/`removeCronJob()`/`listCronJobs()`/`updateCronJob()` 動態管理排程
 - **acp.ts**：claude 類型動作呼叫 `runClaudeTurn()`，傳入 job 的 `channelId`
 - **child_process**：exec 類型動作透過 shell 偵測機制執行（Windows: bash→powershell→cmd, Unix: sh→bash），job 可指定 shell，未指定則自動偵測
 - **config hot-reload**：`cron.enabled` 變更即時生效
