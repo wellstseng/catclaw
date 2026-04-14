@@ -20,3 +20,4 @@
 | autonomous-experiment-v1 | autonomous-experiment-v1.md | 自主開發, autonomous, harness agent, PM subagent, 實驗指南, AI協作指南 | [固] |
 | systemprompt-structure | catclaw-systemprompt-structure.md | system prompt, 動態組裝, prompt assembler, 區塊順序, breakdown, trace snapshot | [固] |
 | cli-bridge | project_catclaw_cli_bridge.md | CLI bridge, 常駐 session, stdin stdout, stream-json, 取代 channels, acp 常駐 | [臨] |
+| feedback-docs-sync | feedback_docs_sync.md | 文件同步, README, WIKI, _AIDocs, 知識庫, 腳本異動, 雙語 | [固] |
