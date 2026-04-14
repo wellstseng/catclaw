@@ -270,7 +270,7 @@ echo ""
 echo -n "  要立即啟動 CatClaw 嗎？(Y/n) "
 read -r START_NOW
 if [[ "$START_NOW" =~ ^[Nn] ]]; then
-  info "跳過啟動。之後執行：node catclaw.js start"
+  info "跳過啟動。之後執行：./catclaw start"
 else
   node catclaw.js start
 fi
@@ -289,11 +289,12 @@ echo "    auth-profile.json $AUTH_PROFILE"
 echo "    .env              $ENV_FILE"
 echo ""
 echo "  常用指令："
-echo "    node catclaw.js start     啟動（PM2 背景執行）"
-echo "    node catclaw.js stop      停止"
-echo "    node catclaw.js restart   重啟"
-echo "    node catclaw.js logs      查看日誌"
-echo "    node catclaw.js status    查看狀態"
+echo "    ./catclaw start     啟動（PM2 背景執行）"
+echo "    ./catclaw stop      停止"
+echo "    ./catclaw restart   重啟"
+echo "    ./catclaw build     僅編譯"
+echo "    ./catclaw logs      查看日誌"
+echo "    ./catclaw status    查看狀態"
 echo ""
 echo "  Dashboard："
 echo "    http://localhost:8088"

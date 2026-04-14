@@ -41,10 +41,10 @@ bash setup.sh
 git clone git@github.com:wellstseng/catclaw.git && cd catclaw
 pnpm install
 cp .env.example .env
-node catclaw.js init    # 自動複製 catclaw.example.json → ~/.catclaw/catclaw.json
+./catclaw init    # 自動複製 catclaw.example.json → ~/.catclaw/catclaw.json
 # 編輯 ~/.catclaw/catclaw.json：填入 discord.token
 pnpm build
-node catclaw.js start
+./catclaw start
 ```
 
 ### 最小設定
@@ -63,8 +63,8 @@ node catclaw.js start
 ### 驗證上線
 
 ```bash
-node catclaw.js status   # PM2 狀態
-node catclaw.js logs     # 即時 log
+./catclaw status   # PM2 狀態
+./catclaw logs     # 即時 log
 ```
 
 Bot 上線後 log 顯示 `[bridge] 已上線：BotName#0000`。
@@ -414,11 +414,11 @@ Hook = 外部 shell command，在 agent-loop 關鍵時機點執行。
 ### PM2 管理
 
 ```bash
-node catclaw.js start     # tsc 編譯 + PM2 啟動（首次）
-node catclaw.js restart   # tsc 編譯 + signal file + PM2 重啟
-node catclaw.js stop      # 停止
-node catclaw.js status    # PM2 狀態
-node catclaw.js logs      # 即時 log
+./catclaw start     # tsc 編譯 + PM2 啟動（首次）
+./catclaw restart   # tsc 編譯 + signal file + PM2 重啟
+./catclaw stop      # 停止
+./catclaw status    # PM2 狀態
+./catclaw logs      # 即時 log
 ```
 
 ### Signal File 重啟機制
@@ -434,8 +434,8 @@ node catclaw.js logs      # 即時 log
 
 ### 健康檢查
 
-1. `node catclaw.js status` — PM2 狀態（status = online）
-2. `node catclaw.js logs` — 即時 log 確認
+1. `./catclaw status` — PM2 狀態（status = online）
+2. `./catclaw logs` — 即時 log 確認
 3. Discord 測試 — `@BotName ping`
 4. Debug 模式 — `catclaw.json` 設定 `logLevel: "debug"`（hot-reload 生效）
 5. ACP trace — 停 PM2 後 `ACP_TRACE=1 node dist/index.js` 前景執行

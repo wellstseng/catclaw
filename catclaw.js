@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * catclaw 跨平台管理腳本
- * 用法：node catclaw.js [init|start [-f]|stop|restart|logs|status|reset-session [channelId]]
+ * 用法：node catclaw.js [init|build|start [-f]|stop|restart|logs|status|reset-session [channelId]]
  *
  * 重啟機制：
  * - start 使用 ecosystem.config.cjs，PM2 監聽 signal/ 目錄
@@ -244,6 +244,11 @@ switch (cmd) {
     break;
   }
 
+  case "build":
+    run("npx pnpm build");
+    console.log("✅ 編譯完成");
+    break;
+
   case "stop":
     run("npx pm2 stop catclaw");
     console.log("⏹ catclaw 已停止");
@@ -296,7 +301,7 @@ switch (cmd) {
   }
 
   default:
-    console.log("用法：node catclaw.js [init|start [-f]|stop|restart|logs [-c]|status|reset-session [channelId]]");
+    console.log("用法：catclaw [init|build|start [-f]|stop|restart|logs [-c]|status|reset-session [channelId]]");
     console.log("      start -f  強制 delete + re-register PM2（重構後或跨環境部署時使用）");
     console.log("      logs -c   清除 log 後再顯示");
     process.exit(1);

@@ -93,13 +93,13 @@ cd catclaw
 pnpm install
 cp .env.example .env        # Windows: copy .env.example .env
 pnpm build
-node catclaw.js init
+./catclaw init
 ```
 
 編輯 `~/.catclaw/catclaw.json` 填入 Discord Bot Token，然後：
 
 ```bash
-node catclaw.js start
+./catclaw start
 ```
 
 ## 前置需求
@@ -202,14 +202,17 @@ LLM Provider 憑證，位於 `~/.catclaw/workspace/agents/default/auth-profile.j
 ## CLI 指令
 
 ```bash
-node catclaw.js start                    # 編譯 + PM2 啟動
-node catclaw.js restart                  # 重新編譯 + 重啟
-node catclaw.js stop                     # 停止
-node catclaw.js logs                     # 即時 log
-node catclaw.js status                   # 狀態
-node catclaw.js reset-session            # 清除所有 session
-node catclaw.js reset-session <channel>  # 清除指定 channel
+./catclaw start                    # 編譯 + PM2 啟動
+./catclaw stop                     # 停止
+./catclaw restart                  # 重新編譯 + 重啟
+./catclaw build                    # 僅編譯（不啟動）
+./catclaw logs                     # 即時 log
+./catclaw status                   # 狀態
+./catclaw reset-session            # 清除所有 session
+./catclaw reset-session <channel>  # 清除指定 channel
 ```
+
+> Windows 使用 `catclaw` 取代 `./catclaw`（自動找到 `catclaw.cmd`）
 
 ## Discord 使用方式
 
@@ -260,7 +263,9 @@ src/
   vector/         Embedding providers + LanceDB 向量搜尋
   cli-bridge/     CLI Bridge 持久 process 模組
   discord/        Discord 附加模組
-catclaw.js        CLI 進入點
+catclaw           CLI wrapper（Unix）
+catclaw.cmd       CLI wrapper（Windows）
+catclaw.js        CLI 核心邏輯
 ecosystem.config.cjs  PM2 設定
 setup.sh          一鍵安裝（macOS/Linux）
 setup.ps1         一鍵安裝（Windows PowerShell）

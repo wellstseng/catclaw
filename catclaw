@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# CatClaw CLI wrapper — 用 ./catclaw 取代 node catclaw.js
+# 用法：./catclaw [init|build|start|stop|restart|logs|status|reset-session]
+exec node "$(dirname "$0")/catclaw.js" "$@"

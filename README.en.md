@@ -93,13 +93,13 @@ cd catclaw
 pnpm install
 cp .env.example .env        # Windows: copy .env.example .env
 pnpm build
-node catclaw.js init
+./catclaw init
 ```
 
 Edit `~/.catclaw/catclaw.json` to set your Discord Bot Token, then:
 
 ```bash
-node catclaw.js start
+./catclaw start
 ```
 
 ## Prerequisites
@@ -202,14 +202,17 @@ LLM provider credentials, located at `~/.catclaw/workspace/agents/default/auth-p
 ## CLI Commands
 
 ```bash
-node catclaw.js start                    # Compile + PM2 start
-node catclaw.js restart                  # Recompile + restart
-node catclaw.js stop                     # Stop
-node catclaw.js logs                     # Live logs
-node catclaw.js status                   # Process status
-node catclaw.js reset-session            # Clear all sessions
-node catclaw.js reset-session <channel>  # Clear specific channel
+./catclaw start                    # Compile + PM2 start
+./catclaw stop                     # Stop
+./catclaw restart                  # Recompile + restart
+./catclaw build                    # Build only (no start)
+./catclaw logs                     # Live logs
+./catclaw status                   # Process status
+./catclaw reset-session            # Clear all sessions
+./catclaw reset-session <channel>  # Clear specific channel
 ```
+
+> On Windows, use `catclaw` instead of `./catclaw` (auto-resolves to `catclaw.cmd`)
 
 ## Discord Usage
 
@@ -260,7 +263,9 @@ src/
   vector/         Embedding providers + LanceDB vector search
   cli-bridge/     CLI Bridge persistent process module
   discord/        Discord auxiliary modules
-catclaw.js        CLI entry point
+catclaw           CLI wrapper (Unix)
+catclaw.cmd       CLI wrapper (Windows)
+catclaw.js        CLI core logic
 ecosystem.config.cjs  PM2 configuration
 setup.sh          One-click install (macOS/Linux)
 setup.ps1         One-click install (Windows PowerShell)
