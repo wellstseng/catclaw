@@ -8,6 +8,7 @@
 
 import { readdirSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { log } from "../logger.js";
 import type { Tool, ToolDefinition, ToolContext, ToolResult } from "./types.js";
 import { toDefinition } from "./types.js";
@@ -54,21 +55,27 @@ export class ToolRegistry {
       return;
     }
 
+    let registered = 0;
     for (const file of files) {
-      await this.loadFile(join(absDir, file));
+      if (await this.loadFile(join(absDir, file))) registered++;
     }
-    log.info(`[tool-registry] 從 ${absDir} 載入 ${files.length} 個 tool`);
+    log.info(`[tool-registry] 從 ${absDir} 載入 ${registered}/${files.length} 個 tool`);
   }
 
-  private async loadFile(filePath: string): Promise<void> {
+  private async loadFile(filePath: string): Promise<boolean> {
     try {
-      // ESM dynamic import（dist/*.js）；加 ?t= 強制重新載入（hot-reload 用）
-      const mod = await import(`${filePath}?t=${Date.now()}`);
+      // ESM dynamic import — 用 pathToFileURL 確保 Windows 路徑正確
+      const fileUrl = pathToFileURL(filePath);
+      fileUrl.searchParams.set("t", String(Date.now()));
+      const mod = await import(fileUrl.href);
       if (mod.tool && typeof mod.tool.execute === "function") {
         this.register(mod.tool as Tool);
+        return true;
       }
+      return false;
     } catch (err) {
       log.warn(`[tool-registry] 載入 ${filePath} 失敗：${err instanceof Error ? err.message : String(err)}`);
+      return false;
     }
   }
 
