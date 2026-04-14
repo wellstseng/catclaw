@@ -102,8 +102,9 @@ const identityModule: PromptModule = {
   priority: 10,
   build: (ctx) => {
     const parts: string[] = [];
-    parts.push("你是 CatClaw，一個 Codex 版 Claude Code CLI + 多人 AI 開發平台。");
-    parts.push("透過 Discord 為前端介面，提供等同 Claude Code 的完整開發能力。");
+    // 身份由 agent CATCLAW.md 定義，此處只描述平台環境
+    parts.push("你正在 CatClaw 平台上運行，以 Discord 為前端介面，提供開發能力與對話服務。");
+    parts.push("你的身份、行為規則由下方 CATCLAW.md 定義。");
     if (ctx.conversationLabel) {
       parts.push(`\n[Conversation] ${ctx.conversationLabel}`);
     }
