@@ -1,7 +1,7 @@
 # modules/workflow — 工作流引擎
 
 > 檔案：`src/workflow/bootstrap.ts` + `src/workflow/`
-> 更新日期：2026-04-05
+> 更新日期：2026-04-14
 
 ## 職責
 
@@ -123,12 +123,15 @@ getRecentFailureSummary(opts?: { days?: number; minCount?: number; maxEntries?: 
 監聽 `file:modified`，偵測核心檔案變更。
 提示更新 _AIDocs 對應文件（contentGate 可停用自動寫入）。
 
+**Docs-Sync 追蹤**（V2.27）：偵測 `src/`、`setup.sh`、`catclaw.js` 等修改時標記 `srcChanged`，偵測 README/WIKI/_AIDocs 修改時標記 `docsTouched`。`getAidocsSyncHint()` 在 src 改了但文件沒動時追加 `[Docs-Sync]` 警告，提醒同步 README（中英版）、WIKI、_AIDocs。
+
 ```typescript
 initAidocsManager(eventBus: EventBus, projectRoot?: string): void
 setProjectRoots(roots: string[]): void
 getPendingAidocsFiles(): string[]
-clearPendingAidocs(): void
-getAidocsSyncHint(): string
+clearPendingAidocs(): void           // 同時重置 docs-sync 狀態
+getAidocsSyncHint(): string          // 含 docs-sync 警告
+getDocsSyncStatus(): { srcChanged: boolean; docsTouched: boolean }
 ```
 
 ### memory-vector-sync

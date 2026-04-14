@@ -26,6 +26,10 @@ type EventBus = {
 /** 本 session 中被修改且應更新 _AIDocs 的檔案 */
 const _pendingAidocs = new Set<string>();
 
+/** src/腳本有改動但 README/WIKI/_AIDocs 尚未同步 */
+let _srcChanged = false;
+let _docsTouched = false;
+
 let _projectRoots: string[] = [process.cwd()];
 
 // ── 公開 API ──────────────────────────────────────────────────────────────────
@@ -40,6 +44,8 @@ export function getPendingAidocsFiles(): string[] {
 
 export function clearPendingAidocs(): void {
   _pendingAidocs.clear();
+  _srcChanged = false;
+  _docsTouched = false;
 }
 
 // ── AIDocs 存在性檢查 ─────────────────────────────────────────────────────────
@@ -53,8 +59,17 @@ function hasAidocs(): boolean {
 export function initAidocsManager(eventBus: EventBus, projectRoot?: string): void {
   if (projectRoot) _projectRoots = [projectRoot];
 
+  const DOCS_PATTERNS = ["README", "_AIDocs/", "WIKI"];
+  const SRC_TRIGGERS = ["/src/", "setup.sh", "setup.ps1", "catclaw.js", "ecosystem.config.cjs"];
+
   eventBus.on("file:modified", (path, _tool, _accountId) => {
     if (!hasAidocs()) return;
+
+    const norm = path.replace(/\\/g, "/");
+
+    // Docs-sync 追蹤：src/腳本改動 vs 文件改動
+    if (SRC_TRIGGERS.some(p => norm.includes(p))) _srcChanged = true;
+    if (DOCS_PATTERNS.some(p => norm.includes(p))) _docsTouched = true;
 
     // 排除 _AIDocs 自身修改（避免迴圈）
     if (path.includes("_AIDocs")) return;
@@ -82,5 +97,17 @@ export function getAidocsSyncHint(): string {
   if (_pendingAidocs.size === 0 || !hasAidocs()) return "";
   const files = [..._pendingAidocs].slice(0, 5);
   const extra = _pendingAidocs.size > 5 ? `（共 ${_pendingAidocs.size} 個）` : "";
-  return `\n\n[AIDocs] 下列檔案已修改，完成後記得更新 _AIDocs：${files.map(f => `\n- ${f}`).join("")}${extra}`;
+  let hint = `\n\n[AIDocs] 下列檔案已修改，完成後記得更新 _AIDocs：${files.map(f => `\n- ${f}`).join("")}${extra}`;
+
+  // Docs-sync 警告：src 改了但文件沒動
+  if (_srcChanged && !_docsTouched) {
+    hint += `\n\n[Docs-Sync] src/腳本有異動但尚未更新文件。記得同步 README（中英版）、WIKI、_AIDocs。`;
+  }
+
+  return hint;
+}
+
+/** 查詢 docs-sync 狀態 */
+export function getDocsSyncStatus(): { srcChanged: boolean; docsTouched: boolean } {
+  return { srcChanged: _srcChanged, docsTouched: _docsTouched };
 }
