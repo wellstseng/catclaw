@@ -510,6 +510,20 @@ async function runBeforeToolCall(
     isAdmin: ctx.isAdmin,
   });
   if (guard.blocked) {
+    // SafetyViolation hook（observer，fire-and-forget）
+    try {
+      const { getHookRegistry } = await import("../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("SafetyViolation", ctx.agentId) > 0) {
+        void hookReg.runSafetyViolation({
+          event: "SafetyViolation",
+          rule: `tool:${call.name}`,
+          detail: guard.reason ?? "safety guard blocked",
+          agentId: ctx.agentId,
+          accountId: ctx.accountId,
+        });
+      }
+    } catch { /* ignore */ }
     return { blocked: true, needsApproval: guard.needsApproval, reason: guard.reason ?? "安全規則阻擋" };
   }
 
@@ -665,8 +679,27 @@ export async function* agentLoop(
   if (session.turnCount === 0) {
     const { getHookRegistry } = await import("../hooks/hook-registry.js");
     const hookReg = getHookRegistry();
-    if (hookReg && hookReg.count("SessionStart") > 0) {
-      await hookReg.runSessionStart({ event: "SessionStart", sessionKey, accountId, channelId });
+    if (hookReg && hookReg.count("SessionStart", opts.agentId) > 0) {
+      await hookReg.runSessionStart({ event: "SessionStart", sessionKey, accountId, channelId, agentId: opts.agentId });
+    }
+  }
+
+  // UserPromptSubmit hook（可 block / 改寫 prompt）
+  {
+    const { getHookRegistry } = await import("../hooks/hook-registry.js");
+    const hookReg = getHookRegistry();
+    if (hookReg && hookReg.count("UserPromptSubmit", opts.agentId) > 0) {
+      const r = await hookReg.runUserPromptSubmit({
+        event: "UserPromptSubmit", prompt, sessionKey, accountId, channelId, agentId: opts.agentId,
+      });
+      if (r.blocked) {
+        yield { type: "error", message: `UserPromptSubmit hook 阻擋：${r.reason ?? "(無理由)"}` };
+        return;
+      }
+      if (r.prompt !== prompt) {
+        log.debug(`[agent-loop] UserPromptSubmit hook 改寫 prompt`);
+        prompt = r.prompt;
+      }
     }
   }
 
@@ -684,6 +717,8 @@ export async function* agentLoop(
     processedHistory = await contextEngine.build(rawHistory, {
       sessionKey,
       turnIndex: session.turnCount,
+      agentId: opts.agentId,
+      accountId: opts.accountId,
     });
     // S2: 有 strategy 觸發 → 把壓縮後的 messages 寫回 session（含備份原始）
     const ceBd = contextEngine.lastBuildBreakdown;
@@ -1086,6 +1121,25 @@ export async function* agentLoop(
       // ── 5a. LLM 呼叫（帶重試）────────────────────────────────────────────
       log.debug(`[agent-loop] [loop=${loopCount}] 呼叫 LLM msgs=${messages.length}`);
       trace?.recordLLMCallStart(loopCount);
+
+      // PreLlmCall / PreTurn hook（observer，不 block）
+      {
+        const { getHookRegistry } = await import("../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg) {
+          if (hookReg.count("PreTurn", opts.agentId) > 0) {
+            await hookReg.runPreTurn({ event: "PreTurn", sessionKey, accountId, channelId, agentId: opts.agentId, turnIndex: loopCount });
+          }
+          if (hookReg.count("PreLlmCall", opts.agentId) > 0) {
+            await hookReg.runPreLlmCall({
+              event: "PreLlmCall", sessionKey, accountId, channelId, agentId: opts.agentId,
+              model: lastModel ?? "", provider: provider.id, messageCount: messages.length,
+            });
+          }
+        }
+      }
+
+      const llmCallStartMs = Date.now();
       let streamResult;
       try {
         streamResult = await callWithRetry(
@@ -1141,6 +1195,21 @@ export async function* agentLoop(
       lastModel = streamResult.usage.model;
       lastProviderType = streamResult.usage.providerType;
       if (streamResult.usage.estimated) lastEstimated = true;
+
+      // PostLlmCall hook（observer）
+      {
+        const { getHookRegistry } = await import("../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg && hookReg.count("PostLlmCall", opts.agentId) > 0) {
+          await hookReg.runPostLlmCall({
+            event: "PostLlmCall", sessionKey, accountId, channelId, agentId: opts.agentId,
+            model: streamResult.usage.model ?? "", provider: streamResult.usage.providerType ?? provider.id,
+            inputTokens: streamResult.usage.input, outputTokens: streamResult.usage.output,
+            durationMs: Date.now() - llmCallStartMs,
+            finishReason: streamResult.stopReason,
+          });
+        }
+      }
 
       // Trace: LLM call 結束
       trace?.recordLLMCallEnd({
@@ -1548,7 +1617,7 @@ export async function* agentLoop(
   }
 
   // ── 6. Turn 結束 ────────────────────────────────────────────────────────────
-  const fullResponse = tracker.getFullResponse();
+  let fullResponse = tracker.getFullResponse();
 
   // Tool Log Store：儲存 tool 執行記錄，session history 加索引摘要
   const toolLogStore = getToolLogStore();
@@ -1714,9 +1783,48 @@ export async function* agentLoop(
     }
   }
 
+  // AgentResponseReady hook（可 block / 改 text）+ PostTurn + SessionEnd
+  try {
+    const { getHookRegistry } = await import("../hooks/hook-registry.js");
+    const hookReg = getHookRegistry();
+    if (hookReg) {
+      if (hookReg.count("AgentResponseReady", opts.agentId) > 0) {
+        const r = await hookReg.runAgentResponseReady({
+          event: "AgentResponseReady", sessionKey, accountId, channelId, agentId: opts.agentId,
+          text: fullResponse,
+          destination: platform === "discord" ? "discord" : platform === "dashboard" ? "dashboard" : "discord",
+        });
+        if (r.blocked) fullResponse = `[回覆被 hook 阻擋：${r.reason ?? ""}]`;
+        else if (r.text !== fullResponse) fullResponse = r.text;
+      }
+      if (hookReg.count("PostTurn", opts.agentId) > 0) {
+        await hookReg.runPostTurn({
+          event: "PostTurn", sessionKey, accountId, channelId, agentId: opts.agentId,
+          turnIndex: loopCount, toolCallCount: tracker.toolCalls.length,
+          durationMs: Date.now() - turnStartMs,
+        });
+      }
+    }
+  } catch { /* ignore */ }
+
   yield { type: "done", text: fullResponse, turnCount: loopCount };
   log.debug(`[agent-loop] ── turn 完成 ── accountId=${accountId} channelId=${channelId} loops=${loopCount} tools=${tracker.toolCalls.length}`);
 
+  } catch (fatalErr) {
+    // AgentError hook（observer），任何未攔截錯誤都觸發
+    try {
+      const { getHookRegistry } = await import("../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("AgentError", opts.agentId) > 0) {
+        await hookReg.runAgentError({
+          event: "AgentError", sessionKey, accountId, channelId, agentId: opts.agentId,
+          error: fatalErr instanceof Error ? fatalErr.message : String(fatalErr),
+          stack: fatalErr instanceof Error ? fatalErr.stack : undefined,
+          phase: "other",
+        });
+      }
+    } catch { /* ignore */ }
+    throw fatalErr;
   } finally {
     // Turn Queue 釋放：無論成功、錯誤、或 abort，都讓下一個 turn 繼續
     sessionManager.dequeueTurn(sessionKey);

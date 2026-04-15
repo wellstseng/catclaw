@@ -333,3 +333,10 @@ export interface BotCircuitBreakerConfig;
 - JSONC 註解剝除改用字串感知 parser（`stripJsoncComments()`），不再誤刪 URL 中的 `//`
 - 環境變數展開（`${ENV_VAR}`）在 JSON parse 後遞迴執行，找不到變數啟動報錯
 - 外部 `models-config.json`（位於 CATCLAW_CONFIG_DIR）會自動合成 agentDefaults / modelsConfig / modelRouting，catclaw.json 內的設定優先覆蓋
+
+## Hook 整合
+
+`reloadConfig()`（hot-reload 路徑）會：
+1. 比對新舊 config 差異，收集 changedKeys
+2. 呼叫 `HookRegistry.reload({ global: config.hooks ?? [] })`
+3. 觸發 `ConfigReload` hook（observer，僅當 changedKeys 非空）

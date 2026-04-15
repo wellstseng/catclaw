@@ -268,3 +268,7 @@ detectRutPatterns(episodicDir: string, currentFile?: string): RutWarning[]
 getSessionNote(memoryDir, channelId): string | null           // 讀取筆記（供 prompt 注入）
 checkAndSaveNote(channelId, turnCount, messages, memoryDir, opts): Promise<void>  // fire-and-forget 萃取
 ```
+
+## Hook 整合
+
+`MemoryEngine.recall()` 執行後觸發 **MemoryRecall** hook（observer），附 query / hitCount / durationMs。

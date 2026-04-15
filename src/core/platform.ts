@@ -298,15 +298,47 @@ export async function initPlatform(
     log.info(`[platform] MCP servers 啟動：${Object.keys(config.mcpServers).join(",")}`);
   }
 
-  // ── 12. Hook Registry ──────────────────────────────────────────────────────
-  if (config.hooks && config.hooks.length > 0) {
+  // ── 12. Hook Registry + Scanner ────────────────────────────────────────────
+  {
     const { initHookRegistry } = await import("../hooks/hook-registry.js");
-    initHookRegistry(config.hooks);
-    log.info(`[platform] Hook Registry 初始化：${config.hooks.length} 個 hooks`);
-  } else {
-    // 即使無 hooks 也初始化空 registry（讓 getHookRegistry 可用）
-    const { initHookRegistry } = await import("../hooks/hook-registry.js");
-    initHookRegistry([]);
+    const { HookScanner } = await import("../hooks/hook-scanner.js");
+    const { resolveAgentDataDir } = await import("./agent-loader.js");
+    const { promises: fsp } = await import("node:fs");
+
+    const globalHooksDir = join(wsDir, "hooks");
+    const agentIds: string[] = [];
+    try {
+      const agentsRoot = join(wsDir, "agents");
+      const entries = await fsp.readdir(agentsRoot, { withFileTypes: true });
+      for (const e of entries) if (e.isDirectory() && !e.name.startsWith(".")) agentIds.push(e.name);
+    } catch { /* 無 agents 目錄 */ }
+
+    const agentDirs = new Map<string, string>();
+    for (const aid of agentIds) agentDirs.set(aid, join(resolveAgentDataDir(aid, catclawDir), "hooks"));
+
+    const registry = initHookRegistry({ global: config.hooks ?? [] });
+
+    const scanner = new HookScanner({
+      globalDir: globalHooksDir,
+      agentDirs,
+      onChange: () => {
+        void (async () => {
+          try {
+            const res = await scanner.scan();
+            const merged = [...(config.hooks ?? []), ...res.global];
+            registry.reload({ global: merged, byAgent: res.byAgent });
+          } catch (err) {
+            log.warn(`[platform] Hook 熱重載失敗：${err instanceof Error ? err.message : String(err)}`);
+          }
+        })();
+      },
+    });
+    const scanRes = await scanner.scan();
+    const mergedGlobal = [...(config.hooks ?? []), ...scanRes.global];
+    registry.reload({ global: mergedGlobal, byAgent: scanRes.byAgent });
+    scanner.startWatching();
+    const totalByAgent = Array.from(scanRes.byAgent.values()).reduce((s, l) => s + l.length, 0);
+    log.info(`[platform] Hook 系統：config=${(config.hooks ?? []).length}, global-fs=${scanRes.global.length}, agent-fs=${totalByAgent}`);
   }
 
   _ready = true;

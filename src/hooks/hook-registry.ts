@@ -1,149 +1,350 @@
 /**
  * @file hooks/hook-registry.ts
- * @description Hook Registry — 載入、索引、鏈式執行 hooks
+ * @description Hook Registry — 載入、索引、鏈式執行 32 個事件
  *
- * 鏈式規則：
- * - PreToolUse：依序執行，第一個 block 即中止。modify 可改 params，傳遞給下一個 hook。
- * - PostToolUse：依序執行，modify 可改 result。
- * - SessionStart / SessionEnd：fire-and-await（錯誤不拋出）。
+ * 兩層結構：
+ * - global：所有 agent 都跑
+ * - byAgent：特定 agent 才跑
+ *
+ * 執行語意：
+ * - blocking（Pre*）：global → agent，第一個 block 中止；modify 鏈式改參數
+ * - modifying（Post*）：agent → global，modify 鏈式改 result/data
+ * - observer：所有 hook fire-and-await 並行，錯誤只 log
  */
 
 import { log } from "../logger.js";
 import { runHook } from "./hook-runner.js";
 import type {
-  HookDefinition, HookEvent, HookAction,
-  PreToolUseInput, PostToolUseInput, SessionStartInput, SessionEndInput,
+  HookDefinition, HookEvent, HookAction, HookInput,
+  PreToolUseInput, PostToolUseInput,
+  SessionStartInput, SessionEndInput,
+  PreAtomWriteInput, PostAtomWriteInput, PreAtomDeleteInput, PostAtomDeleteInput,
+  AtomReplaceInput, MemoryRecallInput,
+  PreSubagentSpawnInput, PostSubagentCompleteInput, SubagentErrorInput,
+  PreCompactionInput, PostCompactionInput, ContextOverflowInput,
+  CliBridgeSpawnInput, CliBridgeSuspendInput, CliBridgeTurnInput,
+  PreFileWriteInput, PreFileEditInput, PreCommandExecInput,
+  SafetyViolationInput, AgentErrorInput,
+  ConfigReloadInput, ProviderSwitchInput,
+  UserMessageReceivedInput, UserPromptSubmitInput,
+  PreTurnInput, PostTurnInput, PreLlmCallInput, PostLlmCallInput,
+  AgentResponseReadyInput, ToolTimeoutInput,
 } from "./types.js";
 
+interface IndexedHooks {
+  global: Map<HookEvent, HookDefinition[]>;
+  byAgent: Map<string, Map<HookEvent, HookDefinition[]>>;
+}
+
+export interface RegistryInit {
+  global: HookDefinition[];
+  byAgent?: Map<string, HookDefinition[]>;
+}
+
 export class HookRegistry {
-  private hooks = new Map<HookEvent, HookDefinition[]>();
+  private hooks: IndexedHooks = { global: new Map(), byAgent: new Map() };
 
-  constructor(definitions: HookDefinition[]) {
-    this._index(definitions);
+  constructor(init: RegistryInit) {
+    this._index(init);
   }
 
-  /** 重新載入 hook 定義（config hot-reload） */
-  reload(definitions: HookDefinition[]): void {
-    this._index(definitions);
-    log.info(`[hook-registry] 重新載入 ${definitions.length} 個 hooks`);
+  reload(init: RegistryInit): void {
+    this._index(init);
+    const total = init.global.length + Array.from(init.byAgent?.values() ?? []).reduce((s, l) => s + l.length, 0);
+    log.info(`[hook-registry] 重新載入 ${total} 個 hooks（global=${init.global.length}, agents=${init.byAgent?.size ?? 0}）`);
   }
 
-  private _index(definitions: HookDefinition[]): void {
-    this.hooks.clear();
-    for (const def of definitions) {
+  private _index(init: RegistryInit): void {
+    this.hooks.global.clear();
+    this.hooks.byAgent.clear();
+    for (const def of init.global) {
       if (def.enabled === false) continue;
-      const list = this.hooks.get(def.event) ?? [];
+      const list = this.hooks.global.get(def.event) ?? [];
       list.push(def);
-      this.hooks.set(def.event, list);
+      this.hooks.global.set(def.event, list);
     }
-    const counts = Array.from(this.hooks.entries())
-      .map(([event, list]) => `${event}=${list.length}`)
-      .join(", ");
-    if (counts) log.info(`[hook-registry] 已載入 hooks: ${counts}`);
+    for (const [agentId, defs] of init.byAgent ?? new Map()) {
+      const eventMap = new Map<HookEvent, HookDefinition[]>();
+      for (const def of defs) {
+        if (def.enabled === false) continue;
+        const list = eventMap.get(def.event) ?? [];
+        list.push(def);
+        eventMap.set(def.event, list);
+      }
+      if (eventMap.size > 0) this.hooks.byAgent.set(agentId, eventMap);
+    }
   }
 
-  /** 取得指定事件的 hook 數量 */
-  count(event: HookEvent): number {
-    return this.hooks.get(event)?.length ?? 0;
+  count(event: HookEvent, agentId?: string): number {
+    const g = this.hooks.global.get(event)?.length ?? 0;
+    const a = agentId ? (this.hooks.byAgent.get(agentId)?.get(event)?.length ?? 0) : 0;
+    return g + a;
   }
 
-  // ── PreToolUse ──────────────────────────────────────────────────────────────
+  /** 取得某事件依執行順序（依 mode）排序的 hook 清單，且過濾 toolFilter */
+  private _resolve(
+    event: HookEvent,
+    agentId: string | undefined,
+    order: "global-first" | "agent-first",
+    toolName?: string,
+  ): HookDefinition[] {
+    const g = this.hooks.global.get(event) ?? [];
+    const a = agentId ? (this.hooks.byAgent.get(agentId)?.get(event) ?? []) : [];
+    const ordered = order === "global-first" ? [...g, ...a] : [...a, ...g];
+    if (!toolName) return ordered;
+    return ordered.filter(h => !h.toolFilter || h.toolFilter.length === 0 || h.toolFilter.includes(toolName));
+  }
+
+  // ── 通用鏈式執行 ────────────────────────────────────────────────────────
+
+  /** Blocking 鏈：第一個 block 即中止，modify 鏈式改參數 */
+  private async _runBlocking<T extends HookInput>(
+    hooks: HookDefinition[],
+    input: T,
+    paramsKey: keyof T,
+  ): Promise<{ blocked: false; modified: T } | { blocked: true; reason: string }> {
+    let current = { ...input };
+    for (const hook of hooks) {
+      const res = await runHook(hook, current);
+      log.debug(`[hook-registry] ${input.event} "${hook.name}" → ${res.action}`);
+      if (res.action === "block") {
+        return { blocked: true, reason: (res as { reason: string }).reason ?? `Hook "${hook.name}" 阻擋` };
+      }
+      if (res.action === "modify") {
+        const mod = res as { params?: Record<string, unknown>; data?: Record<string, unknown> };
+        const target = current as unknown as Record<string, unknown>;
+        if (mod.params && paramsKey in current) {
+          target[paramsKey as string] = mod.params;
+        }
+        if (mod.data) {
+          for (const [k, v] of Object.entries(mod.data)) {
+            target[k] = v;
+          }
+        }
+      }
+    }
+    return { blocked: false, modified: current };
+  }
+
+  /** Modifying 鏈：依序執行，modify 改 result，不可 block */
+  private async _runModifying<T extends HookInput, R>(
+    hooks: HookDefinition[],
+    input: T,
+    initialResult: R,
+    resultExtractor: (action: HookAction) => R | undefined,
+  ): Promise<R> {
+    let result = initialResult;
+    for (const hook of hooks) {
+      const res = await runHook(hook, input);
+      log.debug(`[hook-registry] ${input.event} "${hook.name}" → ${res.action}`);
+      if (res.action === "modify") {
+        const r = resultExtractor(res);
+        if (r !== undefined) result = r;
+      }
+    }
+    return result;
+  }
+
+  /** Observer：並行 fire-and-await，錯誤只 log */
+  private async _runObserver(hooks: HookDefinition[], input: HookInput): Promise<void> {
+    await Promise.all(hooks.map(async (hook) => {
+      try {
+        await runHook(hook, input);
+      } catch (err) {
+        log.warn(`[hook-registry] observer "${hook.name}" 失敗: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }));
+  }
+
+  // ── PreToolUse / PostToolUse ────────────────────────────────────────────
 
   async runPreToolUse(input: PreToolUseInput): Promise<
     | { blocked: false; params: Record<string, unknown> }
     | { blocked: true; reason: string }
   > {
-    const hooks = this._matchToolHooks("PreToolUse", input.toolName);
+    const hooks = this._resolve("PreToolUse", input.agentId, "global-first", input.toolName);
     if (hooks.length === 0) return { blocked: false, params: input.toolParams };
-
-    let params = { ...input.toolParams };
-
-    for (const hook of hooks) {
-      const result = await runHook(
-        hook.command,
-        { ...input, toolParams: params },
-        hook.timeoutMs,
-      );
-
-      log.debug(`[hook-registry] PreToolUse "${hook.name}" → ${result.action} (tool=${input.toolName})`);
-
-      if (result.action === "block") {
-        return { blocked: true, reason: (result as { reason: string }).reason ?? `Hook "${hook.name}" 阻擋` };
-      }
-      if (result.action === "modify" && (result as { params?: Record<string, unknown> }).params) {
-        params = (result as { params: Record<string, unknown> }).params;
-      }
-      // allow / passthrough → 繼續下一個 hook
-    }
-
-    return { blocked: false, params };
+    const r = await this._runBlocking(hooks, input, "toolParams");
+    if (r.blocked) return r;
+    return { blocked: false, params: r.modified.toolParams };
   }
 
-  // ── PostToolUse ─────────────────────────────────────────────────────────────
-
-  async runPostToolUse(input: PostToolUseInput): Promise<{
-    result?: unknown;
-    error?: string;
-  }> {
-    const hooks = this._matchToolHooks("PostToolUse", input.toolName);
+  async runPostToolUse(input: PostToolUseInput): Promise<{ result?: unknown; error?: string }> {
+    const hooks = this._resolve("PostToolUse", input.agentId, "agent-first", input.toolName);
     if (hooks.length === 0) return input.toolResult;
-
-    let result = { ...input.toolResult };
-
-    for (const hook of hooks) {
-      const action = await runHook(
-        hook.command,
-        { ...input, toolResult: result },
-        hook.timeoutMs,
-      );
-
-      log.debug(`[hook-registry] PostToolUse "${hook.name}" → ${action.action} (tool=${input.toolName})`);
-
-      if (action.action === "modify") {
-        const mod = action as { result?: unknown; error?: string };
-        if (mod.result !== undefined) result = { ...result, result: mod.result };
-      }
-    }
-
-    return result;
+    return this._runModifying(hooks, input, input.toolResult, (a) => {
+      if (a.action !== "modify") return undefined;
+      const mod = a as { result?: unknown };
+      if (mod.result === undefined) return undefined;
+      return { ...input.toolResult, result: mod.result };
+    });
   }
 
-  // ── SessionStart ────────────────────────────────────────────────────────────
+  // ── Lifecycle observers ─────────────────────────────────────────────────
 
   async runSessionStart(input: SessionStartInput): Promise<void> {
-    const hooks = this.hooks.get("SessionStart") ?? [];
-    for (const hook of hooks) {
-      try {
-        await runHook(hook.command, input, hook.timeoutMs);
-        log.debug(`[hook-registry] SessionStart "${hook.name}" 完成`);
-      } catch (err) {
-        log.warn(`[hook-registry] SessionStart "${hook.name}" 失敗：${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+    return this._runObserver(this._resolve("SessionStart", input.agentId, "global-first"), input);
   }
-
-  // ── SessionEnd ──────────────────────────────────────────────────────────────
-
   async runSessionEnd(input: SessionEndInput): Promise<void> {
-    const hooks = this.hooks.get("SessionEnd") ?? [];
-    for (const hook of hooks) {
-      try {
-        await runHook(hook.command, input, hook.timeoutMs);
-        log.debug(`[hook-registry] SessionEnd "${hook.name}" 完成`);
-      } catch (err) {
-        log.warn(`[hook-registry] SessionEnd "${hook.name}" 失敗：${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+    return this._runObserver(this._resolve("SessionEnd", input.agentId, "global-first"), input);
   }
 
-  // ── 內部：依 toolFilter 過濾匹配的 hooks ──────────────────────────────────
+  // ── Turn / Message ──────────────────────────────────────────────────────
 
-  private _matchToolHooks(event: "PreToolUse" | "PostToolUse", toolName: string): HookDefinition[] {
-    const hooks = this.hooks.get(event) ?? [];
-    return hooks.filter(h => {
-      if (!h.toolFilter || h.toolFilter.length === 0) return true;
-      return h.toolFilter.includes(toolName);
-    });
+  async runUserMessageReceived(input: UserMessageReceivedInput): Promise<{ blocked: boolean; text: string; reason?: string }> {
+    const hooks = this._resolve("UserMessageReceived", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false, text: input.text };
+    const r = await this._runBlocking(hooks, input, "text");
+    if (r.blocked) return { blocked: true, text: input.text, reason: r.reason };
+    return { blocked: false, text: r.modified.text };
+  }
+
+  async runUserPromptSubmit(input: UserPromptSubmitInput): Promise<{ blocked: boolean; prompt: string; reason?: string }> {
+    const hooks = this._resolve("UserPromptSubmit", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false, prompt: input.prompt };
+    const r = await this._runBlocking(hooks, input, "prompt");
+    if (r.blocked) return { blocked: true, prompt: input.prompt, reason: r.reason };
+    return { blocked: false, prompt: r.modified.prompt };
+  }
+
+  async runPreTurn(input: PreTurnInput): Promise<void> {
+    return this._runObserver(this._resolve("PreTurn", input.agentId, "global-first"), input);
+  }
+  async runPostTurn(input: PostTurnInput): Promise<void> {
+    return this._runObserver(this._resolve("PostTurn", input.agentId, "global-first"), input);
+  }
+  async runPreLlmCall(input: PreLlmCallInput): Promise<void> {
+    return this._runObserver(this._resolve("PreLlmCall", input.agentId, "global-first"), input);
+  }
+  async runPostLlmCall(input: PostLlmCallInput): Promise<void> {
+    return this._runObserver(this._resolve("PostLlmCall", input.agentId, "global-first"), input);
+  }
+
+  async runAgentResponseReady(input: AgentResponseReadyInput): Promise<{ blocked: boolean; text: string; reason?: string }> {
+    const hooks = this._resolve("AgentResponseReady", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false, text: input.text };
+    const r = await this._runBlocking(hooks, input, "text");
+    if (r.blocked) return { blocked: true, text: input.text, reason: r.reason };
+    return { blocked: false, text: r.modified.text };
+  }
+
+  async runToolTimeout(input: ToolTimeoutInput): Promise<void> {
+    return this._runObserver(this._resolve("ToolTimeout", input.agentId, "global-first", input.toolName), input);
+  }
+
+  // ── Memory / Atom ───────────────────────────────────────────────────────
+
+  async runPreAtomWrite(input: PreAtomWriteInput): Promise<{ blocked: boolean; content: string; reason?: string }> {
+    const hooks = this._resolve("PreAtomWrite", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false, content: input.content };
+    const r = await this._runBlocking(hooks, input, "content");
+    if (r.blocked) return { blocked: true, content: input.content, reason: r.reason };
+    return { blocked: false, content: r.modified.content };
+  }
+  async runPostAtomWrite(input: PostAtomWriteInput): Promise<void> {
+    return this._runObserver(this._resolve("PostAtomWrite", input.agentId, "global-first"), input);
+  }
+  async runPreAtomDelete(input: PreAtomDeleteInput): Promise<{ blocked: boolean; reason?: string }> {
+    const hooks = this._resolve("PreAtomDelete", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false };
+    const r = await this._runBlocking(hooks, input, "reason");
+    if (r.blocked) return { blocked: true, reason: r.reason };
+    return { blocked: false };
+  }
+  async runPostAtomDelete(input: PostAtomDeleteInput): Promise<void> {
+    return this._runObserver(this._resolve("PostAtomDelete", input.agentId, "global-first"), input);
+  }
+  async runAtomReplace(input: AtomReplaceInput): Promise<void> {
+    return this._runObserver(this._resolve("AtomReplace", input.agentId, "global-first"), input);
+  }
+  async runMemoryRecall(input: MemoryRecallInput): Promise<void> {
+    return this._runObserver(this._resolve("MemoryRecall", input.agentId, "global-first"), input);
+  }
+
+  // ── Subagent ────────────────────────────────────────────────────────────
+
+  async runPreSubagentSpawn(input: PreSubagentSpawnInput): Promise<{ blocked: boolean; reason?: string }> {
+    const hooks = this._resolve("PreSubagentSpawn", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false };
+    const r = await this._runBlocking(hooks, input, "task");
+    if (r.blocked) return { blocked: true, reason: r.reason };
+    return { blocked: false };
+  }
+  async runPostSubagentComplete(input: PostSubagentCompleteInput): Promise<void> {
+    return this._runObserver(this._resolve("PostSubagentComplete", input.agentId, "global-first"), input);
+  }
+  async runSubagentError(input: SubagentErrorInput): Promise<void> {
+    return this._runObserver(this._resolve("SubagentError", input.agentId, "global-first"), input);
+  }
+
+  // ── Context / Compaction ────────────────────────────────────────────────
+
+  async runPreCompaction(input: PreCompactionInput): Promise<{ blocked: boolean; reason?: string }> {
+    const hooks = this._resolve("PreCompaction", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false };
+    const r = await this._runBlocking(hooks, input, "reason");
+    if (r.blocked) return { blocked: true, reason: r.reason };
+    return { blocked: false };
+  }
+  async runPostCompaction(input: PostCompactionInput): Promise<void> {
+    return this._runObserver(this._resolve("PostCompaction", input.agentId, "global-first"), input);
+  }
+  async runContextOverflow(input: ContextOverflowInput): Promise<void> {
+    return this._runObserver(this._resolve("ContextOverflow", input.agentId, "global-first"), input);
+  }
+
+  // ── CLI Bridge ──────────────────────────────────────────────────────────
+
+  async runCliBridgeSpawn(input: CliBridgeSpawnInput): Promise<void> {
+    return this._runObserver(this._resolve("CliBridgeSpawn", input.agentId, "global-first"), input);
+  }
+  async runCliBridgeSuspend(input: CliBridgeSuspendInput): Promise<void> {
+    return this._runObserver(this._resolve("CliBridgeSuspend", input.agentId, "global-first"), input);
+  }
+  async runCliBridgeTurn(input: CliBridgeTurnInput): Promise<void> {
+    return this._runObserver(this._resolve("CliBridgeTurn", input.agentId, "global-first"), input);
+  }
+
+  // ── File / Command ──────────────────────────────────────────────────────
+
+  async runPreFileWrite(input: PreFileWriteInput): Promise<{ blocked: boolean; reason?: string }> {
+    const hooks = this._resolve("PreFileWrite", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false };
+    const r = await this._runBlocking(hooks, input, "path");
+    if (r.blocked) return { blocked: true, reason: r.reason };
+    return { blocked: false };
+  }
+  async runPreFileEdit(input: PreFileEditInput): Promise<{ blocked: boolean; reason?: string }> {
+    const hooks = this._resolve("PreFileEdit", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false };
+    const r = await this._runBlocking(hooks, input, "path");
+    if (r.blocked) return { blocked: true, reason: r.reason };
+    return { blocked: false };
+  }
+  async runPreCommandExec(input: PreCommandExecInput): Promise<{ blocked: boolean; reason?: string }> {
+    const hooks = this._resolve("PreCommandExec", input.agentId, "global-first");
+    if (hooks.length === 0) return { blocked: false };
+    const r = await this._runBlocking(hooks, input, "command");
+    if (r.blocked) return { blocked: true, reason: r.reason };
+    return { blocked: false };
+  }
+
+  // ── Error / Safety ──────────────────────────────────────────────────────
+
+  async runSafetyViolation(input: SafetyViolationInput): Promise<void> {
+    return this._runObserver(this._resolve("SafetyViolation", input.agentId, "global-first"), input);
+  }
+  async runAgentError(input: AgentErrorInput): Promise<void> {
+    return this._runObserver(this._resolve("AgentError", input.agentId, "global-first"), input);
+  }
+
+  // ── Platform ────────────────────────────────────────────────────────────
+
+  async runConfigReload(input: ConfigReloadInput): Promise<void> {
+    return this._runObserver(this._resolve("ConfigReload", input.agentId, "global-first"), input);
+  }
+  async runProviderSwitch(input: ProviderSwitchInput): Promise<void> {
+    return this._runObserver(this._resolve("ProviderSwitch", input.agentId, "global-first"), input);
   }
 }
 
@@ -151,8 +352,8 @@ export class HookRegistry {
 
 let _hookRegistry: HookRegistry | null = null;
 
-export function initHookRegistry(definitions: HookDefinition[]): HookRegistry {
-  _hookRegistry = new HookRegistry(definitions);
+export function initHookRegistry(init: RegistryInit): HookRegistry {
+  _hookRegistry = new HookRegistry(init);
   return _hookRegistry;
 }
 

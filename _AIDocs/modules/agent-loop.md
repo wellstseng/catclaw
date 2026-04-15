@@ -169,3 +169,15 @@ Turn 執行期間監聽 eventBus 事件，轉為 trace workflow events：
 - 預設 — head + tail
 
 Per-turn 工具結果 token 累計追蹤（`turnToolResultTokens`），接近 budget 時壓縮後續結果。
+
+## Hook 整合
+
+觸發點（詳見 `modules/hooks.md`）：
+
+- **SessionStart**：session 建立時（首次 turn）
+- **UserPromptSubmit**：收到 user prompt（可 block/modify）
+- **PreTurn / PostTurn**：每個 turn 前後
+- **PreLlmCall / PostLlmCall**：provider.stream 前後（附 tokens/duration）
+- **AgentResponseReady**：最終 response yield 前（可重寫 text）
+- **AgentError**：fatal 錯誤（observer）
+- **SafetyViolation**：SafetyGuard 阻擋工具時（observer）

@@ -57,8 +57,39 @@ export const tool: Tool = {
         return { result: { deleted: false, reason: `atom "${name}" 不存在（${filePath}）` } };
       }
 
+      // PreAtomDelete hook（可 block）
+      try {
+        const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg && hookReg.count("PreAtomDelete", ctx.agentId) > 0) {
+          const pre = await hookReg.runPreAtomDelete({
+            event: "PreAtomDelete",
+            atomPath: filePath,
+            scope: scope === "agent" ? "agent" : "global",
+            agentId: ctx.agentId,
+            accountId: ctx.accountId,
+          });
+          if (pre.blocked) return { result: { deleted: false, reason: `PreAtomDelete hook 阻擋：${pre.reason ?? ""}` } };
+        }
+      } catch { /* ignore */ }
+
       // 1. 刪除檔案
       unlinkSync(filePath);
+
+      // PostAtomDelete hook（observer）
+      try {
+        const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg && hookReg.count("PostAtomDelete", ctx.agentId) > 0) {
+          await hookReg.runPostAtomDelete({
+            event: "PostAtomDelete",
+            atomPath: filePath,
+            scope: scope === "agent" ? "agent" : "global",
+            agentId: ctx.agentId,
+            accountId: ctx.accountId,
+          });
+        }
+      } catch { /* ignore */ }
 
       // 2. 移除 MEMORY.md index
       try {

@@ -40,13 +40,27 @@ export const tool: Tool = {
     if (!filePath) return { error: "path 不能為空" };
 
     // File size guard
+    const byteLen = Buffer.byteLength(content, "utf-8");
     const maxBytes = config.contextEngineering?.toolBudget?.maxWriteFileBytes ?? DEFAULT_MAX_WRITE_BYTES;
-    if (maxBytes > 0) {
-      const byteLen = Buffer.byteLength(content, "utf-8");
-      if (byteLen > maxBytes) {
-        return { error: `寫入內容過大（${byteLen} bytes），超過上限 ${maxBytes} bytes。請分段寫入或縮減內容。` };
-      }
+    if (maxBytes > 0 && byteLen > maxBytes) {
+      return { error: `寫入內容過大（${byteLen} bytes），超過上限 ${maxBytes} bytes。請分段寫入或縮減內容。` };
     }
+
+    // PreFileWrite hook（可 block）
+    try {
+      const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("PreFileWrite", ctx.agentId) > 0) {
+        const pre = await hookReg.runPreFileWrite({
+          event: "PreFileWrite",
+          path: filePath,
+          bytes: byteLen,
+          agentId: ctx.agentId,
+          accountId: ctx.accountId,
+        });
+        if (pre.blocked) return { error: `PreFileWrite hook 阻擋：${pre.reason ?? ""}` };
+      }
+    } catch { /* hook 系統不可用，靜默通過 */ }
 
     try {
       // 自動建立父目錄

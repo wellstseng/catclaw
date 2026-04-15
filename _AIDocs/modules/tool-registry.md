@@ -161,3 +161,15 @@ PermissionGate 根據 accountId 的角色過濾可用 tools。
 initToolRegistry(opts?): ToolRegistry
 getToolRegistry(): ToolRegistry
 ```
+
+## Hook 整合
+
+- **registry.execute**：工具逾時時觸發 `ToolTimeout`（observer）
+- **write-file**：`PreFileWrite`（可 block）
+- **edit-file**：`PreFileEdit`（可 block）
+- **run-command**：`PreCommandExec`（可 block）
+- **atom-write**：`PreAtomWrite`（可 block/modify content）、`PostAtomWrite`
+- **atom-delete**：`PreAtomDelete`（可 block）、`PostAtomDelete`
+- **spawn-subagent**：`PreSubagentSpawn`（可 block）、`PostSubagentComplete`、`SubagentError`
+
+詳見 `modules/hooks.md`。

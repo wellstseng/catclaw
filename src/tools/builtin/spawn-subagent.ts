@@ -264,6 +264,26 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
   // allowNestedSpawn:true + depth < 2 → 允許子 agent spawn（深度限制由 agent-loop 強制）
   const childAllowSpawn = (opts.allowNestedSpawn === true) && childDepth < 2;
 
+  // PreSubagentSpawn hook（可 block）
+  try {
+    const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+    const hookReg = getHookRegistry();
+    if (hookReg && hookReg.count("PreSubagentSpawn", opts.agentId) > 0) {
+      const pre = await hookReg.runPreSubagentSpawn({
+        event: "PreSubagentSpawn",
+        subagentId: opts.childSessionKey,
+        parentAgentId: opts.agentId ?? "",
+        task: opts.task,
+        agentId: opts.agentId,
+        accountId: opts.accountId,
+      });
+      if (pre.blocked) throw new Error(`PreSubagentSpawn hook 阻擋：${pre.reason ?? ""}`);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("PreSubagentSpawn")) throw err;
+  }
+
+  const subagentStartMs = Date.now();
   const loopGen = agentLoop(opts.task, {
     platform: "subagent",
     channelId: opts.childSessionKey,
@@ -288,11 +308,47 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
     eventBus,
   });
 
-  for await (const event of loopGen) {
-    if (event.type === "text_delta") fullText += event.text;
-    if (event.type === "done") { turnCount = event.turnCount; break; }
-    if (event.type === "error") throw new Error(event.message);
+  try {
+    for await (const event of loopGen) {
+      if (event.type === "text_delta") fullText += event.text;
+      if (event.type === "done") { turnCount = event.turnCount; break; }
+      if (event.type === "error") throw new Error(event.message);
+    }
+  } catch (err) {
+    // SubagentError hook（observer）
+    try {
+      const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("SubagentError", opts.agentId) > 0) {
+        await hookReg.runSubagentError({
+          event: "SubagentError",
+          subagentId: opts.childSessionKey,
+          parentAgentId: opts.agentId ?? "",
+          error: err instanceof Error ? err.message : String(err),
+          agentId: opts.agentId,
+          accountId: opts.accountId,
+        });
+      }
+    } catch { /* ignore */ }
+    throw err;
   }
+
+  // PostSubagentComplete hook（observer）
+  try {
+    const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+    const hookReg = getHookRegistry();
+    if (hookReg && hookReg.count("PostSubagentComplete", opts.agentId) > 0) {
+      await hookReg.runPostSubagentComplete({
+        event: "PostSubagentComplete",
+        subagentId: opts.childSessionKey,
+        parentAgentId: opts.agentId ?? "",
+        durationMs: Date.now() - subagentStartMs,
+        success: true,
+        agentId: opts.agentId,
+        accountId: opts.accountId,
+      });
+    }
+  } catch { /* ignore */ }
 
   return { text: fullText, turns: turnCount };
 }

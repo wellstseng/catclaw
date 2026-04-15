@@ -430,3 +430,10 @@ async function buildProviderRegistryV2(
 3. 按 provider 分組，由 `apiToProviderType()` 推斷型別
 4. 建立對應 LLMProvider 實例（ClaudeApiProvider / OllamaProvider / OpenAICompatProvider / CodexOAuthProvider / CliProvider）
 5. 註冊到 ProviderRegistry
+
+## Hook 整合
+
+`FailoverProvider.stream()` 切換到非首選 provider 時觸發 **ProviderSwitch** hook（observer）：
+- `fromProvider`: chain[0].id（首選）
+- `toProvider`: 實際成功的 provider.id
+- `reason`: "failover"

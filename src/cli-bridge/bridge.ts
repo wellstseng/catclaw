@@ -102,6 +102,19 @@ export class CliBridge {
       this.restartAttempt = 0;
       this.startKeepAlive();
       log.info(`[cli-bridge:${this.label}] started`);
+      // CliBridgeSpawn hook（observer）
+      try {
+        const { getHookRegistry } = await import("../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg && hookReg.count("CliBridgeSpawn") > 0) {
+          await hookReg.runCliBridgeSpawn({
+            event: "CliBridgeSpawn",
+            bridgeLabel: this.label,
+            cwd: this.bridgeConfig.workingDir,
+            resumedSessionId: this.channelConfig.sessionId ?? undefined,
+          });
+        }
+      } catch { /* hook 系統未就緒 */ }
     } catch (err) {
       log.error(`[cli-bridge:${this.label}] start failed: ${err instanceof Error ? err.message : String(err)}`);
       // 進入自動重啟迴路（session ID 衝突等暫態問題可自動恢復）
@@ -387,6 +400,7 @@ export class CliBridge {
 
   async suspend(): Promise<void> {
     if (this._status === "suspended" || this._status === "dead") return;
+    const idleMs = Date.now() - this._lastUsedAt;
     log.info(`[cli-bridge:${this.label}] idle suspend`);
     this.stopKeepAlive();
     this.failAllPendingTurns("bridge idle suspend");
@@ -395,6 +409,18 @@ export class CliBridge {
     }
     this.process = null;
     this._status = "suspended";
+    // CliBridgeSuspend hook（observer）
+    try {
+      const { getHookRegistry } = await import("../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("CliBridgeSuspend") > 0) {
+        await hookReg.runCliBridgeSuspend({
+          event: "CliBridgeSuspend",
+          bridgeLabel: this.label,
+          idleMs,
+        });
+      }
+    } catch { /* ignore */ }
   }
 
   // ── 狀態查詢 ──────────────────────────────────────────────────────────────
@@ -585,15 +611,33 @@ export class CliBridge {
     if (timer) { clearTimeout(timer); this.turnTimeouts.delete(turnId); }
 
     const pending = this.pendingTurns.get(turnId);
+    let durationMs = 0;
     if (pending) {
       pending.record.completedAt = new Date().toISOString();
       pending.record.assistantReply = pending.textParts.join("");
+      durationMs = Date.parse(pending.record.completedAt) - Date.parse(pending.record.startedAt);
       this.stdoutLogger.recordTurn(pending.record);
       this.pendingTurns.delete(turnId);
     }
 
     this.activeTurnId = null;
     this._status = this.process?.alive ? "idle" : "dead";
+
+    // CliBridgeTurn hook（observer）
+    void (async () => {
+      try {
+        const { getHookRegistry } = await import("../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg && hookReg.count("CliBridgeTurn") > 0) {
+          await hookReg.runCliBridgeTurn({
+            event: "CliBridgeTurn",
+            bridgeLabel: this.label,
+            turnId,
+            durationMs,
+          });
+        }
+      } catch { /* ignore */ }
+    })();
   }
 
   // ── 內部：idle timeout ────────────────────────────────────────────────────

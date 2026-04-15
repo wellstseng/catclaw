@@ -134,6 +134,25 @@ export class ToolRegistry {
       const msg = err instanceof Error ? err.message : String(err);
       // server log 記錄詳細資訊（不外洩）
       log.warn(`[tool-registry] execute 失敗 tool=${toolName}：${msg}`);
+
+      // ToolTimeout hook（observer）
+      if (msg.includes("逾時")) {
+        try {
+          const { getHookRegistry } = await import("../hooks/hook-registry.js");
+          const hookReg = getHookRegistry();
+          if (hookReg && hookReg.count("ToolTimeout", ctx.agentId) > 0) {
+            await hookReg.runToolTimeout({
+              event: "ToolTimeout",
+              toolName,
+              toolParams: params,
+              timeoutMs: effectiveMs,
+              agentId: ctx.agentId,
+              accountId: ctx.accountId,
+            });
+          }
+        } catch { /* ignore */ }
+      }
+
       return { error: msg };
     }
   }

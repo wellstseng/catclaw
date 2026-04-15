@@ -51,6 +51,23 @@ export const tool: Tool = {
     if (!filePath) return { error: "path 不能為空" };
     if (oldStr === newStr) return { error: "old_string 與 new_string 相同，不需編輯" };
 
+    // PreFileEdit hook（可 block）
+    try {
+      const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("PreFileEdit", ctx.agentId) > 0) {
+        const pre = await hookReg.runPreFileEdit({
+          event: "PreFileEdit",
+          path: filePath,
+          oldString: oldStr,
+          newString: newStr,
+          agentId: ctx.agentId,
+          accountId: ctx.accountId,
+        });
+        if (pre.blocked) return { error: `PreFileEdit hook 阻擋：${pre.reason ?? ""}` };
+      }
+    } catch { /* hook 系統不可用，靜默通過 */ }
+
     let content: string;
     try {
       content = await readFile(filePath, "utf-8");

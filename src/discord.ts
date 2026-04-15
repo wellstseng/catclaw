@@ -292,6 +292,28 @@ async function handleMessage(
 
   log.debug(`[discord] 收到訊息 from=${message.author.tag} channel=${message.channelId} guild=${message.guild?.id ?? "DM"} content="${message.content}"`);
 
+  // UserMessageReceived hook（可 block / 改 text）
+  try {
+    const { getHookRegistry } = await import("./hooks/hook-registry.js");
+    const hookReg = getHookRegistry();
+    if (hookReg && hookReg.count("UserMessageReceived") > 0) {
+      const attachments = message.attachments.size > 0
+        ? Array.from(message.attachments.values()).map(a => ({ name: a.name ?? "unknown", type: a.contentType ?? undefined, size: a.size }))
+        : undefined;
+      const res = await hookReg.runUserMessageReceived({
+        event: "UserMessageReceived",
+        source: "discord",
+        text: message.content,
+        attachments,
+        user: message.author.tag,
+      });
+      if (res.blocked) {
+        log.info(`[discord] UserMessageReceived hook 阻擋：${res.reason ?? ""}`);
+        return;
+      }
+      // 目前 message 為 immutable；hook 修改 text 的效果由後續 hook 階段（UserPromptSubmit）套用
+    }
+  } catch { /* ignore */ }
 
   // 去重：防止同一訊息被處理兩次（DM partial channel 已知問題）
   if (processedMessages.has(message.id)) {

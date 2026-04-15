@@ -98,6 +98,25 @@ export const tool: Tool = {
         return { result: { written: false, reason: `write-gate 阻擋：${gate.reason}` } };
       }
 
+      // PreAtomWrite hook（可 block / 改 content）
+      let hookContent = content;
+      try {
+        const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg && hookReg.count("PreAtomWrite", ctx.agentId) > 0) {
+          const pre = await hookReg.runPreAtomWrite({
+            event: "PreAtomWrite",
+            atomPath: join(dir, `${name}.md`),
+            scope: effectiveScope === "agent" ? "agent" : "global",
+            content,
+            agentId: ctx.agentId,
+            accountId: ctx.accountId,
+          });
+          if (pre.blocked) return { result: { written: false, reason: `PreAtomWrite hook 阻擋：${pre.reason ?? ""}` } };
+          hookContent = pre.content;
+        }
+      } catch { /* hook 系統不可用，靜默通過 */ }
+
       const { writeAtom } = await import("../../memory/atom.js");
       const filePath = writeAtom(dir, name, {
         description,
@@ -105,9 +124,25 @@ export const tool: Tool = {
         scope: effectiveScope,
         triggers,
         related,
-        content,
+        content: hookContent,
         namespace,
       });
+
+      // PostAtomWrite hook（observer）
+      try {
+        const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+        const hookReg = getHookRegistry();
+        if (hookReg && hookReg.count("PostAtomWrite", ctx.agentId) > 0) {
+          await hookReg.runPostAtomWrite({
+            event: "PostAtomWrite",
+            atomPath: filePath,
+            scope: effectiveScope === "agent" ? "agent" : "global",
+            bytesWritten: Buffer.byteLength(hookContent),
+            agentId: ctx.agentId,
+            accountId: ctx.accountId,
+          });
+        }
+      } catch { /* ignore */ }
 
       return { result: { written: true, path: filePath, namespace } };
     } catch (err) {

@@ -1,147 +1,162 @@
 # modules/hooks — Hook 系統
 
-> 檔案：`src/hooks/types.ts` + `src/hooks/hook-registry.ts` + `src/hooks/hook-runner.ts`
-> 更新日期：2026-04-05
+> 檔案：`src/hooks/{types,hook-registry,hook-runner,hook-runtime,hook-scanner,metadata-parser,sdk}.ts`
+> 更新日期：2026-04-15
 
 ## 職責
 
-Hook = 外部 shell command，在 agent-loop 的關鍵時機點執行。
-設計參考 Claude Code 的 PreToolUse / PostToolUse hooks。
+Hook = 在 agent-loop / memory / cli-bridge / platform 關鍵時機點執行的腳本。
+支援 TS / JS / Shell 三種 runtime，agent 可自助註冊。
 
-## 四個事件點
+## 32 個事件點
 
-| 事件 | 時機 | 可做什麼 |
-|------|------|---------|
-| `PreToolUse` | Tool 執行前 | allow / block / modify params |
-| `PostToolUse` | Tool 執行後 | modify result / 觸發副作用 |
-| `SessionStart` | Session 建立時 | 初始化 |
-| `SessionEnd` | Session 結束時 | 清理 |
+| 類別 | 事件 |
+|------|------|
+| Lifecycle | `PreToolUse` `PostToolUse` `SessionStart` `SessionEnd` |
+| Turn / Message | `UserMessageReceived` `UserPromptSubmit` `PreTurn` `PostTurn` `PreLlmCall` `PostLlmCall` `AgentResponseReady` `ToolTimeout` |
+| Memory / Atom | `PreAtomWrite` `PostAtomWrite` `PreAtomDelete` `PostAtomDelete` `AtomReplace` `MemoryRecall` |
+| Subagent | `PreSubagentSpawn` `PostSubagentComplete` `SubagentError` |
+| Context | `PreCompaction` `PostCompaction` `ContextOverflow` |
+| CLI Bridge | `CliBridgeSpawn` `CliBridgeSuspend` `CliBridgeTurn` |
+| File / Command | `PreFileWrite` `PreFileEdit` `PreCommandExec` |
+| Error / Safety | `SafetyViolation` `AgentError` |
+| Platform | `ConfigReload` `ProviderSwitch` |
 
-## HookDefinition（config 設定）
+每個事件對應的 Input 型別見 `src/hooks/types.ts` 的 `HookInputMap`。
+
+## 掛載方式
+
+**主要：目錄約定**
+
+```
+~/.catclaw/workspace/hooks/*.ts        ← 全域 hook（所有 agent）
+agents/{id}/hooks/*.ts                  ← Agent 專屬 hook
+```
+
+每支腳本用 `defineHook` 自描述 metadata，scanner 啟動時掃資料夾自動註冊。
+fs.watch 監聽變更熱重載。
+
+**次要：config 覆蓋層**
+
+`catclaw.json.hooks[]` / `agentConfig.hooks[]` 用來：
+- 暫時停用某個 hook 檔（`enabled: false`）
+- 改 timeout / toolFilter 而不動腳本
+
+## HookDefinition
 
 ```typescript
 interface HookDefinition {
   name: string;
   event: HookEvent;
-  command: string;           // Shell command
+  command?: string;          // 與 scriptPath 二擇一（純 shell command）
+  scriptPath?: string;       // 與 command 二擇一（檔案路徑）
+  runtime?: "auto" | "node" | "ts" | "shell";  // 預設 auto，依副檔名
   timeoutMs?: number;        // 預設 5000
-  toolFilter?: string[];     // 只在指定 tool 觸發
+  toolFilter?: string[];     // PreToolUse / PostToolUse / ToolTimeout / PreCommandExec 專用
   enabled?: boolean;         // 預設 true
+  scope?: "global" | "agent"; // scanner 載入時賦值
+  agentId?: string;           // scope=agent 時必填
 }
 ```
 
-catclaw.json 設定：
+## TS Hook SDK
 
-```jsonc
-"hooks": [
-  {
-    "name": "block-rm-rf",
-    "event": "PreToolUse",
-    "command": "node /path/to/check.js",
-    "toolFilter": ["run_command"],
-    "timeoutMs": 3000
+```typescript
+import { defineHook } from "catclaw/hooks/sdk";
+
+export default defineHook({
+  event: "PreToolUse",
+  toolFilter: ["run_command"],
+  timeoutMs: 3000,
+}, async (input) => {
+  if (String(input.toolParams.command).includes("rm -rf")) {
+    return { action: "block", reason: "dangerous command" };
   }
-]
+  return { action: "allow" };
+});
 ```
 
-## Hook I/O 協定
+Shell hook 用檔頭註解描述：
 
-**輸入**：JSON 寫入 stdin
-**輸出**：JSON 從 stdout 讀取
-
-### PreToolUse 輸入
-
-```typescript
-interface PreToolUseInput {
-  event: "PreToolUse";
-  toolName: string;
-  toolParams: Record<string, unknown>;
-  accountId: string;
-  sessionKey: string;
-  channelId: string;
-  toolTier: string;
-}
+```sh
+#!/bin/sh
+# @hook event=PostToolUse toolFilter=run_command timeoutMs=2000
+cat - >> /tmp/audit.log
+echo '{"action":"passthrough"}'
 ```
 
-### PostToolUse 輸入
+## Runtime 分派
 
-```typescript
-interface PostToolUseInput {
-  event: "PostToolUse";
-  toolName: string;
-  toolParams: Record<string, unknown>;
-  toolResult: { result?: unknown; error?: string };
-  durationMs: number;
-  accountId: string;
-  sessionKey: string;
-  channelId: string;
-}
-```
+| 副檔名 | Runtime | Spawn |
+|--------|---------|-------|
+| `.ts` | tsx | `bunx tsx hook-runtime.ts <script>` |
+| `.js` `.mjs` | node | `node <script>` |
+| `.sh` | shell | `sh <script>` |
+| `.bat` | shell | `cmd /c <script>`（Windows） |
+| `.ps1` | shell | `pwsh -File <script>` |
+| 純字串 command | shell | `sh -c <command>`（向後相容） |
 
-### 輸出 Action
+`hook-runtime.ts` 是 TS hook 的執行入口：載入 default export → 讀 stdin JSON → 呼叫 handler → 寫 stdout JSON。
+
+## HookAction 輸出
 
 ```typescript
 type HookAction =
   | { action: "allow" }
   | { action: "block"; reason: string }
-  | { action: "modify"; params?: Record<string, unknown>; result?: unknown }
+  | { action: "modify"; params?: Record<string, unknown>; result?: unknown; data?: Record<string, unknown> }
   | { action: "passthrough" };
 ```
+
+- `allow` — 通過，繼續下一個 hook
+- `block` — 中止鏈（PreToolUse / Pre*Write / Pre*Delete 適用）
+- `modify` — 改寫 params / result / data（依事件而定）
+- `passthrough` — 不做任何事（fail-open 預設）
 
 ## HookRegistry
 
 ```typescript
-initHookRegistry(definitions: HookDefinition[]): HookRegistry
+initHookRegistry(opts: { global: HookDefinition[]; byAgent: Map<string, HookDefinition[]> }): HookRegistry
 getHookRegistry(): HookRegistry | null
 
 class HookRegistry {
-  /** 重新載入 hook 定義（config hot-reload 時呼叫） */
-  reload(definitions: HookDefinition[]): void
+  reload(opts): void
+  count(event: HookEvent, agentId?: string): number
 
-  count(event: HookEvent): number
-
-  runPreToolUse(input: PreToolUseInput): Promise<
-    | { blocked: false; params: Record<string, unknown> }
-    | { blocked: true; reason: string }
-  >
-
-  runPostToolUse(input: PostToolUseInput): Promise<{ result?: unknown; error?: string }>
-
-  /** fire-and-await，錯誤不拋出（只 log.warn） */
-  runSessionStart(input: SessionStartInput): Promise<void>
-  runSessionEnd(input: SessionEndInput): Promise<void>
+  // Pre/Post 鏈式執行 — global → agent（Pre 類）或 agent → global（Post 類）
+  runPreToolUse(input: PreToolUseInput): Promise<{ blocked: false; params } | { blocked: true; reason }>
+  runPostToolUse(input: PostToolUseInput): Promise<{ result?; error? }>
+  // ... 其他 30 個事件對應 API
 }
 ```
 
-### SessionStart / SessionEnd 輸入
+## 執行語意
 
-```typescript
-interface SessionStartInput {
-  event: "SessionStart";
-  sessionKey: string;
-  accountId: string;
-  channelId: string;
-}
+- **Pre 類**（PreToolUse / PreAtomWrite / PreFileWrite 等）：`global → agent`，第一個 block 即中止；modify 鏈式改寫 params 傳給下一個
+- **Post 類**（PostToolUse / PostAtomWrite 等）：`agent → global`，modify 鏈式改寫 result
+- **觀測類**（SessionStart/End / CliBridgeSpawn / ConfigReload 等）：fire-and-await 並行，錯誤只 log 不拋出
 
-interface SessionEndInput {
-  event: "SessionEnd";
-  sessionKey: string;
-  accountId: string;
-  channelId: string;
-  turnCount: number;
-}
-```
+## 安全模型
 
-## HookRunner
-
-執行流程：
-1. 根據 event + toolFilter 篩選匹配的 hooks
-2. 依序執行（非並行，第一個 block 即停止）
-3. Spawn shell command，stdin 寫入 JSON，等待 stdout JSON
-4. 超時 → 預設 passthrough（不阻塞 agent loop）
-5. 解析 HookAction，套用到 tool params/result
+- `scope=agent` hook 寫到自己 agent 目錄，免 approve
+- `scope=global` hook 必須使用者 approve（control_request）
+- `scriptPath` 強制落在白名單目錄（防 `../` 逃逸）
+- 非 admin agent 不能寫 global hook
+- `CATCLAW_HOOK_DEPTH` env guard 防 hook → tool → hook 遞迴
 
 ## 整合點
 
-- `platform.ts` 步驟 12 初始化 HookRegistry
-- `agent-loop.ts` 的 `runPreToolUseHook()` / `runPostToolUseHook()` 呼叫
+- `platform.ts` 啟動時初始化 scanner + registry
+- `agent-loop.ts` 28 個新事件 trigger 點
+- `memory-engine.ts` atom 五事件
+- `cli-bridge/bridge.ts` cli bridge 三事件
+
+## 自助註冊工具
+
+| Tool | 用途 |
+|------|------|
+| `hook_register` | 建立新 hook 檔 |
+| `hook_list` | 列出已註冊 hooks |
+| `hook_remove` | 刪除 hook 檔 |
+
+對應 skill `/hook` 注入完整 SDK 知識（按需載入，不佔 system prompt）。

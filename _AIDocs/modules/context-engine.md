@@ -262,3 +262,13 @@ CE 設定統一在 `catclaw.json` 的 `contextEngineering` 區塊：
   }
 }
 ```
+
+## Hook 整合
+
+`ContextEngine.build()` 觸發：
+
+- **PreCompaction**：decay / compaction strategy 執行前（含 reason + currentTokens）
+- **PostCompaction**：decay / compaction strategy 執行後（含 before/afterTokens + durationMs）
+- **ContextOverflow**：overflow-hard-stop 觸發時（currentTokens + budgetTokens）
+
+`BuildOpts` 新增 `agentId` / `accountId` 欄位，供 hook 分派使用。

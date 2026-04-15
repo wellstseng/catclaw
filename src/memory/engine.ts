@@ -116,7 +116,26 @@ export class MemoryEngine {
       agentDir: ctx.agentId ? agentDir(ctx.agentId) : undefined,
     };
     const opts = overrides ? { ...this.cfg.recall, ...overrides } : this.cfg.recall;
-    return recall(prompt, ctx, paths, opts);
+    const startMs = Date.now();
+    const result = await recall(prompt, ctx, paths, opts);
+
+    // MemoryRecall hook（observer）
+    try {
+      const { getHookRegistry } = await import("../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("MemoryRecall", ctx.agentId) > 0) {
+        await hookReg.runMemoryRecall({
+          event: "MemoryRecall",
+          query: prompt,
+          hitCount: result.fragments?.length ?? 0,
+          durationMs: Date.now() - startMs,
+          agentId: ctx.agentId,
+          accountId: ctx.accountId,
+        });
+      }
+    } catch { /* ignore */ }
+
+    return result;
   }
 
   // ── Context Build ─────────────────────────────────────────────────────────────

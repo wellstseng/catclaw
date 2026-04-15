@@ -102,7 +102,7 @@ export const tool: Tool = {
     },
     required: ["command"],
   },
-  async execute(params, _ctx) {
+  async execute(params, ctx) {
     const command   = String(params["command"] ?? "").trim();
     const cwd       = params["cwd"] ? String(params["cwd"]) : undefined;
     const timeoutMs = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : DEFAULT_TIMEOUT_MS;
@@ -115,6 +115,22 @@ export const tool: Tool = {
       log.warn(`[run-command] git-safety blocked: ${command.slice(0, 80)} → ${gitSafetyError}`);
       return { error: gitSafetyError };
     }
+
+    // PreCommandExec hook（可 block）
+    try {
+      const { getHookRegistry } = await import("../../hooks/hook-registry.js");
+      const hookReg = getHookRegistry();
+      if (hookReg && hookReg.count("PreCommandExec", ctx.agentId) > 0) {
+        const pre = await hookReg.runPreCommandExec({
+          event: "PreCommandExec",
+          command,
+          cwd,
+          agentId: ctx.agentId,
+          accountId: ctx.accountId,
+        });
+        if (pre.blocked) return { error: `PreCommandExec hook 阻擋：${pre.reason ?? ""}` };
+      }
+    } catch { /* hook 系統不可用，靜默通過 */ }
 
     return new Promise<{ result?: unknown; error?: string }>(resolve => {
       // sanitized env：只傳安全的環境變數

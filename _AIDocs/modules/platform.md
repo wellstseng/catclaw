@@ -103,3 +103,13 @@ buildProviderRegistry(providerId, providers, routing)
 - ToolLogStore
 - SessionSnapshotStore
 - TraceStore + TraceContextStore
+
+## Hook 整合
+
+啟動時 `platform.initCore()` 呼叫 `initHookRegistry()` 並建立 `HookScanner`：
+
+- 掃描 `{wsDir}/hooks/` → global hooks
+- 掃描 `agents/{id}/hooks/` → per-agent hooks
+- 啟動 `fs.watch` 熱重載（新增/刪除/修改 → 自動 re-scan + reload）
+
+詳見 `modules/hooks.md`。

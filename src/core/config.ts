@@ -1468,6 +1468,7 @@ export let config: BridgeConfig = loadConfig();
 
 function reloadConfig(): void {
   try {
+    const oldConfig = config;
     const newConfig = loadConfig();
     if (newConfig.discord.token !== config.discord.token) {
       log.warn("[config] discord.token 變更需要重啟才會生效");
@@ -1476,7 +1477,17 @@ function reloadConfig(): void {
     setLogLevel(config.logLevel);
     // Hook Registry hot-reload
     import("../hooks/hook-registry.js").then(({ getHookRegistry }) => {
-      getHookRegistry()?.reload(config.hooks ?? []);
+      const reg = getHookRegistry();
+      if (!reg) return;
+      reg.reload({ global: config.hooks ?? [] });
+      // ConfigReload hook（observer）
+      const changedKeys: string[] = [];
+      for (const key of Object.keys(newConfig) as (keyof typeof newConfig)[]) {
+        if (JSON.stringify(oldConfig[key]) !== JSON.stringify(newConfig[key])) changedKeys.push(String(key));
+      }
+      if (changedKeys.length > 0 && reg.count("ConfigReload") > 0) {
+        void reg.runConfigReload({ event: "ConfigReload", changedKeys });
+      }
     }).catch(() => { /* hooks 模組尚未初始化 */ });
     log.info("[config] hot-reload 完成");
   } catch (err) {

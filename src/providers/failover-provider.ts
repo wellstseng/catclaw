@@ -85,6 +85,19 @@ export class FailoverProvider implements LLMProvider {
         // 非首選 provider 被啟用時提醒
         if (entry !== this.chain[0]) {
           log.warn(`[failover] 使用備援 provider=${provider.id}（primary 不可用）`);
+          // ProviderSwitch hook（observer）
+          try {
+            const { getHookRegistry } = await import("../hooks/hook-registry.js");
+            const hookReg = getHookRegistry();
+            if (hookReg && hookReg.count("ProviderSwitch") > 0) {
+              void hookReg.runProviderSwitch({
+                event: "ProviderSwitch",
+                fromProvider: this.chain[0].provider.id,
+                toProvider: provider.id,
+                reason: "failover",
+              });
+            }
+          } catch { /* ignore */ }
         }
 
         return result;

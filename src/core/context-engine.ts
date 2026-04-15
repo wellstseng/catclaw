@@ -75,6 +75,8 @@ export interface BuildOpts {
   sessionKey: string;
   turnIndex: number;
   ceProvider?: LLMProvider;  // CE 用 LLM（壓縮/摘要）
+  agentId?: string;
+  accountId?: string;
 }
 
 // ── Tool Pairing Repair ───────────────────────────────────────────────────────
@@ -727,14 +729,53 @@ export class ContextEngine {
     const order = ["decay", "compaction", "overflow-hard-stop"];
     const effectiveCeProvider = opts.ceProvider ?? this._ceProvider;
 
+    const hookReg = await (async () => {
+      try {
+        const { getHookRegistry } = await import("../hooks/hook-registry.js");
+        return getHookRegistry();
+      } catch { return null; }
+    })();
+
     for (const name of order) {
       const strategy = this.strategies.get(name);
       if (!strategy?.enabled) continue;
       if (strategy.shouldApply(ctx)) {
         const tokensBefore = ctx.estimatedTokens;
         const msgsBefore = ctx.messages.length;
+
+        // PreCompaction hook (for compaction/decay)
+        const compactionStart = Date.now();
+        if (hookReg && (name === "compaction" || name === "decay")) {
+          try {
+            if (hookReg.count("PreCompaction", opts.agentId) > 0) {
+              await hookReg.runPreCompaction({
+                event: "PreCompaction",
+                reason: name === "decay" ? "ce-decay" : "manual",
+                currentTokens: tokensBefore,
+                agentId: opts.agentId,
+                accountId: opts.accountId,
+              });
+            }
+          } catch { /* ignore */ }
+        }
+
         ctx = await strategy.apply(ctx, effectiveCeProvider);
         applied.push(name);
+
+        if (hookReg && (name === "compaction" || name === "decay")) {
+          try {
+            if (hookReg.count("PostCompaction", opts.agentId) > 0) {
+              await hookReg.runPostCompaction({
+                event: "PostCompaction",
+                beforeTokens: tokensBefore,
+                afterTokens: ctx.estimatedTokens,
+                durationMs: Date.now() - compactionStart,
+                agentId: opts.agentId,
+                accountId: opts.accountId,
+              });
+            }
+          } catch { /* ignore */ }
+        }
         const detail: StrategyDetail = {
           name,
           tokensBefore,
@@ -767,6 +808,20 @@ export class ContextEngine {
       strategyDetails: details.length > 0 ? details : undefined,
       originalMessageDigest: applied.length > 0 ? originalMessageDigest : undefined,
     };
+    const overflowSignaled = overflowStrategy?.lastOverflowSignaled ?? false;
+    if (overflowSignaled && hookReg) {
+      try {
+        if (hookReg.count("ContextOverflow", opts.agentId) > 0) {
+          await hookReg.runContextOverflow({
+            event: "ContextOverflow",
+            currentTokens: ctx.estimatedTokens,
+            budgetTokens: this.getContextWindowTokens(),
+            agentId: opts.agentId,
+            accountId: opts.accountId,
+          });
+        }
+      } catch { /* ignore */ }
+    }
     if (overflowStrategy) overflowStrategy.lastOverflowSignaled = false;
     this.lastAppliedStrategy = applied.at(-1);
 
