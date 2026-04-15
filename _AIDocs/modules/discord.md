@@ -215,7 +215,21 @@ const { inboundContext } = pipeline;
 
 ## Inbound History 注入
 
-未被 mention 的訊息會記錄到 `InboundHistoryStore`，下次觸發時注入：
+未被處理的訊息會記錄到 `InboundHistoryStore`，下次觸發時注入。
+
+**記錄 / 注入解耦**（discord.ts `_recordInbound` helper）：
+- `inboundHistory.enabled`（預設 true）→ 控制是否落地 JSONL
+- `inboundHistory.inject.enabled`（預設 false）→ 控制下次 prompt 是否注入摘要
+
+只要 `enabled=true` 就會記錄，避免「想開 inject 卻沒歷史可吃」。
+
+**觸發 `_recordInbound()` 的早退路徑**：
+1. allowFrom 白名單擋掉
+2. `@here` / `@everyone` 群組廣播被 `blockGroupMentions` 擋掉
+3. 訊息 mention 別 bot，主 bot 未被 mention
+4. 沒 mention 任何 bot，且 `requireMention=true`
+
+> 注意：被 `allowBot=false` 擋掉的其他 bot 訊息**不**記錄（避免噪音放大）。
 
 ```typescript
 const ctx = await inboundStore.consumeForInjection(channelId, {

@@ -348,6 +348,31 @@ async function handleMessage(
     return;
   }
 
+  // ── Inbound history helper（提早定義，供所有早退路徑使用） ──────────────
+  const { getCliBridgeBotUserIds, getCliBridge: getCB } = await import("./cli-bridge/index.js");
+
+  const _recordInbound = () => {
+    const inboundStore = getInboundHistoryStore();
+    // 落地記錄與 inject 解耦：只要 inboundHistory.enabled（預設 true）就記錄，
+    // inject.enabled 只控制是否在下次 prompt 注入摘要
+    const inboundEnabled = config.inboundHistory?.enabled ?? true;
+    if (inboundStore && inboundEnabled && message.content.trim()) {
+      const entry: InboundEntry = {
+        ts: new Date().toISOString(),
+        platform: "discord",
+        channelId: message.channelId,
+        authorId: message.author.id,
+        authorName: message.author.displayName,
+        content: message.content.trim(),
+        wasProcessed: false,
+      };
+      const scopes = ["main"];
+      const cliBridge = getCB(message.channelId);
+      if (cliBridge) scopes.push(cliBridge.label);
+      inboundStore.appendToScopes(message.channelId, entry, scopes);
+    }
+  };
+
   // Bot 訊息過濾（自身已在上面擋掉，這裡處理其他 bot）
   if (message.author.bot) {
     if (!access.allowBot) {
@@ -366,12 +391,14 @@ async function handleMessage(
 
   // allowFrom 白名單過濾：有設定（非空陣列）→ 只處理名單內的 user/bot
   if (access.allowFrom.length > 0 && !access.allowFrom.includes(message.author.id)) {
+    _recordInbound();
     log.debug(`[discord] 忽略：${message.author.tag} 不在 allowFrom 白名單中`);
     return;
   }
 
   // @here / @everyone 群組廣播過濾
   if (access.blockGroupMentions && message.mentions.everyone) {
+    _recordInbound();
     log.debug(`[discord] 忽略：群組 mention（@here/@everyone），blockGroupMentions=true`);
     return;
   }
@@ -384,7 +411,6 @@ async function handleMessage(
   const mainBotId = botUser?.id;
 
   // 收集訊息中 mention 到的已註冊 bot ID
-  const { getCliBridgeBotUserIds, getCliBridge: getCB } = await import("./cli-bridge/index.js");
   const cliBridgeBotIds = getCliBridgeBotUserIds();
   const allRegisteredBotIds = new Set(cliBridgeBotIds);
   if (mainBotId) allRegisteredBotIds.add(mainBotId);
@@ -399,27 +425,6 @@ async function handleMessage(
 
   const hasMentionedAnyBot = mentionedBotIds.size > 0 || mentionedExternalBot;
   const mainBotMentioned = mainBotId ? mentionedBotIds.has(mainBotId) : false;
-
-  // Inbound history helper
-  const _recordInbound = () => {
-    const inboundStore = getInboundHistoryStore();
-    const inboundEnabled = config.inboundHistory?.inject?.enabled ?? false;
-    if (inboundStore && inboundEnabled && message.content.trim()) {
-      const entry: InboundEntry = {
-        ts: new Date().toISOString(),
-        platform: "discord",
-        channelId: message.channelId,
-        authorId: message.author.id,
-        authorName: message.author.displayName,
-        content: message.content.trim(),
-        wasProcessed: false,
-      };
-      const scopes = ["main"];
-      const cliBridge = getCB(message.channelId);
-      if (cliBridge) scopes.push(cliBridge.label);
-      inboundStore.appendToScopes(message.channelId, entry, scopes);
-    }
-  };
 
   // 主 bot 觸發判斷
   let text: string;
