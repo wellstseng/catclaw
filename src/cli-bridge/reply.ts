@@ -138,8 +138,9 @@ export async function handleCliBridgeReply(
   bridgeConfig: BridgeConfig,
   cliBridgeConfig?: CliBridgeConfig,
   imageBlocks?: StdinImageBlock[],
+  senderOverride?: import("./discord-sender.js").BridgeSender,
 ): Promise<void> {
-  const sender = bridge.getSender();
+  const sender = senderOverride ?? bridge.getSender();
   const handle = bridge.send(text, "discord", {
     user: originalMessage.author.displayName || originalMessage.author.username,
     ts: new Date(originalMessage.createdTimestamp).toISOString(),

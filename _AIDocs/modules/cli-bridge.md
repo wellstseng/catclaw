@@ -1,6 +1,6 @@
 # CLI Bridge 模組
 
-> 原始碼：`src/cli-bridge/` | 更新：2026-04-14
+> 原始碼：`src/cli-bridge/` | 更新：2026-04-15
 
 ## 定位
 
@@ -15,6 +15,7 @@
 | `bridge.ts` | `CliBridge` — 生命週期管理（直送 stdin、自動重啟、keep-alive、中斷） |
 | `stdout-log.ts` | `StdoutLogger` — JSONL 日誌 + 記憶體快取 + WebSocket hook |
 | `index.ts` | 全域單例：`initCliBridges` / `getCliBridge` / `shutdownAllBridges` |
+| `discord-sender.ts` | Discord 發送抽象層：IndependentBotSender / MainBotSender + `withChannel()` proxy |
 | `reply.ts` | Discord 回覆處理：streaming edit + 重試 fallback + 送達狀態追蹤 |
 
 ## 關鍵設計
@@ -60,6 +61,7 @@
 | 對話歷程匯出 | `dashboard.ts` `GET /api/cli-bridge/:label/export` + UI 匯出按鈕 | 一鍵匯出 Markdown，含 user/assistant/tools |
 | 中間推理文字格式化 | `reply.ts` `flushIntermediateBuffer()` + `types.ts` `showIntermediateText` | tool_call 前的中間推理文字依設定格式化：`"quote"`（引用區塊，預設）/ `"spoiler"`（摺疊）/ `"none"`（不顯示）/ `"normal"`（原樣）。quote/spoiler 模式下所有中間文字累積 edit 同一條訊息（超過 2000 字才開新訊息），最終回覆用新訊息發送 |
 | 外部 bot mention 過濾 | `index.ts` `handleIndependentBotMessage()` | mention 非 CatClaw 註冊的外部 bot 時不回覆（檢查 Discord user.bot flag + allRegisteredBotIds） |
+| 跨頻道 mention 回應 | `index.ts` + `discord-sender.ts` `withChannel()` + `reply.ts` `senderOverride` | CLI Bridge bot 被 mention 時不限於綁定頻道，可在任意頻道/thread/guild 回應。`withChannel()` 建立指向來源頻道的 proxy sender，reply handler 透過 `senderOverride` 參數透明使用 |
 | rate limit 保護 | `reply.ts` `editIntervalMs` + `lastEditTime` 計數器 | `cliBridge.editIntervalMs` 可設定（預設 800ms），防止 Discord API rate limit |
 | Dashboard 監控 | `dashboard.ts` UI + `_cbAutoRefresh` | 10s 自動刷新狀態、SSE 即時串流、匯出按鈕、刷新按鈕 |
 | `/cd` 工作目錄切換 | `slash.ts` `handleCd()` + `index.ts` `rebuildBridgeForChannel()` | Slash command 切換 bridge cwd，原子重建路徑統一關舊建新，持久化到 `cli-bridges.json` |

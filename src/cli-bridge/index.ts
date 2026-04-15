@@ -206,7 +206,34 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
  * 獨立 bot messageCreate handler
  */
 function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
-  if (msg.channelId !== bridge.channelId) return;
+  const isHomeChannel = msg.channelId === bridge.channelId;
+
+  const sender = bridge.getSender();
+  const myBotId = sender.getBotUserId();
+
+  // ── Mention 解析（channel check 前，跨頻道 mention 需要先判斷） ──
+  const mentionPattern = /<@!?(\d+)>/g;
+  const contentMentionIds = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = mentionPattern.exec(msg.content)) !== null) contentMentionIds.add(m[1]!);
+
+  const allRegisteredBotIds = getCliBridgeBotUserIds();
+  if (_discordClient?.user) allRegisteredBotIds.add(_discordClient.user.id);
+
+  const mentionedBotIds = new Set<string>();
+  for (const botId of allRegisteredBotIds) {
+    if (contentMentionIds.has(botId)) mentionedBotIds.add(botId);
+  }
+
+  const mentionedExternalBot = msg.mentions.users.some(u => u.bot && !allRegisteredBotIds.has(u.id));
+  const hasMentionedAnyBot = mentionedBotIds.size > 0 || mentionedExternalBot;
+  const iAmMentioned = myBotId ? mentionedBotIds.has(myBotId) : false;
+
+  // 非綁定頻道：只有被 mention 才處理
+  if (!isHomeChannel) {
+    if (!iAmMentioned) return;
+    log.info(`[cli-bridge] ${bridge.label} 跨頻道 mention：channel=${msg.channelId}`);
+  }
 
   // Bot-to-Bot circuit breaker
   if (msg.author.bot) {
@@ -218,33 +245,7 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
     resetOnHumanMessage(msg.channelId);
   }
 
-  const sender = bridge.getSender();
-  const myBotId = sender.getBotUserId();
-
-  // ── Mention 路由規則 ──
-  // 用 regex 從 content 解析 mention ID（跨 Client 不依賴 mentions.users cache）
-  const mentionPattern = /<@!?(\d+)>/g;
-  const contentMentionIds = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = mentionPattern.exec(msg.content)) !== null) contentMentionIds.add(m[1]!);
-
-  // 收集已註冊 bot ID
-  const allRegisteredBotIds = getCliBridgeBotUserIds();
-  if (_discordClient?.user) allRegisteredBotIds.add(_discordClient.user.id);
-
-  const mentionedBotIds = new Set<string>();
-  for (const botId of allRegisteredBotIds) {
-    if (contentMentionIds.has(botId)) mentionedBotIds.add(botId);
-  }
-
-  // 外部 bot mention 檢查
-  const mentionedExternalBot = msg.mentions.users.some(u => u.bot && !allRegisteredBotIds.has(u.id));
-
-  const hasMentionedAnyBot = mentionedBotIds.size > 0 || mentionedExternalBot;
-  const iAmMentioned = myBotId ? mentionedBotIds.has(myBotId) : false;
-
   if (hasMentionedAnyBot && !iAmMentioned) {
-    // 訊息 mention 了其他 bot，我沒被 mention → 記 inbound，不處理
     _appendInboundHistory(bridge, msg);
     log.info(`[cli-bridge] ${bridge.label} 忽略：訊息 mention 了其他 bot (mentioned=${[...mentionedBotIds].join(",")})`);
     return;
@@ -252,7 +253,6 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
 
   const channelConfig = bridge.getChannelConfig();
   if (!hasMentionedAnyBot && channelConfig.requireMention) {
-    // 沒 mention 任何 bot + 我需要 mention → 記 inbound，不處理
     _appendInboundHistory(bridge, msg);
     return;
   }
@@ -274,10 +274,19 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
       // 移除 mention prefix
       fullText = fullText.replace(/<@!?\d+>/g, "").trim();
 
-      log.info(`[cli-bridge] independent bot 路由：${bridge.label} channel=${msg.channelId}`);
+      // 跨頻道：用 withChannel 建立指向來源頻道的 proxy sender
+      let senderOverride: import("./discord-sender.js").BridgeSender | undefined;
+      if (!isHomeChannel) {
+        const ch = msg.channel;
+        if (ch.isTextBased() && !ch.isDMBased()) {
+          senderOverride = sender.withChannel(ch as import("discord.js").GuildTextBasedChannel);
+        }
+      }
+
+      log.info(`[cli-bridge] independent bot 路由：${bridge.label} channel=${msg.channelId}${isHomeChannel ? "" : " (跨頻道)"}`);
       void handleCliBridgeReply(bridge, fullText, msg, {
         showToolCalls: "none",
-      } as Parameters<typeof handleCliBridgeReply>[3], bridgeConfig, imageBlocks);
+      } as Parameters<typeof handleCliBridgeReply>[3], bridgeConfig, imageBlocks, senderOverride);
     } catch (err) {
       log.error(`[cli-bridge] independent bot handler error: ${err instanceof Error ? err.message : String(err)}`);
     }

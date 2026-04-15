@@ -54,6 +54,9 @@ export interface BridgeSender {
   /** 取得 bot user ID（用於 mention 判斷） */
   getBotUserId(): string | null;
 
+  /** 回傳指向指定 channel 的 proxy sender（跨頻道 mention 用） */
+  withChannel(channel: GuildTextBasedChannel): BridgeSender;
+
   /** 銷毀（logout / 清理） */
   destroy(): Promise<void>;
 }
@@ -204,6 +207,10 @@ export class IndependentBotSender implements BridgeSender {
     return this.client?.user?.id ?? null;
   }
 
+  withChannel(channel: GuildTextBasedChannel): BridgeSender {
+    return createChannelProxy(this, channel);
+  }
+
   /** 取得底層 Discord Client（slash command 註冊用） */
   getClient(): Client {
     if (!this.client) throw new Error("[bridge-sender] client 尚未初始化");
@@ -268,9 +275,32 @@ export class MainBotSender implements BridgeSender {
     return this.mainClient.user?.id ?? null;
   }
 
+  withChannel(channel: GuildTextBasedChannel): BridgeSender {
+    return createChannelProxy(this, channel);
+  }
+
   async destroy(): Promise<void> {
     this.channel = null;
   }
+}
+
+// ── Channel Proxy ────────────────────────────────────────────────────────────
+
+function createChannelProxy(base: BridgeSender, channel: GuildTextBasedChannel): BridgeSender {
+  return {
+    mode: base.mode,
+    init: () => Promise.resolve(),
+    reply: (_orig: Message, content: string) => channel.send(content),
+    send: (content: string) => channel.send(content),
+    edit: (message: Message, content: string) => message.edit(content).then(() => {}),
+    sendComponents: (options: MessageCreateOptions) => channel.send(options),
+    editComponents: (message: Message, options: MessageEditOptions) => message.edit(options).then(() => {}),
+    sendTyping: () => { void channel.sendTyping(); },
+    onMessage: () => {},
+    getBotUserId: () => base.getBotUserId(),
+    withChannel: (ch: GuildTextBasedChannel) => createChannelProxy(base, ch),
+    destroy: () => Promise.resolve(),
+  };
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
