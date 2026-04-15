@@ -215,7 +215,6 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
             args: [serverPath],
             env: {
               DISCORD_TOKEN: this.config.botToken,
-              DISCORD_ALLOWED_CHANNELS: this.config.channelId,
             },
           },
         },

@@ -5,7 +5,7 @@
  * 讓 Claude CLI session 能透過 MCP tool 執行 Discord 操作。
  * 協議：stdio JSON-RPC 2.0（MCP standard）
  * 認證：DISCORD_TOKEN 環境變數（由 acp.ts 注入）
- * 安全：DISCORD_ALLOWED_CHANNELS 環境變數（逗號分隔），空白表示不限
+ * 安全：存取範圍由 Bot Token 的 Discord 權限決定
  *
  * Action 分類：
  *   Messaging: send, read, edit, delete, fetchMessage, react, reactions,
@@ -23,9 +23,6 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 
 const TOKEN = process.env.DISCORD_TOKEN ?? "";
-const ALLOWED = new Set(
-  (process.env.DISCORD_ALLOWED_CHANNELS ?? "").split(",").filter(Boolean)
-);
 const API = "https://discord.com/api/v10";
 
 // ── Discord REST ─────────────────────────────────────────────────────────────
@@ -88,7 +85,6 @@ function strArr(p: P, key: string): string[] | undefined {
 function channelId(p: P): string {
   const id = str(p, "channelId") ?? str(p, "to")?.replace(/^channel:/, "");
   if (!id) throw new Error("缺少 channelId 或 to");
-  if (ALLOWED.size > 0 && !ALLOWED.has(id)) throw new Error(`Channel ${id} 不在允許清單`);
   return id;
 }
 
