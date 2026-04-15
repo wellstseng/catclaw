@@ -1082,9 +1082,13 @@ function defaultMemoryConfig(raw: Partial<MemoryConfig> | undefined, workspaceDi
       llmSelect: r.recall?.llmSelect ?? false,
       llmSelectMax: r.recall?.llmSelectMax ?? 5,
     },
-    extract: r.extract ?? {
-      enabled: true, perTurn: true, onSessionEnd: true,
-      maxItemsPerTurn: 3, maxItemsSessionEnd: 5, minNewChars: 200,
+    extract: {
+      enabled: r.extract?.enabled ?? true,
+      perTurn: r.extract?.perTurn ?? true,
+      onSessionEnd: r.extract?.onSessionEnd ?? true,
+      maxItemsPerTurn: r.extract?.maxItemsPerTurn ?? 3,
+      maxItemsSessionEnd: r.extract?.maxItemsSessionEnd ?? 5,
+      minNewChars: r.extract?.minNewChars ?? 200,
     },
     consolidate: r.consolidate ?? {
       autoPromoteThreshold: 3, suggestPromoteThreshold: 4,
