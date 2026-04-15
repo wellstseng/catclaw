@@ -243,6 +243,7 @@ LLM Provider 憑證，位於 `~/.catclaw/workspace/agents/default/auth-profile.j
 | `/cron` | standard | 排程管理（add/list/delete/enable/disable） |
 | `/restart` | admin | 重啟 Bot |
 | `/add-bridge` | admin | 新增 CLI Bridge |
+| `/clear-session` | admin | CLI Bridge 清空 sessionId + stdout.jsonl，turns 合併保留統計（TTL 60 天） |
 
 ## Dashboard
 

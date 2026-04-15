@@ -426,6 +426,7 @@ Hook = 外部 shell command，在 agent-loop 關鍵時機點執行。
 - 設定存於 `cli-bridges.json`，支援 hot-reload
 - Auto-restart on crash，keepAlive 機制
 - 中間推理文字格式化 + 可選 `showIntermediateText`
+- `/clear-session` 同步清空 `stdout.jsonl` + `compactTurns(60)` 合併 turns（保留統計、TTL 60 天）
 
 **新增 Bridge**：在 Discord 使用 `/add-bridge label=<name> channel=<id> cwd=<path>`
 
