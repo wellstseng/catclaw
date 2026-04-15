@@ -50,7 +50,7 @@ interface ToolContext {
 }
 ```
 
-## 21 Builtin Tools
+## 24 Builtin Tools
 
 ### 檔案操作（elevated）
 
@@ -123,6 +123,14 @@ interface ToolContext {
 | Tool | 說明 |
 |------|------|
 | `skill` | 執行 builtin skill 指令（LLM 傳入完整指令如 `/cron list`，橋接 SkillContext 執行） |
+
+### Hook（elevated/standard）
+
+| Tool | Tier | 說明 |
+|------|------|------|
+| `hook_register` | elevated | 寫入新 hook 腳本至 `workspace/hooks/` 或 `agents/{id}/hooks/`（fs.watch 自動 reload） |
+| `hook_list` | standard | 列出已註冊 hooks（可依 event / scope 篩選） |
+| `hook_remove` | elevated | 刪除或停用（rename to `*.disabled.*`）指定 hook |
 
 ### Meta（public）
 

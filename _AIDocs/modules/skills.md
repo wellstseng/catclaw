@@ -76,6 +76,7 @@ interface SkillResult {
 | `configure.ts` | configure | Provider/model 設定 |
 | `context.ts` | context | Context 檢視 |
 | `help.ts` | help | 說明 |
+| `hook.ts` | hook | Hook 系統管理（trigger: `/hook`）— list / events / remove |
 | `migrate.ts` | migrate | 遷移工具 |
 | `mode.ts` | mode | 模式切換 |
 | `plan.ts` | plan | 計畫管理 |

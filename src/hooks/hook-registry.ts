@@ -75,6 +75,19 @@ export class HookRegistry {
     }
   }
 
+  /** 列出所有註冊的 hooks（供 hook_list tool 使用） */
+  listAll(): { global: HookDefinition[]; byAgent: Record<string, HookDefinition[]> } {
+    const globalAll: HookDefinition[] = [];
+    for (const list of this.hooks.global.values()) globalAll.push(...list);
+    const byAgent: Record<string, HookDefinition[]> = {};
+    for (const [agentId, eventMap] of this.hooks.byAgent.entries()) {
+      const list: HookDefinition[] = [];
+      for (const defs of eventMap.values()) list.push(...defs);
+      byAgent[agentId] = list;
+    }
+    return { global: globalAll, byAgent };
+  }
+
   count(event: HookEvent, agentId?: string): number {
     const g = this.hooks.global.get(event)?.length ?? 0;
     const a = agentId ? (this.hooks.byAgent.get(agentId)?.get(event)?.length ?? 0) : 0;
