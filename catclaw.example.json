@@ -248,7 +248,7 @@
       "llmSelect": false,
       "llmSelectMax": 5
     },
-    "extract": { "enabled": true, "perTurn": true, "onSessionEnd": true, "perTurnLimit": 3 }
+    "extract": { "enabled": true, "perTurn": true, "onSessionEnd": true, "maxItemsPerTurn": 3 }
   },
 
   // ── 記憶管線（embedding / extraction / reranker 後端）────────────
