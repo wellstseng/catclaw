@@ -202,6 +202,26 @@ if (-not (Test-Path $CronJson)) {
     Ok "已建立 cron-jobs.json"
 }
 
+# 複製 models-config.json（若不存在）
+$ModelsConfigJson = Join-Path $ConfigDir "models-config.json"
+if (-not (Test-Path $ModelsConfigJson)) {
+    $modelsConfigSrc = Join-Path $ProjectDir "models-config.example.json"
+    if (Test-Path $modelsConfigSrc) {
+        Copy-Item $modelsConfigSrc $ModelsConfigJson
+    }
+    Ok "已建立 models-config.json"
+}
+
+# 複製 models.json 至 boot agent 目錄（若不存在）
+$AgentModelsJson = Join-Path $BootAgentDir "models.json"
+if (-not (Test-Path $AgentModelsJson)) {
+    $modelsSrc = Join-Path $ProjectDir "models.example.json"
+    if (Test-Path $modelsSrc) {
+        Copy-Item $modelsSrc $AgentModelsJson
+    }
+    Ok "已建立 agents/$BootAgentId/models.json"
+}
+
 Ok "目錄結構就緒"
 
 # ═══════════════════════════════════════════════════════════════════

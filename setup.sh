@@ -164,6 +164,20 @@ if [ ! -f "$CRON_JSON" ]; then
   ok "已建立 cron-jobs.json"
 fi
 
+# 複製 models-config.json（若不存在）
+MODELS_CONFIG_JSON="$CONFIG_DIR/models-config.json"
+if [ ! -f "$MODELS_CONFIG_JSON" ]; then
+  cp "$PROJECT_DIR/models-config.example.json" "$MODELS_CONFIG_JSON" 2>/dev/null || true
+  ok "已建立 models-config.json"
+fi
+
+# 複製 models.json 至 boot agent 目錄（若不存在）
+AGENT_MODELS_JSON="$BOOT_AGENT_DIR/models.json"
+if [ ! -f "$AGENT_MODELS_JSON" ]; then
+  cp "$PROJECT_DIR/models.example.json" "$AGENT_MODELS_JSON" 2>/dev/null || true
+  ok "已建立 agents/$BOOT_AGENT_ID/models.json"
+fi
+
 ok "目錄結構就緒"
 
 # ═══════════════════════════════════════════════════════════════════
