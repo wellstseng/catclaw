@@ -2,15 +2,16 @@
 
 **English** | [繁體中文](README.md)
 
-Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 21 builtin tools, 27 builtin skills, multi-provider failover, four-layer memory engine, and web dashboard.
+Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 24 builtin tools, 28 builtin skills, 32-event hook system, multi-provider failover, four-layer memory engine, and web dashboard.
 
 ## Features
 
 | Category | Capabilities |
 |----------|-------------|
 | **Agent Loop** | Multi-turn reasoning loop, tool execution, output token recovery, auto-compact |
-| **Tools** | 21 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management, skill execution |
-| **Skills** | 27 builtin skills (24 TypeScript + 3 prompt-type) — config, session, account, status, restart, plan, remind, and more |
+| **Tools** | 24 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management, skill execution, hook management |
+| **Skills** | 28 builtin skills (25 TypeScript + 3 prompt-type) — config, session, account, status, restart, plan, remind, hook, and more |
+| **Hook System** | 32 events (9 categories: Lifecycle / Turn / Memory / Subagent / Context / CLI Bridge / File+Command / Error / Platform) + folder-convention mount + fs.watch hot-reload + TS/JS/sh/ps1 runtimes + defineHook SDK |
 | **Multi-Provider** | claude-api / ollama / openai-compat / codex-oauth / cli-* + circuit-breaker failover |
 | **Memory** | Four-layer engine (Global / Project / Account / Agent) — vector recall + keyword search + auto-extraction + consolidation |
 | **Context Engine** | Compaction / budget-guard / sliding-window / overflow-hard-stop strategies |
@@ -36,7 +37,7 @@ agent-loop.ts ─── Multi-turn Reasoning Loop (LLM <-> Tool Execution)
     |                         |
     v                         v
 providers/ ───────── tools/ + skills/
-LLM Abstraction      21 Tools + 27 Skills
+LLM Abstraction      24 Tools + 28 Skills + 32 Hook Events
 + Failover
     |
     v
@@ -234,6 +235,7 @@ LLM provider credentials, located at `~/.catclaw/workspace/agents/default/auth-p
 | `/configure show` | admin | Show provider/model config |
 | `/configure model <id>` | admin | Change model |
 | `/cron` | standard | Schedule management (add/list/delete/enable/disable) |
+| `/hook` | standard | Hook system management (list/events/remove) |
 | `/restart` | admin | Restart the bot |
 | `/add-bridge` | admin | Add CLI Bridge |
 
@@ -257,8 +259,9 @@ src/
                   Prompt Assembler, Reply Handler, Event Bus, Message Pipeline
   memory/         Four-layer memory engine (engine, recall, extract, consolidate)
   providers/      LLM Provider abstraction (claude-api, ollama, openai-compat, cli-*)
-  tools/          Tool Registry + 21 builtin tools
-  skills/         Skill Registry + 27 builtin skills (24 TS + 3 prompt)
+  tools/          Tool Registry + 24 builtin tools
+  skills/         Skill Registry + 28 builtin skills (25 TS + 3 prompt)
+  hooks/          Hook system — 32 events + folder-convention + fs.watch + defineHook SDK
   hooks/          Hook system (pre/post tool execution)
   safety/         Safety interception (guard, collab-conflict)
   workflow/       Workflow engine (rut, oscillation, fix-escalation, sync)

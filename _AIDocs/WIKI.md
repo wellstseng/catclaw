@@ -22,7 +22,7 @@
 ### CatClaw 是什麼
 
 CatClaw 是一套以 Discord 為前端的多人 AI 開發平台，提供等同 Claude Code 的完整開發能力：
-multi-turn agent loop、21 builtin tools、27 builtin skills、多 provider failover、
+multi-turn agent loop、24 builtin tools、28 builtin skills、32-event hook 系統、多 provider failover、
 四層記憶引擎、Context Engineering、subagent 編排、帳號/角色/權限系統、Web Dashboard。
 
 ### 一鍵安裝
@@ -109,11 +109,11 @@ Discord 訊息
 | **Context Engine** | 4 策略壓縮：compaction / budget-guard / sliding-window / overflow-hard-stop |
 | **Session** | Per-channel 串行佇列 + 磁碟持久化 + TTL |
 | **Accounts** | 5 級角色（guest → platform-owner）+ Tool Tier 物理移除 |
-| **Tools** | 21 builtin tools + MCP tool 自動整合 |
-| **Skills** | 27 builtin skills（24 TS + 3 prompt） |
+| **Tools** | 24 builtin tools + MCP tool 自動整合 |
+| **Skills** | 28 builtin skills（25 TS + 3 prompt） |
 | **Dashboard** | Web 監控面板 + REST API + Web Chat |
 | **Cron** | 排程服務（cron/every/at）+ 4 種動作型別 |
-| **Hooks** | Shell command 在 tool 執行前後觸發 |
+| **Hooks** | 32 events（9 類）+ folder-convention 掛載 + fs.watch 熱重載 + TS/JS/sh/ps1 多 runtime + defineHook SDK |
 | **Safety** | 安全攔截 + 協作衝突偵測 |
 
 ### 目錄結構
@@ -123,8 +123,8 @@ catclaw/                          <- 程式碼
 ├── src/
 │   ├── core/                     核心模組（agent-loop, session, dashboard...）
 │   ├── providers/                LLM Provider 抽象層
-│   ├── tools/                    21 builtin tools
-│   ├── skills/                   27 builtin skills
+│   ├── tools/                    24 builtin tools
+│   ├── skills/                   28 builtin skills
 │   ├── memory/                   四層記憶引擎
 │   ├── accounts/                 帳號/角色/權限
 │   ├── hooks/                    Hook 系統
@@ -221,7 +221,7 @@ catclaw/                          <- 程式碼
 
 > 詳見：[modules/agent-loop.md](modules/agent-loop.md)
 
-### 4.2 Tool 系統（21 builtin tools）
+### 4.2 Tool 系統（24 builtin tools）
 
 自動掃描載入 + register/execute + hot-reload + MCP tool 整合。
 
@@ -233,9 +233,9 @@ LLM 需先呼叫 `tool_search` 載入完整 schema 才能使用（節省 context
 
 > 詳見：[modules/tool-registry.md](modules/tool-registry.md)
 
-### 4.3 Skill 系統（27 builtin skills）
+### 4.3 Skill 系統（28 builtin skills）
 
-Skill = Discord 指令層，在 agent loop 之前攔截。30 個 TypeScript 執行型（24 檔）+ 3 個 prompt 型。
+Skill = Discord 指令層，在 agent loop 之前攔截。25 個檔案（含多重 export 共 25 TypeScript skills）+ 3 個 prompt 型。
 LLM 也可透過 `skill` tool 主動執行 builtin skill（不需引導使用者手動輸入）。
 
 **觸發**：前綴匹配（如 `/think`、`/mode`、`/use`、`/stop`、`/plan`、`/status`）
@@ -391,30 +391,63 @@ MCP tool 註冊名稱格式：`mcp_{serverName}_{toolName}`。預設 deferred（
 
 ### 4.12 Hook 系統
 
-Hook = 外部 shell command，在 agent-loop 關鍵時機點執行。
+Hook = TS/JS 腳本或 shell 命令，在 agent-loop 的 32 個關鍵時機點執行。支援 global（所有 agent）+ per-agent（單一 agent）兩層掛載。
 
-**4 個事件點**：
+**32 個事件點（9 類）**：
 
-| 事件 | 時機 | 可做什麼 |
-|------|------|---------|
-| `PreToolUse` | Tool 執行前 | allow / block / modify params |
-| `PostToolUse` | Tool 執行後 | modify result / 觸發副作用 |
-| `SessionStart` | Session 建立 | 初始化 |
-| `SessionEnd` | Session 結束 | 清理 |
+| 類別 | Events |
+|------|--------|
+| Lifecycle (4) | `PreToolUse` `PostToolUse` `SessionStart` `SessionEnd` |
+| Turn / Message (8) | `UserMessageReceived` `UserPromptSubmit` `PreTurn` `PostTurn` `PreLlmCall` `PostLlmCall` `AgentResponseReady` `ToolTimeout` |
+| Memory / Atom (6) | `PreAtomWrite` `PostAtomWrite` `PreAtomDelete` `PostAtomDelete` `AtomReplace` `MemoryRecall` |
+| Subagent (3) | `PreSubagentSpawn` `PostSubagentComplete` `SubagentError` |
+| Context (3) | `PreCompaction` `PostCompaction` `ContextOverflow` |
+| CLI Bridge (3) | `CliBridgeSpawn` `CliBridgeSuspend` `CliBridgeTurn` |
+| File / Command (3) | `PreFileWrite` `PreFileEdit` `PreCommandExec` |
+| Error / Safety (2) | `SafetyViolation` `AgentError` |
+| Platform (2) | `ConfigReload` `ProviderSwitch` |
 
-**設定範例**：
-```jsonc
-"hooks": [
-  {
-    "name": "block-rm-rf",
-    "event": "PreToolUse",
-    "command": "node /path/to/check.js",
-    "toolFilter": ["run_command"],
-    "timeoutMs": 5000
-  }
-]
+**HookAction**：`allow` / `block`（中止後續）/ `modify`（改 params/data）/ `passthrough`
+
+**檔案掛載慣例**：
+- 全域：`~/.catclaw/workspace/hooks/{event}.{name}.{ext}`
+- Agent 專屬：`~/.catclaw/workspace/agents/{id}/hooks/{event}.{name}.{ext}`
+- 支援副檔名：`.ts` `.js` `.mjs` `.sh` `.bat` `.ps1`
+- `*.disabled.*` 會自動跳過
+- fs.watch 於檔案新增/修改/刪除時自動 reload registry
+
+**TypeScript SDK**（推薦）：
+```typescript
+import { defineHook } from "catclaw/hooks";
+
+export default defineHook(
+  { event: "PreCommandExec", name: "block-dangerous", timeoutMs: 1000 },
+  async (input) => {
+    if (/rm\s+-rf\s+\//.test(input.command)) {
+      return { action: "block", reason: "禁止 rm -rf /" };
+    }
+    return { action: "allow" };
+  },
+);
 ```
 
+**Shell 腳本 metadata**（用 `// @hook` 或 `# @hook`）：
+```sh
+#!/usr/bin/env bash
+# @hook event=PostToolUse timeoutMs=2000
+echo "$STDIN_JSON" >> /tmp/tool-audit.log
+```
+
+**管理工具**：
+- `hook_register` — 寫入新腳本
+- `hook_list` — 列出已註冊 hooks
+- `hook_remove` — 刪除或 disable
+
+**管理 skill**：`/hook list [event]`、`/hook events`、`/hook remove <event> <name>`
+
+**安全模型**：`CATCLAW_HOOK_DEPTH` 防遞迴、timeout/error fail-open、scope 分層、toolFilter 限制。
+
+> 範例：`templates/hooks/` 內有 audit-log / block-dangerous / inject-context 三個範本
 > 詳見：[modules/hooks.md](modules/hooks.md)
 
 ### 4.13 CLI Bridge
