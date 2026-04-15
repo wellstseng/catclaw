@@ -22,7 +22,7 @@ function Write-Utf8($path, $text) { [System.IO.File]::WriteAllText($path, $text,
 # ═══════════════════════════════════════════════════════════════════
 # Step 1: 前置需求檢查
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 1/9: 前置需求檢查"
+Step "Step 1/10: 前置需求檢查"
 
 # Node.js
 $nodePath = Get-Command node -ErrorAction SilentlyContinue
@@ -56,7 +56,7 @@ if (-not $pm2Path) {
 # ═══════════════════════════════════════════════════════════════════
 # Step 2: 安裝依賴
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 2/9: 安裝 Node.js 依賴"
+Step "Step 2/10: 安裝 Node.js 依賴"
 
 Push-Location $ProjectDir
 try {
@@ -70,7 +70,7 @@ try {
 # ═══════════════════════════════════════════════════════════════════
 # Step 3: 建立 .env
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 3/9: 環境變數設定"
+Step "Step 3/10: 環境變數設定"
 
 $EnvFile = Join-Path $ProjectDir ".env"
 if (Test-Path $EnvFile) {
@@ -100,7 +100,7 @@ CATCLAW_WORKSPACE=$Workspace
 # ═══════════════════════════════════════════════════════════════════
 # Step 4: 初始化目錄結構
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 4/9: 初始化目錄結構"
+Step "Step 4/10: 初始化目錄結構"
 
 # ── Boot Agent ID ───────────────────────────────────────────────
 $BootAgentIdDefault = "default"
@@ -202,32 +202,117 @@ if (-not (Test-Path $CronJson)) {
     Ok "已建立 cron-jobs.json"
 }
 
-# 複製 models-config.json（若不存在）
-$ModelsConfigJson = Join-Path $ConfigDir "models-config.json"
-if (-not (Test-Path $ModelsConfigJson)) {
-    $modelsConfigSrc = Join-Path $ProjectDir "models-config.example.json"
-    if (Test-Path $modelsConfigSrc) {
-        Copy-Item $modelsConfigSrc $ModelsConfigJson
-    }
-    Ok "已建立 models-config.json"
-}
-
-# 複製 models.json 至 boot agent 目錄（若不存在）
-$AgentModelsJson = Join-Path $BootAgentDir "models.json"
-if (-not (Test-Path $AgentModelsJson)) {
-    $modelsSrc = Join-Path $ProjectDir "models.example.json"
-    if (Test-Path $modelsSrc) {
-        Copy-Item $modelsSrc $AgentModelsJson
-    }
-    Ok "已建立 agents/$BootAgentId/models.json"
-}
-
 Ok "目錄結構就緒"
 
 # ═══════════════════════════════════════════════════════════════════
-# Step 5: 互動設定 — Discord Bot Token
+# Step 5: Admin 帳號設定
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 5/9: Discord Bot Token 設定"
+Step "Step 5/10: Admin 帳號設定"
+
+# 檢查是否已有 allowedUserIds
+$ExistingAdmins = @()
+try {
+    $cfg0 = Read-Jsonc $CatclawJson
+    $ExistingAdmins = @($cfg0.admin.allowedUserIds)
+} catch {}
+
+if ($ExistingAdmins.Count -gt 0 -and $ExistingAdmins[0]) {
+    Info "已有 Admin：$($ExistingAdmins -join ', ')"
+    $changeAdmin = Read-Host "  要新增或更換嗎？(y/N)"
+    if ($changeAdmin -notmatch '^[Yy]') {
+        Info "保留現有 Admin 設定"
+        $AdminIds = $ExistingAdmins
+    } else {
+        Write-Host ""
+        Write-Host "  Discord User ID（你自己的 ID）" -ForegroundColor White
+        Write-Host "  取得方式：Discord 開啟開發者模式 -> 右鍵點自己 -> 複製 User ID"
+        Write-Host "  多個以逗號分隔"
+        Write-Host ""
+        $AdminInput = Read-Host "  輸入 Discord User ID"
+        if ($AdminInput) {
+            $AdminIds = @($AdminInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
+        } else {
+            $AdminIds = $ExistingAdmins
+        }
+    }
+} else {
+    Write-Host ""
+    Write-Host "  Discord User ID（你自己的 ID，將設為 platform-owner）" -ForegroundColor White
+    Write-Host "  取得方式：Discord 設定 -> 進階 -> 開啟「開發者模式」-> 右鍵點自己 -> 複製 User ID"
+    Write-Host "  多個以逗號分隔"
+    Write-Host ""
+    $AdminInput = Read-Host "  輸入 Discord User ID（留空稍後手動設定）"
+    if ($AdminInput) {
+        $AdminIds = @($AdminInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
+    } else {
+        $AdminIds = @()
+    }
+}
+
+if ($AdminIds.Count -gt 0) {
+    # 寫入 catclaw.json admin.allowedUserIds
+    $idsJson = ($AdminIds | ForEach-Object { "`"$_`"" }) -join ","
+    node -e "const fs=require('fs'),p=process.argv[1],ids=JSON.parse(process.argv[2]);const c=JSON.parse(fs.readFileSync(p,'utf-8'));c.admin.allowedUserIds=ids;fs.writeFileSync(p,JSON.stringify(c,null,2),'utf-8')" $CatclawJson "[$idsJson]"
+    Ok "Admin User IDs 已寫入 catclaw.json"
+
+    # 建立帳號目錄與 _registry.json
+    $AccountsDir = Join-Path $ConfigDir "accounts"
+    if (-not (Test-Path $AccountsDir)) { New-Item -ItemType Directory -Path $AccountsDir -Force | Out-Null }
+
+    $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    $registryAccounts = @{}
+    $identityMap = @{}
+    foreach ($uid in $AdminIds) {
+        $accId = "discord-owner-$uid"
+        $registryAccounts[$accId] = @{ role = "platform-owner"; displayName = "Admin($uid)" }
+        $identityMap["discord:$uid"] = $accId
+
+        # 建立 profile.json
+        $profileDir = Join-Path $AccountsDir $accId
+        if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
+        $profile = @{
+            accountId    = $accId
+            displayName  = "Admin($uid)"
+            role         = "platform-owner"
+            identities   = @(@{ platform = "discord"; platformId = $uid; linkedAt = $now })
+            projects     = @()
+            preferences  = @{}
+            createdAt    = $now
+            lastActiveAt = $now
+        }
+        Write-Utf8 (Join-Path $profileDir "profile.json") ($profile | ConvertTo-Json -Depth 5)
+    }
+
+    $registry = @{ accounts = $registryAccounts; identityMap = $identityMap }
+    # 若已有 _registry.json，merge 而非覆蓋
+    $RegistryPath = Join-Path $AccountsDir "_registry.json"
+    if (Test-Path $RegistryPath) {
+        try {
+            $existing = Get-Content $RegistryPath -Raw | ConvertFrom-Json
+            foreach ($key in $existing.accounts.PSObject.Properties.Name) {
+                if (-not $registryAccounts.ContainsKey($key)) {
+                    $registryAccounts[$key] = @{ role = $existing.accounts.$key.role; displayName = $existing.accounts.$key.displayName }
+                }
+            }
+            foreach ($key in $existing.identityMap.PSObject.Properties.Name) {
+                if (-not $identityMap.ContainsKey($key)) {
+                    $identityMap[$key] = $existing.identityMap.$key
+                }
+            }
+        } catch {}
+    }
+    $registry = @{ accounts = $registryAccounts; identityMap = $identityMap }
+    Write-Utf8 $RegistryPath ($registry | ConvertTo-Json -Depth 5)
+    Ok "帳號已建立：$($AdminIds -join ', ')"
+} else {
+    Warn "未設定 Admin — 首次 Discord 訊息可能被拒絕存取"
+    Warn "稍後請手動編輯 catclaw.json 的 admin.allowedUserIds"
+}
+
+# ═══════════════════════════════════════════════════════════════════
+# Step 6: Discord Bot Token
+# ═══════════════════════════════════════════════════════════════════
+Step "Step 6/10: Discord Bot Token 設定"
 
 # 讀取 JSONC：去掉 // 和 /* */ 註解後 parse
 function Read-Jsonc($path) {
@@ -295,7 +380,7 @@ if ($NeedToken) {
 # ═══════════════════════════════════════════════════════════════════
 # Step 6: 預設 Discord 頻道
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 6/9: Discord 預設頻道設定"
+Step "Step 7/10: Discord 預設頻道設定"
 
 # 檢查是否已有 guilds
 $ExistingGuilds = 0
@@ -374,7 +459,7 @@ if ($ExistingGuilds -gt 0) {
 # ═══════════════════════════════════════════════════════════════════
 # Step 7: LLM Provider API Key
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 7/9: LLM Provider 設定"
+Step "Step 8/10: LLM Provider 設定"
 
 $AuthProfile = Join-Path $Workspace "agents\$BootAgentId\auth-profile.json"
 if (Test-Path $AuthProfile) {
@@ -421,7 +506,7 @@ if (Test-Path $AuthProfile) {
 # ═══════════════════════════════════════════════════════════════════
 # Step 8: 功能開關（Dashboard / 排程）
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 8/9: 功能開關"
+Step "Step 9/10: 功能開關"
 
 # ── Dashboard ────────────────────────────────────────────────────
 Write-Host ""
@@ -451,7 +536,7 @@ node -e "const fs=require('fs'),p=process.argv[1];const c=JSON.parse(fs.readFile
 # ═══════════════════════════════════════════════════════════════════
 # Step 9: 編譯 & 啟動
 # ═══════════════════════════════════════════════════════════════════
-Step "Step 9/9: 編譯 & 啟動"
+Step "Step 10/10: 編譯 & 啟動"
 
 Push-Location $ProjectDir
 $env:CATCLAW_CONFIG_DIR = $ConfigDir

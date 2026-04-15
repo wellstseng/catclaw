@@ -20,7 +20,7 @@ WORKSPACE="${CATCLAW_WORKSPACE:-$CONFIG_DIR/workspace}"
 # ═══════════════════════════════════════════════════════════════════
 # Step 1: 前置需求檢查
 # ═══════════════════════════════════════════════════════════════════
-step "Step 1/9: 前置需求檢查"
+step "Step 1/10: 前置需求檢查"
 
 # Node.js
 if ! command -v node &>/dev/null; then
@@ -53,7 +53,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # Step 2: 安裝依賴
 # ═══════════════════════════════════════════════════════════════════
-step "Step 2/9: 安裝 Node.js 依賴"
+step "Step 2/10: 安裝 Node.js 依賴"
 
 cd "$PROJECT_DIR"
 pnpm install
@@ -62,7 +62,7 @@ ok "依賴安裝完成"
 # ═══════════════════════════════════════════════════════════════════
 # Step 3: 建立 .env
 # ═══════════════════════════════════════════════════════════════════
-step "Step 3/9: 環境變數設定"
+step "Step 3/10: 環境變數設定"
 
 ENV_FILE="$PROJECT_DIR/.env"
 if [ -f "$ENV_FILE" ]; then
@@ -87,7 +87,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # Step 4: 初始化目錄結構
 # ═══════════════════════════════════════════════════════════════════
-step "Step 4/9: 初始化目錄結構"
+step "Step 4/10: 初始化目錄結構"
 
 # ── Boot Agent ID ───────────────────────────────────────────────
 # 啟動時預設使用哪個 agent（可之後用 --agent <id> 覆寫）
@@ -164,26 +164,100 @@ if [ ! -f "$CRON_JSON" ]; then
   ok "已建立 cron-jobs.json"
 fi
 
-# 複製 models-config.json（若不存在）
-MODELS_CONFIG_JSON="$CONFIG_DIR/models-config.json"
-if [ ! -f "$MODELS_CONFIG_JSON" ]; then
-  cp "$PROJECT_DIR/models-config.example.json" "$MODELS_CONFIG_JSON" 2>/dev/null || true
-  ok "已建立 models-config.json"
-fi
-
-# 複製 models.json 至 boot agent 目錄（若不存在）
-AGENT_MODELS_JSON="$BOOT_AGENT_DIR/models.json"
-if [ ! -f "$AGENT_MODELS_JSON" ]; then
-  cp "$PROJECT_DIR/models.example.json" "$AGENT_MODELS_JSON" 2>/dev/null || true
-  ok "已建立 agents/$BOOT_AGENT_ID/models.json"
-fi
-
 ok "目錄結構就緒"
 
 # ═══════════════════════════════════════════════════════════════════
 # Step 5: 互動設定 — Discord Bot Token
 # ═══════════════════════════════════════════════════════════════════
-step "Step 5/9: Discord Bot Token 設定"
+step "Step 5/10: Admin 帳號設定"
+
+# 檢查是否已有 allowedUserIds
+EXISTING_ADMINS=$(node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));console.log((c.admin?.allowedUserIds||[]).join(','))" "$CATCLAW_JSON" 2>/dev/null || echo "")
+
+if [ -n "$EXISTING_ADMINS" ]; then
+  info "已有 Admin：$EXISTING_ADMINS"
+  echo -n "  要新增或更換嗎？(y/N) "
+  read -r CHANGE_ADMIN
+  if [[ ! "$CHANGE_ADMIN" =~ ^[Yy] ]]; then
+    info "保留現有 Admin 設定"
+    ADMIN_IDS="$EXISTING_ADMINS"
+  else
+    echo ""
+    echo -e "  ${BOLD}Discord User ID（你自己的 ID）${NC}"
+    echo "  取得方式：Discord 開啟開發者模式 → 右鍵點自己 → 複製 User ID"
+    echo "  多個以逗號分隔"
+    echo ""
+    echo -n "  輸入 Discord User ID: "
+    read -r ADMIN_INPUT
+    ADMIN_IDS="${ADMIN_INPUT:-$EXISTING_ADMINS}"
+  fi
+else
+  echo ""
+  echo -e "  ${BOLD}Discord User ID（你自己的 ID，將設為 platform-owner）${NC}"
+  echo "  取得方式：Discord 設定 → 進階 → 開啟「開發者模式」→ 右鍵點自己 → 複製 User ID"
+  echo "  多個以逗號分隔"
+  echo ""
+  echo -n "  輸入 Discord User ID（留空稍後手動設定）: "
+  read -r ADMIN_INPUT
+  ADMIN_IDS="$ADMIN_INPUT"
+fi
+
+if [ -n "$ADMIN_IDS" ]; then
+  # 寫入 catclaw.json + 建立帳號
+  node -e "
+    const fs = require('fs'), path = require('path');
+    const configPath = process.argv[1], configDir = process.argv[2], idsStr = process.argv[3];
+    const ids = idsStr.split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s));
+    if (ids.length === 0) process.exit(0);
+
+    // 寫入 catclaw.json
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    cfg.admin.allowedUserIds = ids;
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    // 建立帳號
+    const accountsDir = path.join(configDir, 'accounts');
+    fs.mkdirSync(accountsDir, { recursive: true });
+
+    const registryPath = path.join(accountsDir, '_registry.json');
+    let registry = { accounts: {}, identityMap: {} };
+    if (fs.existsSync(registryPath)) {
+      try { registry = JSON.parse(fs.readFileSync(registryPath, 'utf-8')); } catch {}
+    }
+
+    const now = new Date().toISOString();
+    for (const uid of ids) {
+      const accId = 'discord-owner-' + uid;
+      registry.accounts[accId] = { role: 'platform-owner', displayName: 'Admin(' + uid + ')' };
+      registry.identityMap['discord:' + uid] = accId;
+
+      const profileDir = path.join(accountsDir, accId);
+      fs.mkdirSync(profileDir, { recursive: true });
+      const profile = {
+        accountId: accId,
+        displayName: 'Admin(' + uid + ')',
+        role: 'platform-owner',
+        identities: [{ platform: 'discord', platformId: uid, linkedAt: now }],
+        projects: [],
+        preferences: {},
+        createdAt: now,
+        lastActiveAt: now
+      };
+      fs.writeFileSync(path.join(profileDir, 'profile.json'), JSON.stringify(profile, null, 2), 'utf-8');
+    }
+
+    fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2), 'utf-8');
+  " "$CATCLAW_JSON" "$CONFIG_DIR" "$ADMIN_IDS"
+  ok "Admin 帳號已建立：$ADMIN_IDS"
+else
+  warn "未設定 Admin — 首次 Discord 訊息可能被拒絕存取"
+  warn "稍後請手動編輯 catclaw.json 的 admin.allowedUserIds"
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+# Step 6: Discord Bot Token
+# ═══════════════════════════════════════════════════════════════════
+step "Step 6/10: Discord Bot Token 設定"
 
 
 # 檢查現有 token
@@ -231,7 +305,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # Step 6: 預設 Discord 頻道
 # ═══════════════════════════════════════════════════════════════════
-step "Step 6/9: Discord 預設頻道設定"
+step "Step 7/10: Discord 預設頻道設定"
 
 # 檢查是否已有 guilds 設定
 EXISTING_GUILDS=$(node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));console.log(Object.keys(c.discord?.guilds||{}).length)" "$CATCLAW_JSON" 2>/dev/null || echo "0")
@@ -282,7 +356,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # Step 7: LLM Provider API Key
 # ═══════════════════════════════════════════════════════════════════
-step "Step 7/9: LLM Provider 設定"
+step "Step 8/10: LLM Provider 設定"
 
 AUTH_PROFILE="$WORKSPACE/agents/$BOOT_AGENT_ID/auth-profile.json"
 if [ -f "$AUTH_PROFILE" ]; then
@@ -329,7 +403,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════
 # Step 8: 功能開關（Dashboard / 排程）
 # ═══════════════════════════════════════════════════════════════════
-step "Step 8/9: 功能開關"
+step "Step 9/10: 功能開關"
 
 # ── Dashboard ────────────────────────────────────────────────────
 echo ""
@@ -367,7 +441,7 @@ node -e "
 # ═══════════════════════════════════════════════════════════════════
 # Step 9: 編譯 & 啟動
 # ═══════════════════════════════════════════════════════════════════
-step "Step 9/9: 編譯 & 啟動"
+step "Step 10/10: 編譯 & 啟動"
 
 cd "$PROJECT_DIR"
 export CATCLAW_CONFIG_DIR="$CONFIG_DIR"
