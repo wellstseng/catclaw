@@ -376,11 +376,13 @@ async function handleMessage(
   // Bot 訊息過濾（自身已在上面擋掉，這裡處理其他 bot）
   if (message.author.bot) {
     if (!access.allowBot) {
+      _recordInbound();
       log.debug(`[discord] 忽略：bot 訊息（allowBot=false）`);
       return;
     }
     // Bot-to-Bot circuit breaker
     if (!checkBotMessage(message.channelId, config.botCircuitBreaker)) {
+      _recordInbound();
       log.info(`[discord] bot-circuit-breaker 攔截：channel=${message.channelId} author=${message.author.tag}`);
       return;
     }
