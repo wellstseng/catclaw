@@ -349,7 +349,8 @@ async function handleMessage(
   }
 
   // ── Inbound history helper（提早定義，供所有早退路徑使用） ──────────────
-  const { getCliBridgeBotUserIds, getCliBridge: getCB } = await import("./cli-bridge/index.js");
+  const { getCliBridgeBotUserIds, getCliBridge: getCB, getAllBridges } = await import("./cli-bridge/index.js");
+  const { getBootAgentId } = await import("./core/agent-loader.js");
 
   const _recordInbound = () => {
     const inboundStore = getInboundHistoryStore();
@@ -366,9 +367,9 @@ async function handleMessage(
         content: message.content.trim(),
         wasProcessed: false,
       };
-      const scopes = ["main"];
-      const cliBridge = getCB(message.channelId);
-      if (cliBridge) scopes.push(cliBridge.label);
+      // 寫入所有已註冊 agent/bridge 的 scope（各自消費、互不干擾）
+      const scopes: string[] = [`agent:${getBootAgentId()}`];
+      for (const b of getAllBridges()) scopes.push(`bridge:${b.label}`);
       inboundStore.appendToScopes(message.channelId, entry, scopes);
     }
   };

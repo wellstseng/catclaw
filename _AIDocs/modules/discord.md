@@ -223,13 +223,18 @@ const { inboundContext } = pipeline;
 
 只要 `enabled=true` 就會記錄，避免「想開 inject 卻沒歷史可吃」。
 
-**觸發 `_recordInbound()` 的早退路徑**：
-1. allowFrom 白名單擋掉
-2. `@here` / `@everyone` 群組廣播被 `blockGroupMentions` 擋掉
-3. 訊息 mention 別 bot，主 bot 未被 mention
-4. 沒 mention 任何 bot，且 `requireMention=true`
+**Scope 設計**（per-agent 隔離）：
+- agent-loop 路徑 → scope = `agent:{bootAgentId}`
+- CLI Bridge 路徑 → scope = `bridge:{label}`
+- 寫入時同時寫入所有已註冊 agent/bridge 的 scope（各自消費、互不干擾）
 
-> 注意：被 `allowBot=false` 擋掉的其他 bot 訊息**不**記錄（避免噪音放大）。
+**觸發 `_recordInbound()` 的早退路徑**：
+1. `allowBot=false` 擋掉的 bot 訊息
+2. bot-circuit-breaker 攔截
+3. allowFrom 白名單擋掉
+4. `@here` / `@everyone` 群組廣播被 `blockGroupMentions` 擋掉
+5. 訊息 mention 別 bot，主 bot 未被 mention
+6. 沒 mention 任何 bot，且 `requireMention=true`
 
 ```typescript
 const ctx = await inboundStore.consumeForInjection(channelId, {

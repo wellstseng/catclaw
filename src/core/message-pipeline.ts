@@ -312,10 +312,12 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
   let inboundContext: string | undefined;
   if (enableInboundHistory) {
     const { getInboundHistoryStore } = await import("../discord/inbound-history.js");
+    const { getBootAgentId } = await import("./agent-loader.js");
     const inboundStore = getInboundHistoryStore();
     const inboundCfg = config.inboundHistory;
     if (inboundStore && inboundCfg?.enabled !== false) {
       try {
+        const agentScope = `agent:${getBootAgentId()}`;
         const ctx = await inboundStore.consumeForInjection(
           channelId,
           {
@@ -326,6 +328,8 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
             decayIITokenCap: inboundCfg?.decayIITokenCap ?? 300,
             inject: { enabled: inboundCfg?.inject?.enabled ?? false },
           },
+          undefined,
+          agentScope,
         );
         if (ctx) {
           inboundContext = ctx.text;

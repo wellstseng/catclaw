@@ -265,32 +265,18 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
       let fullText = msg.content + attachmentText;
       const bridgeConfig = bridge.getBridgeConfig();
 
-      // 跨頻道 mention → 抓來源頻道最近訊息作為上下文
+      // 消費 inbound history（home channel + 跨頻道統一走 inbound 機制）
+      // 跨頻道：消費來源頻道的 inbound history
       if (!isHomeChannel) {
-        try {
-          const ch = msg.channel;
-          if (ch.isTextBased() && "messages" in ch) {
-            const recent = await ch.messages.fetch({ limit: 20, before: msg.id });
-            const fmtTime = (d: Date) => d.toLocaleTimeString("zh-TW", { timeZone: "Asia/Taipei", hour12: false, hour: "2-digit", minute: "2-digit" });
-            const lines = [...recent.values()]
-              .reverse()
-              .map(m => `${fmtTime(m.createdAt)} ${m.author.displayName}: ${m.content.slice(0, 300)}`)
-              .filter(l => l.length > 0);
-            if (lines.length > 0) {
-              const channelName = "name" in ch ? (ch as { name: string }).name : msg.channelId;
-              fullText = `[#${channelName} 近況]\n${lines.join("\n")}\n---\n${fullText}`;
-              log.info(`[cli-bridge] ${bridge.label} 跨頻道 context inject: ${lines.length} msgs from #${channelName}`);
-            }
-          }
-        } catch (err) {
-          log.warn(`[cli-bridge] 跨頻道 context fetch 失敗：${err instanceof Error ? err.message : String(err)}`);
+        const crossCtx = await consumeBridgeInboundHistory(bridge, msg.channelId);
+        if (crossCtx) {
+          fullText = crossCtx + "\n---\n" + fullText;
         }
       }
-
-      // 消費 inbound history，拼在訊息前（home channel scope）
+      // home channel inbound（未處理的訊息）
       const inboundCtx = await consumeBridgeInboundHistory(bridge);
       if (inboundCtx) {
-        fullText = inboundCtx + "\n\n---\n" + fullText;
+        fullText = inboundCtx + "\n---\n" + fullText;
       }
 
       // 移除 mention prefix
@@ -331,25 +317,27 @@ function _appendInboundHistory(bridge: CliBridge, msg: Message): void {
         authorName: msg.author.displayName,
         content: msg.content.trim(),
         wasProcessed: false,
-      }, bridge.label);
+      }, `bridge:${bridge.label}`);
     } catch { /* 靜默 */ }
   })();
 }
 
-/** 消費 inbound history（bridge scope），回傳 context string 或 null */
-export async function consumeBridgeInboundHistory(bridge: CliBridge): Promise<string | null> {
+/** 消費 inbound history（bridge scope），回傳 context string 或 null。可指定 channelId（跨頻道用） */
+export async function consumeBridgeInboundHistory(bridge: CliBridge, channelId?: string): Promise<string | null> {
   try {
     const { getInboundHistoryStore } = await import("../discord/inbound-history.js");
     const store = getInboundHistoryStore();
     if (!store) return null;
+    const targetChannel = channelId ?? bridge.channelId;
+    const scope = `bridge:${bridge.label}`;
     const result = await store.consumeForInjection(
-      bridge.channelId,
+      targetChannel,
       { enabled: true, fullWindowHours: 24, decayWindowHours: 168, bucketBTokenCap: 600, decayIITokenCap: 300, inject: { enabled: true } },
       undefined,
-      bridge.label,
+      scope,
     );
     if (!result) return null;
-    log.info(`[cli-bridge] inbound-history inject: ${bridge.label} entries=${result.entriesCount}`);
+    log.info(`[cli-bridge] inbound-history inject: ${bridge.label} channel=${targetChannel} entries=${result.entriesCount}`);
     return result.text;
   } catch { return null; }
 }
