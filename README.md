@@ -259,6 +259,7 @@ Web 監控面板，預設位於 `http://localhost:8088`。
 - 訊息追蹤視覺化（7 階段管線）
 - Token 用量統計
 - 記憶管理
+- 線上 Config 編輯（含 FileWatcher 目錄監聽設定）
 - CLI Bridge 狀態
 - Web Chat（跨平台 session 共用）
 

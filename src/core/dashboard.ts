@@ -1566,6 +1566,18 @@ const CFG_SCHEMA = [
     {k:'args',t:'list',l:'Args',d:'啟動指令的參數列表'},
     {k:'tier',t:'select',l:'Tier',opts:['public','standard','elevated','admin','owner'],d:'工具權限層級：public=所有人, elevated=需核准, owner=僅管理員'},
   ]},
+  { key:'fileWatcher', label:'File Watcher', fields:[
+    {k:'fileWatcher.enabled',t:'bool',l:'啟用',d:'外部檔案監聽總開關'},
+    {k:'fileWatcher.maxEventsPerWindow',t:'num',l:'Max Events Per Window',d:'L4 全域速率限制：時間窗口內最大事件數（預設 50）'},
+    {k:'fileWatcher.eventWindowMs',t:'num',l:'Event Window (ms)',d:'L4 全域速率限制的時間窗口（預設 60000 = 1 分鐘）'},
+  ], arrayDynamic:true, arrayDynamicPath:'fileWatcher.watches', arrayKeyField:'label', entryFields:[
+    {k:'path',t:'text',l:'Path',d:'監聽路徑（支援 ~/），如 ~/WellsDB'},
+    {k:'ignoreDirs',t:'list',l:'Ignore Dirs',d:'忽略的目錄名稱（如 .obsidian, .trash, .git）'},
+    {k:'ignorePatterns',t:'list',l:'Ignore Patterns',d:'忽略的檔案 glob（如 *.sync-conflict*）'},
+    {k:'debounceMs',t:'num',l:'Debounce (ms)',d:'同一檔案連續變更的合併延遲（預設 1500）'},
+    {k:'cooldownMs',t:'num',l:'Cooldown (ms)',d:'L3 同一路徑的冷卻時間（預設 10000）'},
+    {k:'recursive',t:'bool',l:'Recursive',d:'是否遞迴監聽子目錄（預設 true）'},
+  ]},
 ];
 
 // ── 工具函式 ──
@@ -1695,6 +1707,45 @@ function removeDynEntry(secId, key, btn) {
   if (obj) delete obj[key];
 }
 
+// ── Array Dynamic entries (fileWatcher.watches 等 array-of-objects) ──
+function renderArrayDynamic(section, data) {
+  const path = section.arrayDynamicPath;
+  const keyField = section.arrayKeyField || 'label';
+  const arr = getPath(data, path) || [];
+  const secId = path.replace(/\\./g, '_');
+  let html = '';
+  for (let i = 0; i < arr.length; i++) {
+    const entry = arr[i] || {};
+    const label = entry[keyField] || '(unnamed)';
+    const entryPrefix = path + '[' + i + ']';
+    const fieldsHtml = (section.entryFields||[]).map(f => renderField(f, entry[f.k], entryPrefix, entryPrefix + '.' + f.k)).join('');
+    html += \`<div class="cfg-dynamic-entry cfg-arr-entry" data-arr-sec="\${secId}" data-arr-idx="\${i}"><div class="entry-header"><span style="color:#a78bfa;font-size:0.75rem">📂</span><span style="color:#a78bfa;font-size:0.82rem;flex:1;font-family:monospace">\${esc(label)}</span><button class="btn btn-red btn-sm" onclick="removeArrayDynEntry('\${secId}',\${i})">刪除</button></div>\${fieldsHtml}</div>\`;
+  }
+  html += \`<div style="margin-top:8px"><input id="new_arr_\${secId}" placeholder="新 label" style="background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;padding:4px 8px;font-size:0.78rem;font-family:monospace;width:200px"><button class="cfg-add" style="margin-left:8px" onclick="addArrayDynEntry('\${secId}','\${path}','\${keyField}')">+ 新增</button></div>\`;
+  return html;
+}
+
+function addArrayDynEntry(secId, path, keyField) {
+  const input = document.getElementById('new_arr_' + secId);
+  const label = input.value.trim();
+  if (!label) return;
+  const arr = getPath(_cfgData, path) || [];
+  arr.push({ [keyField]: label });
+  setPath(_cfgData, path, arr);
+  input.value = '';
+  document.getElementById('cfg-gui').innerHTML = renderConfigGUI(_cfgData);
+}
+
+function removeArrayDynEntry(secId, idx) {
+  const path = secId.replace(/_/g, '.');
+  const arr = getPath(_cfgData, path);
+  if (!arr || !Array.isArray(arr)) return;
+  const label = arr[idx]?.label || idx;
+  if (!confirm('確定刪除 ' + label + '？')) return;
+  arr.splice(idx, 1);
+  document.getElementById('cfg-gui').innerHTML = renderConfigGUI(_cfgData);
+}
+
 // ── 完整 GUI 渲染 ──
 function renderConfigGUI(data) {
   let html = '';
@@ -1713,6 +1764,8 @@ function renderConfigGUI(data) {
     if (sec.sub) content += sec.sub.map(s => renderSub(s, data)).join('');
     // Dynamic entries
     if (sec.dynamic) content += renderDynamic(sec, data);
+    // Array dynamic entries (array-of-objects keyed by label)
+    if (sec.arrayDynamic) content += renderArrayDynamic(sec, data);
 
     html += \`<details class="cfg-section" \${sec.key==='_basic'?'open':''}><summary>\${sec.label}</summary><div class="cfg-fields">\${content}</div></details>\`;
   }
@@ -1747,6 +1800,49 @@ function collectConfigJSON() {
     const arr = Array.from(items).map(i => i.value).filter(v => v !== '');
     setPath(result, basePath, arr);
   });
+
+  // 收集 array dynamic 欄位（fileWatcher.watches 等）
+  for (const sec of CFG_SCHEMA) {
+    if (!sec.arrayDynamic) continue;
+    const arrPath = sec.arrayDynamicPath;
+    const keyField = sec.arrayKeyField || 'label';
+    const secId = arrPath.replace(/\\./g, '_');
+    const entries = document.querySelectorAll('.cfg-arr-entry[data-arr-sec="' + secId + '"]');
+    const srcArr = getPath(_cfgData, arrPath) || [];
+    const newArr = [];
+    entries.forEach(entryEl => {
+      const idx = Number(entryEl.dataset.arrIdx);
+      const base = srcArr[idx] || {};
+      const obj = { [keyField]: base[keyField] };
+      // 收集 entryFields 裡的值
+      entryEl.querySelectorAll('[data-path]').forEach(el => {
+        const rawPath = el.dataset.path;
+        // data-path 格式: "fileWatcher.watches[0].fieldName"
+        const m = rawPath.match(/\\.([^.\\[]+)\$/);
+        if (!m) return;
+        const fieldKey = m[1];
+        // 跳過 list items（由下方 list 收集處理）
+        if (/\\[\\d+\\]\$/.test(rawPath)) return;
+        let val;
+        if (el.type === 'checkbox') val = el.checked;
+        else if (el.type === 'number') val = el.value === '' ? undefined : Number(el.value);
+        else val = el.value;
+        if (val !== undefined && val !== '') obj[fieldKey] = val;
+      });
+      // 收集 entry 內的 list 欄位（ignoreDirs, ignorePatterns）
+      entryEl.querySelectorAll('.cfg-list').forEach(listEl => {
+        const items = listEl.querySelectorAll('.cfg-list-item input');
+        if (!items.length) return;
+        const rp = items[0].dataset.path.replace(/\\[\\d+\\]\$/, '');
+        const fm = rp.match(/\\.([^.\\[]+)\$/);
+        if (!fm) return;
+        const fk = fm[1];
+        obj[fk] = Array.from(items).map(i => i.value).filter(v => v !== '');
+      });
+      newArr.push(obj);
+    });
+    setPath(result, arrPath, newArr);
+  }
 
   // 收集 map 欄位
   document.querySelectorAll('#cfg-gui .cfg-map').forEach(mapEl => {

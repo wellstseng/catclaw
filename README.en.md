@@ -248,6 +248,7 @@ Features:
 - Message trace visualization (7-stage pipeline)
 - Token usage tracking
 - Memory management
+- Online config editor (incl. FileWatcher directory settings)
 - CLI Bridge status
 - Web Chat (cross-platform session sharing)
 

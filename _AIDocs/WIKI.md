@@ -331,7 +331,7 @@ Strategy Pattern 架構，4 策略依序執行：
 
 內建 Web 監控面板（單檔 HTML/CSS/JS），預設 port 8088。
 
-**分頁**：概覽 / Sessions / Traces / Subagents / Tasks / Cron / Config / Logs
+**分頁**：概覽 / Sessions / Traces / Subagents / Tasks / Cron / Config（含 FileWatcher 目錄監聽設定） / Logs
 
 **Web Chat**：跨平台 session 共用，可從瀏覽器直接與 bot 對話。
 
