@@ -1,7 +1,7 @@
 # modules/context-engine — Context 壓縮策略
 
 > 檔案：`src/core/context-engine.ts`
-> 更新日期：2026-04-12
+> 更新日期：2026-04-17
 
 ## 職責
 
@@ -108,6 +108,21 @@ interface ContextBreakdown {
 | `originalTokens` | 壓縮前的原始 token 數 |
 | `compressedBy` | 執行壓縮的策略名稱 |
 
+## Stub 格式（Anti-Hallucination）
+
+L3 stub 和各類標記的格式設計為「誠實指標」而非「假錨點」，避免 LLM 從標記推論內容：
+
+| 標記 | 說明 |
+|------|------|
+| `[已壓縮 user turn N｜內容不可恢復，勿引用]` | Decay L3 stub（新格式） |
+| `[工具索引 turn N] 呼叫：...` + ⚠️ | Tool log 索引（新格式） |
+| `[📄 外部化] ... ⚠️` | 外部化摘要指標（含勿腦補警語） |
+| `[對話摘要｜多輪壓縮，非原文，可能遺漏細節]` | Compaction 摘要（含禁止引用警語） |
+| `[user stub]` / `[assistant stub]` | 舊格式（自然衰減中） |
+| `[工具記錄] ...` | 舊格式（自然衰減中） |
+
+`prompt-assembler.ts` 的 `context-integrity` module 注入鐵則：禁止憑標記推論原文、必須 read_file 實際路徑。
+
 ## DecayStrategy（漸進式衰減）
 
 每次 build 都執行。依據 message 的 turn age 計算 targetLevel，漸進壓縮。
@@ -173,7 +188,7 @@ interface ContextBreakdown {
 ```
 [📄 外部化] assistant turn 5（原始 1234 tokens 已存至檔案）
 → externalized/discord_ch_123/msg_t5_i12.json
-如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。
+⚠️ 如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。若無法讀取則告知使用者，勿腦補。
 ```
 
 **外部檔案格式**：
@@ -207,9 +222,10 @@ interface ContextBreakdown {
 
 有 ceProvider → LLM 摘要壓縮：
 1. 保留最近 `preserveRecentTurns × 2` 條 messages
-2. 舊的 messages → 扁平化為文字 → LLM 摘要
-3. 摘要結果作為 `[對話摘要]` user message 置入
+2. 舊的 messages 過濾掉 stub/索引/外部化標記（避免雙重失真），再扁平化為文字 → LLM 摘要
+3. 摘要結果作為 `[對話摘要｜多輪壓縮，非原文，可能遺漏細節]` user message 置入（附 ⚠️ 警語禁止直接引用）
 4. System messages 不壓縮
+5. 過濾後無語意內容 → 跳過 compaction
 
 無 ceProvider → fallback sliding-window（保留最近 N 輪 + repairToolPairing）
 
@@ -219,7 +235,7 @@ interface ContextBreakdown {
 |------|------|------|
 | `enabled` | true | 開關 |
 | `triggerTokens` | 20000 | 觸發閾值 |
-| `preserveRecentTurns` | 5 | 保留最近 N 輪不壓縮 |
+| `preserveRecentTurns` | 8 | 保留最近 N 輪不壓縮 |
 
 ## OverflowHardStopStrategy
 

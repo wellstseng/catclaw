@@ -14,7 +14,7 @@ Discord-based AI Agent platform with full development capabilities — multi-tur
 | **Hook System** | 34 events (10 categories: Lifecycle / Turn / Memory / Subagent / Context / CLI Bridge / File+Command / File Watcher / Error / Platform) + folder-convention mount + fs.watch hot-reload + TS/JS/sh/ps1 runtimes + defineHook SDK |
 | **Multi-Provider** | claude-api / ollama / openai-compat / codex-oauth / cli-* + circuit-breaker failover |
 | **Memory** | Four-layer engine (Global / Project / Account / Agent) — vector recall + keyword search + auto-extraction + consolidation |
-| **Context Engine** | Compaction / budget-guard / sliding-window / overflow-hard-stop strategies |
+| **Context Engine** | Decay / compaction / overflow-hard-stop strategies + anti-hallucination honest stubs + turn cap warning |
 | **Accounts** | Registration, identity linking, 5-tier roles (public/standard/elevated/admin/owner), per-channel permission gate |
 | **Subagent** | Sub-task dispatch + Discord thread bridge + tracking |
 | **Scheduling** | cron / every / at — message, subagent, exec, claude actions + `/cron` skill + agent isolation |

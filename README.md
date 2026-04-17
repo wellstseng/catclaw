@@ -14,7 +14,7 @@
 | **Hook 系統** | 34 events（10 類，Lifecycle/Turn/Memory/Subagent/Context/CLIBridge/FileCmd/FileWatcher/Error/Platform）+ folder-convention 掛載 + fs.watch 熱重載 + TS/JS/sh/ps1 多 runtime + defineHook SDK |
 | **Multi-Provider** | claude-api / ollama / openai-compat / codex-oauth / cli-* + circuit-breaker failover |
 | **記憶引擎** | 四層記憶（Global / Project / Account / Agent）— 向量 recall + 關鍵字搜尋 + 自動萃取 + 晉升/衰減 |
-| **Context Engine** | compaction / budget-guard / sliding-window / overflow-hard-stop 四策略 |
+| **Context Engine** | decay / compaction / overflow-hard-stop 三策略 + anti-hallucination stub 誠實化 + turn cap warning |
 | **帳號權限** | 註冊、identity linking、5 級角色（public/standard/elevated/admin/owner）、per-channel 權限閘門 |
 | **Subagent** | 子任務分派 + Discord thread bridge + 追蹤 |
 | **排程** | cron / every / at — message、subagent、exec、claude 動作 + `/cron` skill 動態管理 + agent 隔離 |

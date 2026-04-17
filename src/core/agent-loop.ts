@@ -1654,6 +1654,7 @@ export async function* agentLoop(
       const summary = ToolLogStore.buildIndexSummary(
         tracker.toolCalls.map(tc => ({ id: "", name: tc.name, params: tc.params, result: tc.result, error: tc.error, durationMs: tc.durationMs })),
         toolLogPath,
+        session.turnCount,
       );
       extraMessages.push({ role: "user" as const, content: summary });
     }
@@ -1677,6 +1678,12 @@ export async function* agentLoop(
   }
 
   eventBus.emit("turn:after", { accountId, channelId, sessionKey, prompt, projectId }, fullResponse);
+
+  // Turn Cap Warning（P4：防止 session 無上限累積）
+  const turnCapWarn = config.contextEngineering?.turnCapWarning ?? 100;
+  if (turnCapWarn > 0 && session.turnCount >= turnCapWarn && session.turnCount % 20 === 0) {
+    log.warn(`[agent-loop] session ${sessionKey} turnCount=${session.turnCount} 已超過建議上限 ${turnCapWarn}，建議執行 /clear-session`);
+  }
 
   // Session Snapshot：正常完成 → 刪除快照（CE 壓縮時保留 48h）
   if (snapshotStore) {

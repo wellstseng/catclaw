@@ -1,7 +1,7 @@
 # modules/agent-loop — 核心對話迴圈
 
 > 檔案：`src/core/agent-loop.ts` (~1612 行)
-> 更新日期：2026-04-09
+> 更新日期：2026-04-17
 
 ## 職責
 
@@ -189,3 +189,7 @@ Per-turn 工具結果 token 累計追蹤（`turnToolResultTokens`），接近 bu
 - **AgentResponseReady**：最終 response yield 前（可重寫 text）
 - **AgentError**：fatal 錯誤（observer）
 - **SafetyViolation**：SafetyGuard 阻擋工具時（observer）
+
+## Turn Cap Warning
+
+`turnCount >= turnCapWarning`（預設 100）且 `turnCount % 20 === 0` 時發 `log.warn`，提醒建議執行 `/clear-session`。設定 `contextEngineering.turnCapWarning = 0` 可關閉。

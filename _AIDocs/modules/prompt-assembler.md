@@ -1,7 +1,7 @@
 # modules/prompt-assembler — 模組化 System Prompt 組裝
 
 > 檔案：`src/core/prompt-assembler.ts`
-> 更新日期：2026-04-14
+> 更新日期：2026-04-17
 
 ## 職責
 
@@ -13,6 +13,7 @@
 |--------|----------|------|
 | `date-time` | 5 | 當前時間（Asia/Taipei） |
 | `identity` | 10 | CatClaw 身份描述 + 群組場景說話者 |
+| `context-integrity` | 15 | Anti-Hallucination 鐵則（禁止憑 stub/標記推論原文 + retry escalation 防線） |
 | `catclaw-md` | 15 | CATCLAW.md 層級繼承（root → project） |
 | `tools-usage` | 20 | 工具使用規則 |
 | `coding-rules` | 30 | 行為約束（precision 模式載入外部 .md） |
@@ -35,9 +36,9 @@ detectIntent(userMessage: string): "coding" | "research" | "conversation"
 | Intent | 觸發 | 啟用模組 |
 |--------|------|---------|
 | `coding` | codingScore ≥ 2 | 全部 |
-| `research` | researchScore ≥ 2 且 codingScore = 0 | 省略 coding-rules, git-rules |
+| `research` | researchScore ≥ 2 且 codingScore = 0 | 省略 coding-rules, git-rules（含 context-integrity） |
 | `coding`（fallback） | codingScore ≥ 1 | 全部 |
-| `conversation` | 其餘 | date-time, identity, catclaw-md, output-format, discord-reply, memory-rules |
+| `conversation` | 其餘 | date-time, identity, context-integrity, catclaw-md, output-format, discord-reply, memory-rules |
 
 ## CATCLAW.md 兩層載入
 

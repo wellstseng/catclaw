@@ -79,10 +79,10 @@ export function getModulesForIntent(intent: PromptIntent): string[] | undefined 
       return undefined;
     case "research":
       // 省略 coding-rules、git-rules
-      return ["date-time", "identity", "catclaw-md", "tools-usage", "output-format", "discord-reply", "memory-rules"];
+      return ["date-time", "identity", "context-integrity", "catclaw-md", "tools-usage", "output-format", "discord-reply", "memory-rules"];
     case "conversation":
       // 最小 prompt
-      return ["date-time", "identity", "catclaw-md", "output-format", "discord-reply", "memory-rules"];
+      return ["date-time", "identity", "context-integrity", "catclaw-md", "output-format", "discord-reply", "memory-rules"];
   }
 }
 
@@ -113,6 +113,31 @@ const identityModule: PromptModule = {
     }
     return parts.join("\n");
   },
+};
+
+const contextIntegrityModule: PromptModule = {
+  name: "context-integrity",
+  priority: 15,
+  build: () => [
+    "## 記憶完整性規則（Anti-Hallucination）",
+    "",
+    "CatClaw 為了省 token 會把歷史訊息壓縮為標記，**這些標記不是內容**，只是索引：",
+    "- `[工具索引 turn N]` / `[工具記錄]`（舊格式） — tool 呼叫紀錄；**連 args 都沒有**，完整內容在 `tool-logs/` 路徑",
+    "- `[對話摘要]` / `[對話摘要｜多輪壓縮...]` — 多輪對話的 LLM 摘要，**非原文**，可能遺漏細節",
+    "- `[📄 外部化]` — 原文已存外部檔案（stub 含完整路徑）",
+    "- `[已壓縮 ... 內容不可恢復]` / `[user stub]` / `[assistant stub]`（舊格式） — 原文已徹底刪除，無法還原",
+    "",
+    "### 鐵則（違反即違反 CatClaw 精準記憶精神）",
+    "1. **不得**憑標記（tool 名稱、摘要片段）推論原文內容、args 或結果",
+    "2. 使用者詢問標記指向的內容 → **必須**先 `read_file` 實際路徑（tool-logs/、externalized/）；檔案不可讀 → 誠實回「此段已不可恢復，請告訴我具體是什麼」",
+    "3. 引用任何標記內容必須來自實際讀檔後的原文，不得憑印象或推測",
+    "",
+    "### Retry Escalation 防線（避免「說謊」失敗模式）",
+    "若使用者指出你回答有誤：",
+    "- **第一反應**：檢查被質疑的內容是否為 stub/摘要/標記（非原文）",
+    "- **是** → 立即承認「我沒有原文，之前是從標記推測」，請使用者提供正確版本或 read_file 路徑",
+    "- **不得** 改編敘事去 fit 使用者的糾正——那會讓錯誤升級成「說謊」，嚴重違反 CatClaw 設計目標",
+  ].join("\n"),
 };
 
 const toolsUsageModule: PromptModule = {
@@ -364,6 +389,7 @@ const failureRecallModule: PromptModule = {
 const builtinModules: PromptModule[] = [
   dateTimeModule,
   identityModule,
+  contextIntegrityModule,
   claudeMdModule,
   toolsUsageModule,
   codingRulesModule,

@@ -70,7 +70,7 @@ export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronActio
 | `workflow` | `WorkflowConfig` | 工作流設定（guardian / fixEscalation / wisdomEngine / aidocs） |
 | `accounts` | `AccountsConfig` | 帳號管理（registrationMode / defaultRole / pairing） |
 | `rateLimit` | `RateLimitConfig` | 速率限制（per-role requestsPerMinute） |
-| `contextEngineering` | `ContextEngineeringConfig` | CE 策略（decay / compaction / overflowHardStop）+ toolBudget + memoryBudget |
+| `contextEngineering` | `ContextEngineeringConfig` | CE 策略（decay / compaction / overflowHardStop）+ toolBudget + memoryBudget + turnCapWarning |
 | `inboundHistory` | `InboundHistoryConfig` | Inbound History 注入（fullWindowHours / decayWindowHours / bucketBTokenCap） |
 | `promptAssembler` | `PromptAssemblerConfig` | Prompt Assembler 設定（disabledModules） |
 | `modes` | `ModeConfig` | 模式切換（normal / precision 預設，含 thinking / resultTokenCap / contextReserve） |

@@ -225,13 +225,14 @@ function truncateBlocks(blocks: ContentBlock[], maxTokens: number): ContentBlock
 
 function stubMessage(m: Message): Message {
   const role = m.role;
+  const turnLabel = m.turnIndex != null ? ` turn ${m.turnIndex}` : "";
   if (typeof m.content === "string") {
-    return { ...m, content: `[${role} stub]`, compressionLevel: 3, originalTokens: m.originalTokens ?? m.tokens };
+    return { ...m, content: `[已壓縮 ${role}${turnLabel}｜內容不可恢復，勿引用]`, compressionLevel: 3, originalTokens: m.originalTokens ?? m.tokens };
   }
   const stubBlocks: ContentBlock[] = m.content.map(b => {
     if (b.type === "tool_use") return { ...b, input: {} };
     if (b.type === "tool_result") return { ...b, content: "[stub]" };
-    if (b.type === "text") return { ...b, text: `[${role} stub]` };
+    if (b.type === "text") return { ...b, text: `[已壓縮 ${role}${turnLabel}｜內容不可恢復，勿引用]` };
     return b;
   });
   return { ...m, content: stubBlocks, compressionLevel: 3, originalTokens: m.originalTokens ?? m.tokens };
@@ -287,7 +288,7 @@ function externalizeMessage(
 /** 建立外部化摘要指標訊息（不含原文截斷，只標記外部化路徑） */
 function createExternalizedStub(m: Message, relativePath: string, targetLevel: number): Message {
   const origTokens = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
-  const stub = `[📄 外部化] ${m.role} turn ${m.turnIndex ?? "?"}（原始 ${origTokens} tokens 已存至檔案）\n→ ${relativePath}\n如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。`;
+  const stub = `[📄 外部化] ${m.role} turn ${m.turnIndex ?? "?"}（原始 ${origTokens} tokens 已存至檔案）\n→ ${relativePath}\n⚠️ 如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。若無法讀取則告知使用者，勿腦補。`;
   return {
     ...m,
     content: stub,
@@ -524,7 +525,7 @@ export class CompactionStrategy implements ContextStrategy {
     this.cfg = {
       enabled: cfg.enabled ?? true,
       triggerTokens: cfg.triggerTokens ?? 20_000,
-      preserveRecentTurns: cfg.preserveRecentTurns ?? 5,
+      preserveRecentTurns: cfg.preserveRecentTurns ?? 8,
     };
     this.enabled = this.cfg.enabled;
   }
@@ -552,9 +553,25 @@ export class CompactionStrategy implements ContextStrategy {
 
     if (convMessages.length === 0) return ctx;
 
+    // 過濾標記類訊息（stub/索引/外部化），不進摘要輸入，避免雙重失真
+    const semanticMessages = convMessages.filter(m => {
+      const text = typeof m.content === "string" ? m.content : getMessageText(m);
+      return !text.startsWith("[工具索引")
+          && !text.startsWith("[工具記錄]")  // 兼容舊格式
+          && !text.startsWith("[已壓縮")
+          && !text.startsWith("[📄 外部化]")
+          && !text.startsWith("[user stub]")
+          && !text.startsWith("[assistant stub]");
+    });
+
+    if (semanticMessages.length === 0) {
+      log.debug("[context-engine:compaction] 過濾後無語意內容可摘要，跳過");
+      return ctx;
+    }
+
     try {
       const summaryPrompt = `以下是對話歷史，請用繁體中文精簡摘要（保留關鍵事實、決策、錯誤）：\n\n${
-        convMessages.map(m => {
+        semanticMessages.map(m => {
           let content: string;
           if (typeof m.content === "string") {
             content = m.content;
@@ -592,7 +609,7 @@ export class CompactionStrategy implements ContextStrategy {
 
       const summaryMessage: Message = {
         role: "user",
-        content: `[對話摘要]\n${summaryText.trim()}`,
+        content: `[對話摘要｜多輪壓縮，非原文，可能遺漏細節]\n${summaryText.trim()}\n⚠️ 若使用者要求引用本範圍的細節，承認這是壓縮摘要、請使用者提供正確版本，不得直接引用本段文字作答。`,
       };
 
       const compressed = [...sysMessages, summaryMessage, ...toKeep];

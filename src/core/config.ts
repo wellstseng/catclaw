@@ -526,6 +526,8 @@ export interface ContextEngineeringConfig {
   enabled: boolean;
   toolBudget?: ToolBudgetConfig;
   memoryBudget?: number;
+  /** Turn 數超過此值時每 20 輪發 warn log（預設 100，0 = 關閉） */
+  turnCapWarning?: number;
   strategies?: {
     decay?: DecayStrategyConfig;
     dedup?: { enabled?: boolean; minRepeat?: number };

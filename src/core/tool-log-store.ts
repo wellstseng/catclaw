@@ -104,7 +104,7 @@ export class ToolLogStore {
    * 產生供 session history 索引的摘要訊息文字
    * 例：[工具記錄] read_file×2, edit_file×1 → tool-logs/discord_ch_111/turn_42.json
    */
-  static buildIndexSummary(tools: ToolLogEntry[], logPath: string): string {
+  static buildIndexSummary(tools: ToolLogEntry[], logPath: string, turnIndex?: number): string {
     const counts = new Map<string, number>();
     for (const t of tools) {
       counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
@@ -112,7 +112,8 @@ export class ToolLogStore {
     const ops = Array.from(counts.entries())
       .map(([name, count]) => count > 1 ? `${name}×${count}` : name)
       .join(", ");
-    return `[工具記錄] ${ops} → ${logPath}`;
+    const turnLabel = turnIndex != null ? ` turn ${turnIndex}` : "";
+    return `[工具索引${turnLabel}] 呼叫：${ops}\n⚠️ 僅 tool 名稱，無 args/result。若需引用此輪工具內容，必須先 read_file：\n${logPath}`;
   }
 }
 
