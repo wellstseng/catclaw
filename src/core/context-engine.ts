@@ -431,7 +431,19 @@ export class DecayStrategy implements ContextStrategy {
         }
       }
 
-      const decayed = this._compressMessage(m, maxTokens, targetLevel);
+      // 截斷前靜默存檔：讓 AI 需要時能 read_file 取回完整原文
+      let extPath: string | undefined;
+      if (this.extCfg.enabled
+        && this._dataDir
+        && tokBefore >= this.extCfg.minTokens
+        && m.compressedBy !== "externalize"
+        && targetLevel < 3) {  // L3 stub 走上面的外部化路徑
+        try {
+          extPath = externalizeMessage(m, ctx.sessionKey, i, this._dataDir);
+        } catch { /* 存檔失敗不阻塞截斷 */ }
+      }
+
+      const decayed = this._compressMessage(m, maxTokens, targetLevel, extPath);
       const tokAfter = estimateTokens([decayed]);
       if (targetLevel !== currentLevel) {
         changes.push({ messageIndex: i, fromLevel: currentLevel, toLevel: targetLevel, tokensBefore: tokBefore, tokensAfter: tokAfter });
@@ -484,26 +496,38 @@ export class DecayStrategy implements ContextStrategy {
     return Math.max(min, Math.min(max, raw));
   }
 
-  private _compressMessage(m: Message, maxTokens: number, targetLevel: number): Message {
+  private _compressMessage(m: Message, maxTokens: number, targetLevel: number, extPath?: string): Message {
     if (targetLevel === 3) return stubMessage(m);
 
     const originalTokens = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
+    const pathHint = extPath ? `\n→ 完整原文：${extPath}（可用 read_file 讀取）` : "";
+
     if (typeof m.content === "string") {
       return {
         ...m,
-        content: truncateContent(m.content, maxTokens),
+        content: truncateContent(m.content, maxTokens) + pathHint,
         compressionLevel: targetLevel,
-        compressedBy: "decay",
+        compressedBy: extPath ? "externalize" : "decay",
         originalTokens,
       };
     }
 
     const compressed = truncateBlocks(m.content, maxTokens);
+    // 把路徑提示附加到最後一個 text block
+    if (pathHint && compressed.length > 0) {
+      const last = compressed[compressed.length - 1];
+      if (last.type === "text") {
+        compressed[compressed.length - 1] = { ...last, text: last.text + pathHint };
+      } else if (last.type === "tool_result") {
+        compressed[compressed.length - 1] = { ...last, content: last.content + pathHint };
+      }
+    }
+
     return {
       ...m,
       content: compressed,
       compressionLevel: targetLevel,
-      compressedBy: "decay",
+      compressedBy: extPath ? "externalize" : "decay",
       originalTokens,
     };
   }
