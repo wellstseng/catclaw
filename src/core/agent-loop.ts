@@ -1307,9 +1307,15 @@ export async function* agentLoop(
           } else {
             eventBus.emit("tool:after", { id: call.id, name: call.name, params: hookResult.params }, toolResult);
           }
-          const rawText = toolResult.error ? `錯誤：${toolResult.error}` : JSON.stringify(toolResult.result ?? null);
-          const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
-          const resultText = truncateToolResult(rawText, tokenCap, call.name);
+          // Error 訊息不過 truncate（避免錯誤被截斷後 agent 看不到完整原因）
+          let resultText: string;
+          if (toolResult.error) {
+            resultText = `錯誤：${toolResult.error}`;
+          } else {
+            const rawText = JSON.stringify(toolResult.result ?? null);
+            const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
+            resultText = truncateToolResult(rawText, tokenCap, call.name);
+          }
           events.push({ type: "tool_result", name: call.name, id: call.id, result: toolResult.result, error: toolResult.error });
           return {
             toolResult: { tool_use_id: call.id, content: resultText, is_error: Boolean(toolResult.error) },
@@ -1374,9 +1380,15 @@ export async function* agentLoop(
           } else {
             eventBus.emit("tool:after", { id: call.id, name: call.name, params: hookResult.params }, toolResult);
           }
-          const rawText = toolResult.error ? `錯誤：${toolResult.error}` : JSON.stringify(toolResult.result ?? null);
-          const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
-          const resultText = truncateToolResult(rawText, tokenCap, call.name);
+          // Error 訊息不過 truncate（避免錯誤被截斷後 agent 看不到完整原因）
+          let resultText: string;
+          if (toolResult.error) {
+            resultText = `錯誤：${toolResult.error}`;
+          } else {
+            const rawText = JSON.stringify(toolResult.result ?? null);
+            const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
+            resultText = truncateToolResult(rawText, tokenCap, call.name);
+          }
           events.push({ type: "tool_result", name: call.name, id: call.id, result: toolResult.result, error: toolResult.error });
           return {
             toolResult: { tool_use_id: call.id, content: resultText, is_error: Boolean(toolResult.error) },

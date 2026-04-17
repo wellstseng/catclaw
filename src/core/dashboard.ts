@@ -1655,7 +1655,7 @@ function addMapRow(containerId) {
 // ── Sub section ──
 function renderSub(s, data) {
   const subData = getPath(data, s.k) || {};
-  const fields = (s.fields||[]).map(f => renderField(f, subData[f.k], s.k, s.k + '.' + f.k)).join('');
+  const fields = (s.fields||[]).map(f => renderField(f, getPath(subData, f.k), s.k, s.k + '.' + f.k)).join('');
   return \`<div class="cfg-sub"><div style="font-size:0.78rem;color:#818cf8;margin-bottom:6px;font-weight:bold">\${s.l}</div>\${fields}</div>\`;
 }
 

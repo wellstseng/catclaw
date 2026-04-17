@@ -165,14 +165,15 @@ interface ContextBreakdown {
 **流程**：
 1. Decay `_calcTargetLevel()` 決定目標 level
 2. 符合外部化條件 → `externalizeMessage()` 存原文到 `data/externalized/{safeSessionKey}/msg_t{turnIndex}_i{msgIdx}.json`
-3. `createExternalizedStub()` 建立摘要指標訊息（前 100 chars + 檔案路徑）
+3. `createExternalizedStub()` 建立純路徑指標訊息（不含原文截斷 preview，避免 agent 誤把截斷內容當原文）
 4. 設定 `compressedBy = "externalize"`，跳過後續 truncate
 5. 存檔失敗 → fallback 到一般 truncate
 
-**摘要指標格式**：
+**摘要指標格式**（路徑 + 原始 token 數，不含原文）：
 ```
-[📄 外部化] assistant turn 5: 先看一下現況再規劃。現有資訊整理好了...…
+[📄 外部化] assistant turn 5（原始 1234 tokens 已存至檔案）
 → externalized/discord_ch_123/msg_t5_i12.json
+如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。
 ```
 
 **外部檔案格式**：

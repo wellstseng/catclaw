@@ -12,8 +12,8 @@ interface Tool {
   description: string
   tier: ToolTier            // public | standard | elevated | admin | owner
   parameters: JsonSchema
-  resultTokenCap?: number   // 結果截斷上限（預設 8000 tokens）
-  timeoutMs?: number        // 執行超時（預設 30,000 ms）
+  resultTokenCap?: number   // 結果截斷上限（預設 0 = 不截斷；per-tool 可覆寫）
+  timeoutMs?: number        // 執行超時（預設 0 = 不逾時，超過 60 秒僅軟警告）
   concurrencySafe?: boolean // 是否可並行（read-only tools）
   deferred?: boolean        // 延遲載入（tool_search 才取得 schema）
   execute(params, ctx): Promise<ToolResult>
@@ -37,7 +37,16 @@ per-tool 截斷策略（`truncateToolResult()`）：
 | `read_file` | 行數限制 + 檔案大小限制 |
 | `grep` | 結果筆數限制 |
 | `run_command` | stdout/stderr 字元數限制 |
-| 其他 | 通用 token cap（預設 8000） |
+| 其他 | 通用 token cap（預設 0 = 不截斷） |
+
+**錯誤訊息永遠不截斷** — ToolResult 的 `error` 欄位直通 agent，避免錯誤被截斷後失去線索。
+
+### Timeout 策略
+
+- **預設 `defaultTimeoutMs = 0`**：不逾時，tool 內部自行決定中斷時機
+- **Per-tool `timeoutMs`** 仍可覆寫（如 `web_fetch=20000`、`web_search=15000`）
+- **Soft warning**：執行超過 60 秒發 warn log，不中斷
+- 可由 `catclaw.json.contextEngineering.toolBudget.toolTimeoutMs` 覆寫全域預設
 
 ### Builtin Tools
 

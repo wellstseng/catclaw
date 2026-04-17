@@ -172,13 +172,20 @@ PermissionGate 根據 accountId 的角色過濾可用 tools。
 ## 全域單例
 
 ```typescript
-initToolRegistry(opts?): ToolRegistry
+initToolRegistry(opts?: { defaultTimeoutMs?: number }): ToolRegistry
 getToolRegistry(): ToolRegistry
 ```
 
+## Timeout 策略
+
+- **預設 `defaultTimeoutMs = 0`**（不逾時）— tool 內部自行決定中斷時機
+- **Per-tool `timeoutMs`** 可覆寫（如 `web_fetch=20000`, `web_search=15000`）
+- **Soft warning**：執行超過 `SOFT_WARN_MS = 60_000` 發 warn log，不中斷
+- 可由 `catclaw.json.contextEngineering.toolBudget.toolTimeoutMs` 覆寫全域預設
+
 ## Hook 整合
 
-- **registry.execute**：工具逾時時觸發 `ToolTimeout`（observer）
+- **registry.execute**：tool `timeoutMs > 0` 且逾時時觸發 `ToolTimeout`（observer）
 - **write-file**：`PreFileWrite`（可 block）
 - **edit-file**：`PreFileEdit`（可 block）
 - **run-command**：`PreCommandExec`（可 block）

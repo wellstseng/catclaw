@@ -475,6 +475,7 @@ export const tool: Tool = {
     }
 
     // 3. 處理附件
+    const warnings: string[] = [];
     let attachmentsDir: string | undefined;
     const attachmentUuid = randomUUID();
     if (attachments.length > 0) {
@@ -489,7 +490,9 @@ export const tool: Tool = {
           writeFileSync(join(attachmentsDir, name), Buffer.from(content, encoding));
         }
       } catch (err) {
-        log.warn(`[spawn-subagent] 附件寫入失敗：${err instanceof Error ? err.message : String(err)}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`[spawn-subagent] 附件寫入失敗：${msg}`);
+        warnings.push(`附件寫入失敗：${msg}（subagent 將無法讀取附件）`);
         attachmentsDir = undefined;
       }
     }
@@ -534,7 +537,9 @@ export const tool: Tool = {
         worktreeInfo = createWorktree(baseCwd, record.runId);
         effectiveWorkspaceDir = worktreeInfo.worktreePath;
       } catch (err) {
-        log.warn(`[spawn-subagent] worktree 建立失敗，fallback 到原始 cwd：${err instanceof Error ? err.message : String(err)}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`[spawn-subagent] worktree 建立失敗，fallback 到原始 cwd：${msg}`);
+        warnings.push(`worktree 隔離失敗：${msg}（subagent 將在原 workspace 執行，可能造成衝突）`);
       }
     }
 
@@ -671,13 +676,16 @@ export const tool: Tool = {
         if (childResult.worktree) {
           result["worktree"] = childResult.worktree;
         }
+        if (warnings.length > 0) {
+          result["warnings"] = warnings;
+        }
         return { result: result as unknown as SpawnResult };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg === "__TIMEOUT__") {
-          return { result: { status: "timeout", result: null } };
+          return { error: "subagent timeout", result: { status: "timeout", result: null } };
         }
-        return { result: { status: "error", error: msg } };
+        return { error: `subagent failed: ${msg}`, result: { status: "error", error: msg } };
       }
     } else {
       // 非同步：背景執行，立即回傳 runId（SUB-4）

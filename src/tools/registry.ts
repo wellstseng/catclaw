@@ -15,13 +15,17 @@ import { toDefinition } from "./types.js";
 
 // ── ToolRegistry ──────────────────────────────────────────────────────────────
 
+/** tool 執行超過此時間時發軟警告 log（不中斷執行） */
+const SOFT_WARN_MS = 60_000;
+
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private watchers: ReturnType<typeof watch>[] = [];
   private defaultTimeoutMs: number;
 
   constructor(opts?: { defaultTimeoutMs?: number }) {
-    this.defaultTimeoutMs = opts?.defaultTimeoutMs ?? 30_000;
+    // 0 = 不逾時（預設），tool 內部自己決定中斷時機
+    this.defaultTimeoutMs = opts?.defaultTimeoutMs ?? 0;
   }
 
   // ── 註冊 ────────────────────────────────────────────────────────────────────
@@ -111,8 +115,15 @@ export class ToolRegistry {
 
     try {
       if (effectiveMs <= 0) {
-        // 無限制模式（原有邏輯）
-        return await tool.execute(params, ctx);
+        // 無限制模式：不逾時，但超過 SOFT_WARN_MS 發軟警告（不中斷）
+        const warnTimer = setTimeout(() => {
+          log.warn(`[tool-registry] 工具執行時間過長 tool=${toolName} 已超過 ${SOFT_WARN_MS}ms（不中斷，僅警告）`);
+        }, SOFT_WARN_MS);
+        try {
+          return await tool.execute(params, ctx);
+        } finally {
+          clearTimeout(warnTimer);
+        }
       }
 
       let timer: ReturnType<typeof setTimeout> | undefined;

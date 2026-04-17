@@ -17,7 +17,7 @@ flowchart TD
     PARSE -->|max_tokens| RECOVER[Output Token Recovery]
     TOOL --> HOOK_PRE[Before Hook<br/>權限/安全/read-before-write/loop 偵測]
     HOOK_PRE --> EXEC[toolRegistry.execute<br/>timeout 30s]
-    EXEC --> TRUNC[truncateToolResult<br/>per-tool 策略]
+    EXEC --> TRUNC[truncateToolResult<br/>per-tool 策略<br/>error 不截斷]
     TRUNC --> HOOK_POST[Post Hook<br/>audit/logging]
     HOOK_POST --> STREAM
     RECOVER --> STREAM

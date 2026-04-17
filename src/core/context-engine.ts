@@ -284,16 +284,16 @@ function externalizeMessage(
   return `externalized/${sk}/${fileName}`;
 }
 
-/** 建立外部化摘要指標訊息 */
+/** 建立外部化摘要指標訊息（不含原文截斷，只標記外部化路徑） */
 function createExternalizedStub(m: Message, relativePath: string, targetLevel: number): Message {
-  const preview = getMessageText(m).slice(0, 100).replace(/\n/g, " ");
-  const stub = `[📄 外部化] ${m.role} turn ${m.turnIndex ?? "?"}: ${preview}…\n→ ${relativePath}`;
+  const origTokens = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
+  const stub = `[📄 外部化] ${m.role} turn ${m.turnIndex ?? "?"}（原始 ${origTokens} tokens 已存至檔案）\n→ ${relativePath}\n如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。`;
   return {
     ...m,
     content: stub,
     compressionLevel: targetLevel,
     compressedBy: "externalize",
-    originalTokens: m.originalTokens ?? m.tokens ?? estimateTokens([m]),
+    originalTokens: origTokens,
   };
 }
 
