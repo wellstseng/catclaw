@@ -170,6 +170,14 @@ Turn 執行期間監聽 eventBus 事件，轉為 trace workflow events：
 
 Per-turn 工具結果 token 累計追蹤（`turnToolResultTokens`），接近 budget 時壓縮後續結果。
 
+**截斷提示顯式化**：所有截斷策略在插入位置附上 `[⚠️ CatClaw 已截斷：...]` 說明原始規模 + 如何取回完整內容：
+- `read_file` → 提示用 `offset` / `limit` 參數讀取被省略區段
+- `grep` / `glob` / `web_search` → 提示用更精確的 pattern 或 glob 過濾縮小範圍
+- `run_command` → 提示將輸出寫到檔案後用 `read_file` 分頁讀取
+- 預設 → 提示縮小參數範圍後重新呼叫
+
+**錯誤訊息永遠不截斷** — ToolResult 的 `error` 欄位直通 agent，避免錯誤被截斷後失去線索。
+
 ## Hook 整合
 
 觸發點（詳見 `modules/hooks.md`）：

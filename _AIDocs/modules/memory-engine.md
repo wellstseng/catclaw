@@ -180,6 +180,7 @@ Step 3 embed 或 Step 4 vector search 失敗時，自動退化為純 keyword 路
 
 - **Budget**：全域 token 預算 3000（無層級分配）
 - 按 vector score 排序，超出 budget 截斷
+- **Atom 過肥偵測**：若單顆 atom 本身就超過 budget（首顆且 blockTokens > budget），發 `log.warn` 建議拆分為多個較小的原子單元
 
 ## 設定（MemoryConfig）
 

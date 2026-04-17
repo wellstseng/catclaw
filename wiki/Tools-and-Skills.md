@@ -35,7 +35,8 @@ per-tool 截斷策略（`truncateToolResult()`）：
 | Tool | 策略 |
 | ---- | ---- |
 | `read_file` | 行數限制 + 檔案大小限制 |
-| `grep` | 結果筆數限制 |
+| `grep` | 結果筆數限制（支援 `offset` / `head_limit` 分頁） |
+| `glob` | 結果筆數限制（支援 `offset` / `limit` 分頁） |
 | `run_command` | stdout/stderr 字元數限制 |
 | 其他 | 通用 token cap（預設 0 = 不截斷） |
 

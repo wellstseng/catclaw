@@ -55,7 +55,7 @@ interface GrepMatch {
 
 export const tool: Tool = {
   name: "grep",
-  description: "在檔案內容中搜尋正規表達式。支援 -i（大小寫不敏感）和 glob 檔案過濾。",
+  description: "在檔案內容中搜尋正規表達式。支援 -i（大小寫不敏感）、glob 檔案過濾、offset/head_limit 分頁。",
   tier: "elevated",
   resultTokenCap: 2000,
   concurrencySafe: true,
@@ -78,6 +78,14 @@ export const tool: Tool = {
         type: "boolean",
         description: "大小寫不敏感（預設 false）",
       },
+      offset: {
+        type: "number",
+        description: "跳過前 N 筆匹配（預設 0）。分頁用。",
+      },
+      head_limit: {
+        type: "number",
+        description: `本次回傳的匹配上限（預設 ${MAX_RESULTS}；0 = 不限但仍受硬上限 ${MAX_RESULTS} 保護）`,
+      },
     },
     required: ["pattern"],
   },
@@ -87,6 +95,12 @@ export const tool: Tool = {
     const baseDir = String(params["path"] ?? process.cwd());
     const globPattern = params["glob"] ? String(params["glob"]) : null;
     const caseInsensitive = Boolean(params["-i"] ?? false);
+    const offsetRaw = Number(params["offset"] ?? 0);
+    const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0;
+    const headLimitRaw = Number(params["head_limit"] ?? MAX_RESULTS);
+    const headLimit = Number.isFinite(headLimitRaw) && headLimitRaw > 0
+      ? Math.min(Math.floor(headLimitRaw), MAX_RESULTS)
+      : MAX_RESULTS;
 
     if (!pattern) return { error: "pattern 不能為空" };
 
@@ -106,29 +120,41 @@ export const tool: Tool = {
       return { error: `掃描失敗：${err instanceof Error ? err.message : String(err)}` };
     }
 
-    const matches: GrepMatch[] = [];
+    // 收集到 offset+headLimit+1 就可以停（+1 用於判定 hasMore），但仍受 MAX_RESULTS 硬上限
+    const collectTarget = Math.min(offset + headLimit + 1, MAX_RESULTS);
+    const allMatches: GrepMatch[] = [];
 
     for (const filePath of files) {
-      if (matches.length >= MAX_RESULTS) break;
+      if (allMatches.length >= collectTarget) break;
       let content: string;
       try { content = await readFile(filePath, "utf-8"); } catch { continue; }
 
       const lines = content.split("\n");
       for (let i = 0; i < lines.length; i++) {
-        if (matches.length >= MAX_RESULTS) break;
+        if (allMatches.length >= collectTarget) break;
         if (searchRe.test(lines[i]!)) {
-          matches.push({ file: filePath, line: i + 1, text: lines[i]!.slice(0, 300) });
+          allMatches.push({ file: filePath, line: i + 1, text: lines[i]!.slice(0, 300) });
         }
       }
     }
 
-    log.debug(`[grep] pattern=${pattern} → ${matches.length} 筆`);
+    const paged = allMatches.slice(offset, offset + headLimit);
+    const hasMore = allMatches.length > offset + headLimit;
+    const scannedCapHit = allMatches.length >= MAX_RESULTS;
+
+    log.debug(`[grep] pattern=${pattern} offset=${offset} head_limit=${headLimit} → ${paged.length} 筆 (hasMore=${hasMore})`);
 
     return {
       result: {
-        matches,
-        total: matches.length,
-        truncated: matches.length >= MAX_RESULTS,
+        matches: paged,
+        offset,
+        returned: paged.length,
+        hasMore,
+        scannedCapHit,
+        nextOffset: hasMore ? offset + paged.length : null,
+        hint: hasMore
+          ? `仍有更多匹配。續讀請帶 offset=${offset + paged.length}；縮小結果請用更精確的 pattern 或 glob 過濾。${scannedCapHit ? `（已觸及硬上限 ${MAX_RESULTS} 筆，需縮小 pattern 才能探得尾段）` : ""}`
+          : undefined,
       },
     };
   },

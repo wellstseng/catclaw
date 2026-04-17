@@ -83,6 +83,14 @@ export const tool: Tool = {
         type: "string",
         description: "搜尋的根目錄（絕對路徑，預設為當前工作目錄）",
       },
+      offset: {
+        type: "number",
+        description: "跳過前 N 筆結果（預設 0）。分頁用。",
+      },
+      limit: {
+        type: "number",
+        description: `本次回傳筆數上限（預設 ${MAX_FILES}；0 = 不限但仍受硬上限 ${MAX_FILES} 保護）`,
+      },
     },
     required: ["pattern"],
   },
@@ -90,6 +98,12 @@ export const tool: Tool = {
   async execute(params: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
     const pattern = String(params["pattern"] ?? "");
     const baseDir = String(params["path"] ?? process.cwd());
+    const offsetRaw = Number(params["offset"] ?? 0);
+    const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0;
+    const limitRaw = Number(params["limit"] ?? MAX_FILES);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.floor(limitRaw), MAX_FILES)
+      : MAX_FILES;
 
     if (!pattern) return { error: "pattern 不能為空" };
 
@@ -104,10 +118,26 @@ export const tool: Tool = {
 
     // 按修改時間降序
     results.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    const paths = results.map(r => r.path);
+    const allPaths = results.map(r => r.path);
+    const paged = allPaths.slice(offset, offset + limit);
+    const hasMore = allPaths.length > offset + limit;
+    const scannedCapHit = allPaths.length >= MAX_FILES;
 
-    log.debug(`[glob] pattern=${pattern} base=${baseDir} → ${paths.length} 筆`);
+    log.debug(`[glob] pattern=${pattern} base=${baseDir} offset=${offset} limit=${limit} → ${paged.length} 筆 (total=${allPaths.length}, hasMore=${hasMore})`);
 
-    return { result: paths };
+    return {
+      result: {
+        paths: paged,
+        offset,
+        returned: paged.length,
+        total: allPaths.length,
+        hasMore,
+        scannedCapHit,
+        nextOffset: hasMore ? offset + paged.length : null,
+        hint: hasMore
+          ? `仍有 ${allPaths.length - offset - paged.length} 筆結果未顯示。續讀請帶 offset=${offset + paged.length}；縮小結果請用更精確的 pattern。${scannedCapHit ? `（已觸及硬上限 ${MAX_FILES} 筆，需縮小 pattern 才能探得尾段）` : ""}`
+          : undefined,
+      },
+    };
   },
 };

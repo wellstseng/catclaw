@@ -106,7 +106,7 @@ function defaultTruncation(lines: string[], totalLines: number, totalChars: numb
   const tailLines = Math.min(20, totalLines - headLines);
   const head = lines.slice(0, headLines).join("\n");
   const tail = lines.slice(-tailLines).join("\n");
-  const notice = `\n[截斷：原始 ${totalLines} 行 / ${totalChars} 字元，顯示前 ${headLines} + 末 ${tailLines} 行]\n`;
+  const notice = `\n[⚠️ CatClaw 已截斷：原始 ${totalLines} 行 / ${totalChars} 字元 → 僅顯示前 ${headLines} + 末 ${tailLines} 行。如需完整內容請縮小參數範圍後重新呼叫]\n`;
   return head + notice + tail;
 }
 
@@ -117,17 +117,19 @@ function truncateReadFile(text: string, lines: string[], totalLines: number, cha
   const head = lines.slice(0, headCount).join("\n");
   const tail = lines.slice(-tailCount).join("\n");
   const skipped = totalLines - headCount - tailCount;
-  const notice = `\n[... 省略中間 ${skipped} 行（第 ${headCount + 1}~${totalLines - tailCount} 行）...]\n`;
+  const skipStart = headCount + 1;
+  const skipEnd = totalLines - tailCount;
+  const notice = `\n[⚠️ CatClaw 已截斷：省略中間 ${skipped} 行（第 ${skipStart}~${skipEnd} 行）。如需讀取被省略區段請用 read_file 的 offset=${skipStart} / limit 參數]\n`;
   return head + notice + tail;
 }
 
-/** grep / glob：限制匹配數量，保留前 N 筆 */
+/** grep / glob / web_search：限制匹配數量，保留前 N 筆 */
 function truncateSearchResult(_text: string, lines: string[], totalLines: number, charCap: number): string {
   const maxLines = Math.floor(charCap / 60);  // 每行約 60 chars
   const kept = lines.slice(0, maxLines).join("\n");
   const omitted = totalLines - maxLines;
   if (omitted > 0) {
-    return kept + `\n[... 還有 ${omitted} 筆結果未顯示（共 ${totalLines} 筆）]`;
+    return kept + `\n[⚠️ CatClaw 已截斷：還有 ${omitted} 筆結果未顯示（共 ${totalLines} 筆）。grep/glob 請用 offset/head_limit(或 limit) 分頁，或用更精確的 pattern/glob 縮小範圍；web_search 請精簡 query]`;
   }
   return kept;
 }
@@ -156,12 +158,12 @@ function truncateRunCommand(text: string, lines: string[], totalLines: number, c
 
   if (stderrLines.length > 0) {
     const stderrBlock = stderrLines.join("\n");
-    const notice = `[截斷：原始 ${totalLines} 行。以下為 stderr/error 區段 + 最後 ${tailCount} 行 stdout]`;
+    const notice = `[⚠️ CatClaw 已截斷：原始 ${totalLines} 行 / ${text.length} 字元 → 僅保留 stderr/error 區段 + 最後 ${tailCount} 行 stdout。如需完整 stdout 請用 grep / head / tail 後再執行，或輸出到檔案後用 read_file 分頁讀取]`;
     return `${notice}\n\n--- stderr ---\n${stderrBlock}\n\n--- stdout (tail) ---\n${tail}`;
   }
 
   // 無明顯 stderr：僅保留尾部
-  const notice = `[截斷：原始 ${totalLines} 行 / ${text.length} 字元，僅保留最後 ${tailCount} 行]`;
+  const notice = `[⚠️ CatClaw 已截斷：原始 ${totalLines} 行 / ${text.length} 字元 → 僅保留最後 ${tailCount} 行。如需完整輸出請將結果寫到檔案後用 read_file 分頁讀取]`;
   return `${notice}\n${tail}`;
 }
 

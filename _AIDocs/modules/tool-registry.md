@@ -59,8 +59,8 @@ interface ToolContext {
 | `read_file` | 讀取檔案（支援行範圍、圖片、PDF） |
 | `write_file` | 建立/覆寫檔案（Read-before-Write 強制，File Size Guard: 預設 500KB） |
 | `edit_file` | 精確字串替換（old_string → new_string，File Size Guard: 預設 1MB） |
-| `glob` | Glob pattern 檔案搜尋 |
-| `grep` | 正則內容搜尋（ripgrep 風格） |
+| `glob` | Glob pattern 檔案搜尋（支援 `offset` / `limit` 分頁；硬上限 1000 筆；結果按 mtime 降序） |
+| `grep` | 正則內容搜尋，ripgrep 風格（支援 `offset` / `head_limit` 分頁；硬上限 200 筆） |
 
 ### 系統指令（elevated）
 

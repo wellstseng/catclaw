@@ -152,6 +152,10 @@ export function buildContext(
       // 最後一個 atom：截斷到剩餘預算
       const chars = Math.floor(remaining * 1.2);
       const truncated = selected.slice(0, chars) + "…";
+      // 若單顆 atom 本身就超過總 budget → 代表 atom 過肥，建議拆分
+      if (totalTokens === 0 && blockTokens > budget) {
+        log.warn(`[context-builder] atom "${frag.id}" 單顆 ${blockTokens} tokens 超過 memory budget ${budget}（截斷顯示）— 建議將此 atom 拆分為多個較小的原子單元`);
+      }
       parts.push(`${header}\n${truncated}`);
       totalTokens = budget;
     } else {
