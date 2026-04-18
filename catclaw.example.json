@@ -146,23 +146,37 @@
   },
 
   // ── Context Engineering（CE）─────────────────────────────────────
-  // model 只放在有實際呼叫 LLM 的策略（compaction）；
-  // budgetGuard 和 slidingWindow 純邏輯計算，不需要 model
+  // 三段策略：decay → compaction → overflow-hard-stop
+  // 執行順序固定，每次 build 都跑
   "contextEngineering": {
     "enabled": true,
+    // "toolBudget": {
+    //   "resultTokenCap": 0,     // 單一工具結果 token 上限（0 = 無限制；per-tool resultTokenCap 仍生效）
+    //   "toolTimeoutMs": 0       // 全域工具逾時（0 = 無限制；per-tool timeoutMs 仍生效）
+    // },
     "strategies": {
+      "decay": {
+        "enabled": true,
+        "mode": "auto",            // discrete / continuous / time-aware / auto
+        "baseDecay": 0.3,          // 指數衰減係數
+        "referenceIntervalSec": 60,
+        "tempoRange": [0.5, 2.0],
+        "externalize": {
+          "enabled": true,
+          "triggerLevel": 2,       // L1→L2 時外部化
+          "minTokens": 300,        // 最小 token 閾值
+          "ttlDays": 14            // 外部檔案保留天數
+        }
+      },
       "compaction": {
         "enabled": true,
         "model": "claude-haiku-4-5-20251001",  // 壓縮用輕量模型
-        "triggerTurns": 20,
-        "preserveRecentTurns": 5
+        "triggerTokens": 20000,    // token 超過此值觸發 LLM 摘要
+        "preserveRecentTurns": 8   // 保留最近 N 輪不壓縮
       },
-      "budgetGuard": {
+      "overflowHardStop": {
         "enabled": true,
-        "maxUtilization": 0.8   // token 使用率超過 80% 時觸發裁切
-      },
-      "slidingWindow": {
-        "enabled": false        // 停用：與 compaction 二擇一
+        "hardLimitUtilization": 0.95  // 最後防線：token > window × 0.95 時緊急截斷
       }
     }
   },
