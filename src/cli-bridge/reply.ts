@@ -52,6 +52,50 @@ function closeFenceIfOpen(text: string): string {
   return fenceCount % 2 !== 0 ? text + "\n```" : text;
 }
 
+/**
+ * 把長文切成多段以符合 Discord 2000 字上限。
+ * - 優先在換行處切，找不到就硬切
+ * - 跨段 code fence 自動補 open/close，避免語法斷裂
+ * - 預留 20 字空間給 fence 標記
+ */
+function splitForDiscord(content: string, limit = TEXT_LIMIT): string[] {
+  if (content.length <= limit) return content.length ? [content] : [];
+
+  const SAFE = limit - 20;
+  const chunks: string[] = [];
+  let pos = 0;
+
+  while (pos < content.length) {
+    const remaining = content.length - pos;
+    if (remaining <= limit) {
+      chunks.push(content.slice(pos));
+      break;
+    }
+    let cut = content.lastIndexOf("\n", pos + SAFE);
+    if (cut <= pos + Math.floor(SAFE / 2)) {
+      cut = pos + SAFE;
+    }
+    chunks.push(content.slice(pos, cut));
+    pos = cut;
+    if (content[pos] === "\n") pos++;
+  }
+
+  // fence-balance pass：跨段補 open/close
+  let inFence = false;
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i]!;
+    const fenceCount = (chunk.match(/```/g) ?? []).length;
+    const newState: boolean = inFence !== (fenceCount % 2 !== 0);
+    let rebuilt = chunk;
+    if (inFence) rebuilt = "```\n" + rebuilt;
+    if (newState) rebuilt = rebuilt + "\n```";
+    chunks[i] = rebuilt;
+    inFence = newState;
+  }
+
+  return chunks;
+}
+
 async function retrySend(
   fn: () => Promise<void>,
   maxRetries = 3,
@@ -334,8 +378,16 @@ export async function handleCliBridgeReply(
         if (buffer.length > TEXT_LIMIT - 100) {
           cancelEditTimer();
           const content = closeFenceIfOpen(buffer);
-          if (state.editMsg) {
-            try { await sender.edit(state.editMsg, content.slice(0, TEXT_LIMIT)); } catch { /* */ }
+          const chunks = splitForDiscord(content);
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i]!;
+            try {
+              if (i === 0 && state.editMsg) {
+                await sender.edit(state.editMsg, chunk);
+              } else {
+                await sender.send(chunk);
+              }
+            } catch { /* */ }
           }
           buffer = "";
           state.editMsg = null;
@@ -427,17 +479,36 @@ export async function handleCliBridgeReply(
         const hasFinalText = buffer.trim().length > 0;
         if (hasFinalText && intermediateStyle !== "normal" && intermediateMsg && state.editMsg === intermediateMsg) {
           // intermediate 模式：最終回覆是新文字，不要 edit 中間訊息，送新訊息
-          const ok = await retrySend(async () => { await sendText(closeFenceIfOpen(buffer)); });
-          discordDelivery = ok ? "success" : "failed";
+          const chunks = splitForDiscord(closeFenceIfOpen(buffer));
+          let allOk = true;
+          for (const chunk of chunks) {
+            const ok = await retrySend(async () => { await sendText(chunk); });
+            if (!ok) allOk = false;
+          }
+          discordDelivery = allOk ? "success" : "failed";
         } else if (hasFinalText && state.editMsg) {
           const final = closeFenceIfOpen(buffer);
           const msg = state.editMsg;
-          const ok = await retrySend(async () => { await sender.edit(msg, final.slice(0, TEXT_LIMIT)); });
-          discordDelivery = ok ? "success" : "failed";
+          const chunks = splitForDiscord(final);
+          let allOk = true;
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i]!;
+            const ok = await retrySend(async () => {
+              if (i === 0) await sender.edit(msg, chunk);
+              else await sender.send(chunk);
+            });
+            if (!ok) allOk = false;
+          }
+          discordDelivery = allOk ? "success" : "failed";
           discordMessageId = msg.id;
         } else if (hasFinalText) {
-          const ok = await retrySend(async () => { await sendText(buffer); });
-          discordDelivery = ok ? "success" : "failed";
+          const chunks = splitForDiscord(buffer);
+          let allOk = true;
+          for (const chunk of chunks) {
+            const ok = await retrySend(async () => { await sendText(chunk); });
+            if (!ok) allOk = false;
+          }
+          discordDelivery = allOk ? "success" : "failed";
         } else {
           discordDelivery = "success";
         }

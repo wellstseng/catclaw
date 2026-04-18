@@ -3258,7 +3258,7 @@ const _cbDefaults = {
 const _cbChannelDefaults = {
   label: '',
   sessionId: '',
-  dangerouslySkipPermissions: true,
+  dangerouslySkipPermissions: false,
   requireMention: false,
 };
 
@@ -3312,7 +3312,7 @@ function _cbRenderBridge(idx, cfg) {
     html += _cbField(cp+'chId', 'Channel ID', 'text', chId);
     html += _cbField(cp+'label', 'Label', 'text', chCfg.label || '');
     html += _cbField(cp+'sessionId', 'Session ID（留空=自動）', 'text', chCfg.sessionId || '');
-    html += _cbField(cp+'dangerouslySkipPermissions', 'Skip Permissions', 'bool', chCfg.dangerouslySkipPermissions ?? true);
+    html += _cbField(cp+'dangerouslySkipPermissions', 'Skip Permissions（true=fail-open；false=Discord 按鈕審批）', 'bool', chCfg.dangerouslySkipPermissions ?? false);
     html += _cbField(cp+'requireMention', 'Require @Mention', 'bool', chCfg.requireMention ?? false);
     html += '</div>';
   }

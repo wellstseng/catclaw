@@ -514,7 +514,7 @@ export class CliBridge {
       claudeBin: this.bridgeConfig.claudeBin ?? "claude",
       workingDir: this.bridgeConfig.workingDir,
       sessionId: this.sessionId ?? this.channelConfig.sessionId ?? undefined,
-      dangerouslySkipPermissions: this.channelConfig.dangerouslySkipPermissions ?? true,
+      dangerouslySkipPermissions: this.channelConfig.dangerouslySkipPermissions ?? false,
       label: this.label,
       botToken: this.bridgeConfig.botToken,
       channelId: this.channelId,

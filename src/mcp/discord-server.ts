@@ -21,9 +21,19 @@
 
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
+import {
+  Client, GatewayIntentBits, Events,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType,
+  StringSelectMenuBuilder,
+  type ButtonInteraction, type StringSelectMenuInteraction,
+  type Message, type TextChannel, type ThreadChannel,
+} from "discord.js";
 
 const TOKEN = process.env.DISCORD_TOKEN ?? "";
+const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID ?? "";
+const BRIDGE_LABEL = process.env.CATCLAW_BRIDGE_LABEL ?? "bridge";
 const API = "https://discord.com/api/v10";
+const PERMISSION_TIMEOUT_MS = 60_000;
 
 // ── Discord REST ─────────────────────────────────────────────────────────────
 
@@ -518,6 +528,207 @@ async function runTool(p: P): Promise<string> {
   }
 }
 
+// ── Permission Prompt Tool (Discord 按鈕審批) ────────────────────────────────
+
+let _client: Client | null = null;
+let _clientReady: Promise<Client> | null = null;
+
+function getDiscordClient(): Promise<Client> {
+  if (_clientReady) return _clientReady;
+  if (!TOKEN) return Promise.reject(new Error("DISCORD_TOKEN not set"));
+  _client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+  _clientReady = new Promise<Client>((resolve, reject) => {
+    _client!.once(Events.ClientReady, () => resolve(_client!));
+    _client!.once(Events.Error, reject);
+    _client!.login(TOKEN).catch(reject);
+  });
+  return _clientReady;
+}
+
+async function fetchPermissionChannel(): Promise<TextChannel | ThreadChannel> {
+  if (!CHANNEL_ID) throw new Error("DISCORD_CHANNEL_ID not set");
+  const client = await getDiscordClient();
+  const ch = await client.channels.fetch(CHANNEL_ID);
+  if (!ch || !ch.isTextBased() || !("send" in ch)) {
+    throw new Error(`Channel ${CHANNEL_ID} not text-based or sendable`);
+  }
+  return ch as TextChannel | ThreadChannel;
+}
+
+interface PermissionInput {
+  tool_name: string;
+  input: Record<string, unknown>;
+  tool_use_id?: string;
+}
+
+type PermissionResult =
+  | { behavior: "allow"; updatedInput: Record<string, unknown> }
+  | { behavior: "deny"; message: string; interrupt?: boolean };
+
+function splitPlanForDiscord(content: string, limit = 1900): string[] {
+  if (content.length <= limit) return [content];
+  const SAFE = limit - 20;
+  const out: string[] = [];
+  let pos = 0;
+  while (pos < content.length) {
+    if (content.length - pos <= limit) { out.push(content.slice(pos)); break; }
+    let cut = content.lastIndexOf("\n", pos + SAFE);
+    if (cut <= pos + Math.floor(SAFE / 2)) cut = pos + SAFE;
+    out.push(content.slice(pos, cut));
+    pos = cut;
+    if (content[pos] === "\n") pos++;
+  }
+  return out;
+}
+
+async function handleExitPlanMode(p: PermissionInput): Promise<PermissionResult> {
+  const channel = await fetchPermissionChannel();
+  const plan = String(p.input.plan ?? "(no plan content)");
+  const head = `📋 **Plan 待審批** (bridge: \`${BRIDGE_LABEL}\`)`;
+  await channel.send(head);
+  const parts = splitPlanForDiscord(plan, 1900);
+  for (let i = 0; i < parts.length - 1; i++) {
+    await channel.send(parts[i]!);
+  }
+  const lastContent = (parts[parts.length - 1] ?? "(empty plan)").slice(0, 1900);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("plan-approve").setLabel("Approve").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("plan-reject").setLabel("Reject").setStyle(ButtonStyle.Danger),
+  );
+  const promptMsg = await channel.send({ content: lastContent, components: [row] }) as Message;
+
+  try {
+    const interaction = await promptMsg.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      filter: (i: ButtonInteraction) => !i.user.bot,
+      time: PERMISSION_TIMEOUT_MS,
+    });
+    const approved = interaction.customId === "plan-approve";
+    await interaction.update({
+      content: lastContent + `\n\n→ ${approved ? "✅ Approved" : "❌ Rejected"} by ${interaction.user.username}`,
+      components: [],
+    });
+    if (approved) return { behavior: "allow", updatedInput: p.input };
+    return { behavior: "deny", message: "使用者拒絕 plan", interrupt: true };
+  } catch {
+    await promptMsg.edit({ content: lastContent + "\n\n→ ⏰ Timeout (auto-deny)", components: [] }).catch(() => {});
+    return { behavior: "deny", message: "60s 內無回應", interrupt: true };
+  }
+}
+
+interface AskQuestion {
+  question: string;
+  header?: string;
+  options?: Array<{ label: string; value?: string; description?: string }>;
+  multiSelect?: boolean;
+}
+
+async function handleAskUserQuestion(p: PermissionInput): Promise<PermissionResult> {
+  const channel = await fetchPermissionChannel();
+  const questions = (p.input.questions as AskQuestion[] | undefined) ?? [];
+  const collected: Record<string, string> = { ...((p.input.answers as Record<string, string>) ?? {}) };
+
+  for (const q of questions) {
+    if (collected[q.question]) continue;
+    const opts = (q.options ?? []).slice(0, 25);
+    if (opts.length < 2) {
+      return { behavior: "deny", message: `AskUserQuestion 選項不足: ${q.question}`, interrupt: true };
+    }
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(`q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+      .setPlaceholder((q.header ?? "選擇答案").slice(0, 100))
+      .addOptions(opts.map(o => ({
+        label: String(o.label).slice(0, 100),
+        value: String(o.value ?? o.label).slice(0, 100),
+        description: o.description ? String(o.description).slice(0, 100) : undefined,
+      })));
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+    const promptText = `❓ **${String(q.header ?? "Question").slice(0, 80)}** (bridge: \`${BRIDGE_LABEL}\`)\n${String(q.question)}`.slice(0, 1900);
+    const promptMsg = await channel.send({ content: promptText, components: [row] }) as Message;
+
+    try {
+      const interaction = await promptMsg.awaitMessageComponent({
+        componentType: ComponentType.StringSelect,
+        filter: (i: StringSelectMenuInteraction) => !i.user.bot,
+        time: PERMISSION_TIMEOUT_MS,
+      });
+      const answer = interaction.values[0] ?? "";
+      collected[q.question] = answer;
+      await interaction.update({
+        content: promptText + `\n\n→ ${interaction.user.username}: **${answer}**`,
+        components: [],
+      });
+    } catch {
+      await promptMsg.edit({ content: promptText + "\n\n→ ⏰ Timeout", components: [] }).catch(() => {});
+      return { behavior: "deny", message: `使用者未在 60s 內回答 "${q.question}"`, interrupt: true };
+    }
+  }
+
+  return { behavior: "allow", updatedInput: { ...p.input, answers: collected } };
+}
+
+async function handleGenericPermission(p: PermissionInput): Promise<PermissionResult> {
+  const channel = await fetchPermissionChannel();
+  const inputPreview = JSON.stringify(p.input, null, 2);
+  const truncated = inputPreview.length > 1500 ? inputPreview.slice(0, 1500) + "\n...(truncated)" : inputPreview;
+  const content = `🔐 **權限請求** (bridge: \`${BRIDGE_LABEL}\`)\n工具：\`${p.tool_name}\`\n\`\`\`json\n${truncated}\n\`\`\``.slice(0, 1900);
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("perm-allow").setLabel("Approve").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("perm-deny").setLabel("Deny").setStyle(ButtonStyle.Danger),
+  );
+  const promptMsg = await channel.send({ content, components: [row] }) as Message;
+
+  try {
+    const interaction = await promptMsg.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      filter: (i: ButtonInteraction) => !i.user.bot,
+      time: PERMISSION_TIMEOUT_MS,
+    });
+    const approved = interaction.customId === "perm-allow";
+    await interaction.update({
+      content: content + `\n\n→ ${approved ? "✅ Approved" : "❌ Denied"} by ${interaction.user.username}`,
+      components: [],
+    });
+    if (approved) return { behavior: "allow", updatedInput: p.input };
+    return { behavior: "deny", message: `使用者拒絕 ${p.tool_name}`, interrupt: true };
+  } catch {
+    await promptMsg.edit({ content: content + "\n\n→ ⏰ Timeout (auto-deny)", components: [] }).catch(() => {});
+    return { behavior: "deny", message: "60s 內無回應", interrupt: true };
+  }
+}
+
+async function runPermissionTool(args: P): Promise<PermissionResult> {
+  const tool_name = str(args, "tool_name", true)!;
+  const input = (args.input as Record<string, unknown>) ?? {};
+  const tool_use_id = str(args, "tool_use_id");
+  const p: PermissionInput = { tool_name, input, tool_use_id };
+
+  if (tool_name === "ExitPlanMode") return handleExitPlanMode(p);
+  if (tool_name === "AskUserQuestion") return handleAskUserQuestion(p);
+  return handleGenericPermission(p);
+}
+
+const REQUEST_PERMISSION_TOOL = {
+  name: "request_permission",
+  description: [
+    "處理 Claude CLI 的權限請求（與 --permission-prompt-tool 配合）。",
+    "會在 bridge 綁定的 Discord 頻道顯示按鈕讓使用者 Approve/Deny。",
+    "ExitPlanMode → 顯示 plan 預覽 + Approve/Reject。",
+    "AskUserQuestion → 渲染 select menu 收集答案塞回 updatedInput.answers。",
+    "其他 tool → 顯示 tool name + input JSON + Approve/Deny。",
+    "60s 內無回應 → deny + interrupt（中斷整個 turn）。",
+  ].join("\n"),
+  inputSchema: {
+    type: "object",
+    properties: {
+      tool_name: { type: "string", description: "請求權限的 tool 名稱" },
+      input: { type: "object", description: "tool 的輸入參數" },
+      tool_use_id: { type: "string", description: "本次 tool use 的唯一 ID（選填）" },
+    },
+    required: ["tool_name", "input"],
+  },
+};
+
 // ── MCP Tool Schema ──────────────────────────────────────────────────────────
 
 const ALL_ACTIONS = [
@@ -643,11 +854,21 @@ rl.on("line", async (line) => {
         break;
 
       case "tools/list":
-        send(id, { tools: [TOOL] });
+        send(id, { tools: [TOOL, REQUEST_PERMISSION_TOOL] });
         break;
 
       case "tools/call": {
         const p = params as { name: string; arguments: P };
+        if (p.name === "request_permission") {
+          try {
+            const result = await runPermissionTool(p.arguments);
+            send(id, { content: [{ type: "text", text: JSON.stringify(result) }] });
+          } catch (err) {
+            const fallback = { behavior: "deny", message: `permission tool error: ${err instanceof Error ? err.message : String(err)}`, interrupt: true };
+            send(id, { content: [{ type: "text", text: JSON.stringify(fallback) }], isError: true });
+          }
+          break;
+        }
         if (p.name !== "discord" && p.name !== "message") {
           sendErr(id, -32601, `Unknown tool: ${p.name}`);
           break;
@@ -669,4 +890,7 @@ rl.on("line", async (line) => {
   }
 });
 
-rl.on("close", () => process.exit(0));
+rl.on("close", async () => {
+  try { await _client?.destroy(); } catch { /* ignore */ }
+  process.exit(0);
+});

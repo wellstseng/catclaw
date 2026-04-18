@@ -77,8 +77,14 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
       "--verbose",
     ];
 
+    // 互斥分支：dangerouslySkipPermissions 與 --permission-prompt-tool 不可共存
+    // - true：信任模式，沿用舊行為直接放行
+    // - false（預設）：走 MCP request_permission tool → Discord 按鈕審批
     if (this.config.dangerouslySkipPermissions) {
       args.push("--dangerously-skip-permissions");
+      log.warn(`[cli-bridge:${this.config.label}] dangerouslySkipPermissions=true（fail-open，所有 tool 直接放行）`);
+    } else {
+      args.push("--permission-prompt-tool", "mcp__catclaw-bridge-discord__request_permission");
     }
 
     if (this.config.sessionId) {
@@ -104,7 +110,11 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
     // 注入 bridge runtime env（讓 CLI 內可以 echo $CATCLAW_BRIDGE_* 查證部署資訊）
     const bridgeEnv: Record<string, string> = { ...process.env as Record<string, string> };
     bridgeEnv.CATCLAW_BRIDGE_LABEL = this.config.label;
-    if (this.config.channelId) bridgeEnv.CATCLAW_BRIDGE_CHANNEL_ID = this.config.channelId;
+    if (this.config.channelId) {
+      bridgeEnv.CATCLAW_BRIDGE_CHANNEL_ID = this.config.channelId;
+      // request_permission 用：MCP server 啟動 Discord Gateway 後要 fetch 哪個頻道發按鈕
+      bridgeEnv.DISCORD_CHANNEL_ID = this.config.channelId;
+    }
     if (this.config.sessionId) bridgeEnv.CATCLAW_BRIDGE_SESSION_ID = this.config.sessionId;
 
     this.proc = spawn(this.config.claudeBin, args, {

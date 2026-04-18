@@ -36,6 +36,10 @@
 - **Hot-reload sessionId 排除** — `configSnapshotJson()` 比對設定時排除 sessionId，避免 `persistSessionId()` 觸發不必要的 bridge 重建
 - **process.lastStderr** — `CliProcess` 記錄最後 stderr 輸出，供 bridge crash 偵測使用
 - **圖片附件（multimodal stdin）** — `reply.ts` `extractAttachments()` 下載支援的圖片（png/jpeg/gif/webp，≤5MB）並 base64 編碼成 `StdinImageBlock[]`；`bridge.send()` 有 `imageBlocks` 時改送 `content: [{type:"text"}, {type:"image", source:{type:"base64", ...}}]` 而非純字串。避免 Claude CLI 把 Discord CDN URL 當 image URL source 傳給 Anthropic API（CDN 權限/過期會導致 "Could not process image" 400）。下載失敗或超過大小限制時降級為 URL 文字描述。
+- **權限審批（D3）** — `dangerouslySkipPermissions` **預設 false**（fail-safe）。`process.ts` spawn 時走互斥分支：
+  - `true` → 加 `--dangerously-skip-permissions`，**不**加 `--permission-prompt-tool`（信任模式，沿用舊行為），同時 log warn
+  - `false`（預設）→ 加 `--permission-prompt-tool mcp__catclaw-bridge-discord__request_permission`，**不**加 dangerous flag
+  CLI 任何權限請求（含 `ExitPlanMode` / `AskUserQuestion`）會呼叫 MCP server 的 `request_permission` tool；`discord-server.ts` 開自己的 discord.js Gateway Client（用 bridge bot token），在 `DISCORD_CHANNEL_ID`（由 process.ts 注入）顯示按鈕：`ExitPlanMode` 顯示 plan 預覽 + Approve/Reject、`AskUserQuestion` 渲染 StringSelectMenu 收集答案塞回 `updatedInput.answers`、其他 tool 顯示 `tool_name + input JSON` + Approve/Deny。60s 內無回應 → `{behavior:"deny", interrupt:true}` 中斷整個 turn。stdin close 時 `client.destroy()` 收尾
 
 ## 整合點
 
@@ -55,7 +59,8 @@
 
 | 功能 | 實作位置 | 說明 |
 |------|---------|------|
-| control_request | `reply.ts` `handleControlRequest()` + `bridge.ts` `sendControlResponse()` | CLI 權限請求 → Discord Approve/Deny 按鈕，60s 超時自動拒絕 |
+| control_request | `reply.ts` `handleControlRequest()` + `bridge.ts` `sendControlResponse()` | CLI 權限請求 → Discord Approve/Deny 按鈕，60s 超時自動拒絕（舊版 fallback；`dangerouslySkipPermissions=false` 時主路徑為 D3） |
+| 權限審批（D3） | `mcp/discord-server.ts` `request_permission` + `process.ts` spawn 互斥分支 + `bridge.ts:517` 預設 false | Claude CLI `--permission-prompt-tool mcp__catclaw-bridge-discord__request_permission` → MCP server 啟自己的 Gateway Client → 綁定頻道顯示 Approve/Deny / Reject / SelectMenu。`ExitPlanMode` 顯示 plan、`AskUserQuestion` 渲染 select menu 把答案塞回 `updatedInput.answers`、其他 tool 顯示 JSON 預覽。60s timeout = `{behavior:"deny", interrupt:true}` |
 | thinking 顯示 | `reply.ts` + `types.ts` `showThinking` | `cliBridge.showThinking: true` → thinking 以 Discord spoiler (`||..||`) 顯示 |
 | 附件支援 | `reply.ts` `extractAttachments()` + `discord.ts` / `cli-bridge/index.ts` 路由 | 圖片下載後轉 base64 inline（stdin content 變 array），其他檔案仍以 URL 文字描述附加 |
 | 對話歷程匯出 | `dashboard.ts` `GET /api/cli-bridge/:label/export` + UI 匯出按鈕 | 一鍵匯出 Markdown，含 user/assistant/tools |
@@ -64,6 +69,7 @@
 | 跨頻道 mention 回應 | `index.ts` + `discord-sender.ts` `withChannel()` + `reply.ts` `senderOverride` + `bridge.ts` `wrapWithChannelTag` | CLI Bridge bot 被 mention 時不限於綁定頻道，可在任意頻道/thread/guild 回應。`withChannel()` 建立 proxy sender 指向來源頻道；stdin channel tag 跨頻道時 `chat_id` 改為來源頻道、新增 `home_channel` 屬性標記綁定頻道、hint 提示跨頻道操作方式。MCP Discord tool 不限頻道（`DISCORD_ALLOWED_CHANNELS` 已移除），存取範圍由 bot token 的 Discord 權限決定 |
 | 跨頻道上下文注入 | `index.ts` `handleIndependentBotMessage()` + `consumeBridgeInboundHistory(bridge, channelId)` | 跨頻道 mention 時消費來源頻道的 inbound history（scope=`bridge:{label}`），統一走 inbound 機制而非 Discord API fetch。消費即清除，不重複注入 |
 | rate limit 保護 | `reply.ts` `editIntervalMs` + `lastEditTime` 計數器 | `cliBridge.editIntervalMs` 可設定（預設 800ms），防止 Discord API rate limit |
+| 長訊息分段 | `reply.ts` `splitForDiscord()` | 串流溢出 / 最終 flush 超過 Discord 2000 字上限時自動切段（優先換行切、跨段 fence 補 open/close），避免 `.slice(0, TEXT_LIMIT)` 靜默截斷 |
 | Dashboard 監控 | `dashboard.ts` UI + `_cbAutoRefresh` | 10s 自動刷新狀態、SSE 即時串流、匯出按鈕、刷新按鈕 |
 | `/cd` 工作目錄切換 | `slash.ts` `handleCd()` + `index.ts` `rebuildBridgeForChannel()` | Slash command 切換 bridge cwd，原子重建路徑統一關舊建新，持久化到 `cli-bridges.json` |
 | `/session new/set` | `slash.ts` `handleSession()` + `index.ts` `rebuildBridgeForChannel()` | 改寫 channelConfig.sessionId 後走原子重建，讓新 process 以正確的 `--resume` 啟動 |
