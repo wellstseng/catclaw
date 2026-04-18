@@ -30,11 +30,12 @@ flowchart LR
 
 ### 1. Compaction Strategy
 
-**觸發：** tokens > `triggerTokens`（預設 4000）
+**觸發：** tokens > `triggerTokens`（預設 20000）
 
-- 保留最近 N 個 turn（預設 5）
-- 將較舊的訊息送給 LLM 產生摘要
-- 摘要取代原始訊息
+- 保留最近 N 個 turn（預設 8）
+- 過濾掉 stub/索引/外部化標記（避免雙重失真），只對有語意的訊息做摘要
+- 摘要結果標記為 `[對話摘要｜多輪壓縮，非原文，可能遺漏細節]`，附 ⚠️ 警語禁止直接引用
+- 過濾後無語意內容 → 跳過 compaction
 - 若無 compaction provider，退化為 Sliding Window
 
 ### 2. Budget Guard Strategy

@@ -99,3 +99,7 @@ LLM 輸出被截斷時（`max_tokens` stop reason），自動續接：
 | `thinking` | LLM 思考過程（extended thinking） |
 | `error` | 錯誤 |
 | `done` | Turn 完成 |
+
+## Turn Cap Warning
+
+Session 的 `turnCount` 超過 `contextEngineering.turnCapWarning`（預設 100）且為 20 的倍數時，發出 `log.warn` 建議執行 `/clear-session`。設 0 關閉。
