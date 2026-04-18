@@ -32,6 +32,14 @@ export const tool: Tool = {
     const command = String(params["command"] ?? "").trim();
     if (!command) return { error: "command 不能為空" };
 
+    // 攔截常見誤用：把 MCP tool 當 skill 呼叫
+    if (/^\/mcp[\s_]/i.test(command)) {
+      const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
+      return {
+        error: `「${preview}」不是 skill。MCP tool 請直接以 tool 名稱呼叫（例：mcp_catclaw-discord_discord、mcp_github_create_issue），不要用 skill tool 包裝 /mcp 語法。`,
+      };
+    }
+
     // 比對 skill
     const { matchSkill } = await import("../../skills/registry.js");
     const match = matchSkill(command);
