@@ -1,7 +1,7 @@
 # Tool Log Store — Tool 執行記錄持久化
 
 > 對應原始碼：`src/core/tool-log-store.ts`
-> 更新日期：2026-04-17
+> 更新日期：2026-04-18
 
 ## 概觀
 
@@ -18,7 +18,7 @@ Session history → "[工具索引 turn N] 呼叫：read_file×2, edit_file×1 +
 
 | 方法 | 說明 |
 |------|------|
-| `save(sessionKey, turnIndex, tools)` | 儲存 turn 的 tool log，回傳相對路徑（空陣列不存） |
+| `save(sessionKey, turnIndex, tools)` | 儲存 turn 的 tool log，回傳絕對路徑（空陣列不存） |
 | `cleanup(retentionDays=7)` | 清除超過 N 天未修改的目錄 |
 | `static buildIndexSummary(tools, logPath, turnIndex?)` | 產生索引摘要文字（含 turn 編號 + ⚠️ 警語） |
 
@@ -46,7 +46,7 @@ interface ToolLogEntry {
 ```
 [工具索引 turn 42] 呼叫：read_file×2, edit_file×1
 ⚠️ 僅 tool 名稱，無 args/result。若需引用此輪工具內容，必須先 read_file：
-tool-logs/discord_ch_111/turn_42.json
+/abs/path/data/tool-logs/discord_ch_111/turn_42.json
 ```
 
 > **舊格式**（仍存於既有 session）：`[工具記錄] read_file×2 → path`

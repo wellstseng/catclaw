@@ -1,7 +1,7 @@
 # modules/context-engine — Context 壓縮策略
 
 > 檔案：`src/core/context-engine.ts`
-> 更新日期：2026-04-17
+> 更新日期：2026-04-18
 
 ## 職責
 
@@ -184,11 +184,11 @@ L3 stub 和各類標記的格式設計為「誠實指標」而非「假錨點」
 4. 設定 `compressedBy = "externalize"`，跳過後續 truncate
 5. 存檔失敗 → fallback 到一般 truncate
 
-**摘要指標格式**（路徑 + 原始 token 數，不含原文）：
+**摘要指標格式**（絕對路徑 + 原始 token 數，不含原文）：
 ```
 [📄 外部化] assistant turn 5（原始 1234 tokens 已存至檔案）
-→ externalized/discord_ch_123/msg_t5_i12.json
-⚠️ 如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。若無法讀取則告知使用者，勿腦補。
+→ /abs/path/data/externalized/discord_ch_123/msg_t5_i12.json
+⚠️ 如需原文請用 read_file 讀取上方絕對路徑。若無法讀取則告知使用者，勿腦補。
 ```
 
 **外部檔案格式**：

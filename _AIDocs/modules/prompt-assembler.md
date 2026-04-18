@@ -1,7 +1,7 @@
 # modules/prompt-assembler — 模組化 System Prompt 組裝
 
 > 檔案：`src/core/prompt-assembler.ts`
-> 更新日期：2026-04-17
+> 更新日期：2026-04-18
 
 ## 職責
 

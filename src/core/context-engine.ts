@@ -298,7 +298,7 @@ function externalizeMessage(
   };
 
   writeFileSync(filePath, JSON.stringify(record, null, 2), "utf-8");
-  return `externalized/${sk}/${fileName}`;
+  return filePath;
 }
 
 /** 建立外部化摘要指標訊息（不含原文截斷，只標記外部化路徑） */
@@ -306,7 +306,7 @@ function createExternalizedStub(m: Message, relativePath: string, targetLevel: n
   const origTokens = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
   const topic = extractTopicHint(m);
   const topicLine = topic ? `\n主題：${topic}` : "";
-  const stub = `[📄 外部化] ${m.role} turn ${m.turnIndex ?? "?"}（原始 ${origTokens} tokens 已存至檔案）${topicLine}\n→ ${relativePath}\n⚠️ 如需原文請用 read_file 讀取該路徑（相對於 CATCLAW_WORKSPACE/data）。若無法讀取則告知使用者，勿腦補。`;
+  const stub = `[📄 外部化] ${m.role} turn ${m.turnIndex ?? "?"}（原始 ${origTokens} tokens 已存至檔案）${topicLine}\n→ ${relativePath}\n⚠️ 如需原文請用 read_file 讀取上方絕對路徑。若無法讀取則告知使用者，勿腦補。`;
   return {
     ...m,
     content: stub,
@@ -904,7 +904,7 @@ export function buildExternalizedIndex(messages: Message[]): string {
     const text = typeof m.content === "string" ? m.content : getMessageText(m);
     // 匹配外部化 stub
     if (text.includes("[📄 外部化]")) {
-      const pathMatch = text.match(/→\s*(externalized\/\S+)/);
+      const pathMatch = text.match(/→\s*(\S*externalized\/\S+)/);
       const topicMatch = text.match(/主題：(.+?)(?:\n|$)/);
       const turnMatch = text.match(/turn\s+(\d+)/);
       if (pathMatch) {
@@ -915,8 +915,8 @@ export function buildExternalizedIndex(messages: Message[]): string {
       }
     }
     // 匹配截斷 + 路徑
-    else if (text.includes("→ 完整原文：externalized/")) {
-      const pathMatch = text.match(/→ 完整原文：(externalized\/\S+)/);
+    else if (text.includes("→ 完整原文：") && text.includes("externalized/")) {
+      const pathMatch = text.match(/→ 完整原文：(\S*externalized\/\S+)/);
       const turnLabel = m.turnIndex != null ? `turn ${m.turnIndex}` : "?";
       if (pathMatch) {
         const preview = text.replace(/\n.*/s, "").slice(0, 60).trim();
@@ -926,7 +926,7 @@ export function buildExternalizedIndex(messages: Message[]): string {
   }
   if (entries.length === 0) return "";
   return [
-    "[外部化索引] 以下訊息原文已存檔，與問題相關時用 read_file 讀取（路徑相對於 data/）：",
+    "[外部化索引] 以下訊息原文已存檔，與問題相關時用 read_file 讀取（絕對路徑）：",
     ...entries,
   ].join("\n");
 }

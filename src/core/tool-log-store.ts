@@ -58,8 +58,6 @@ export class ToolLogStore {
 
     const fileName = `turn_${turnIndex}.json`;
     const filePath = join(dir, fileName);
-    const relativePath = `tool-logs/${safeKey}/${fileName}`;
-
     const record: ToolLog = {
       ts: new Date().toISOString(),
       sessionKey,
@@ -69,13 +67,13 @@ export class ToolLogStore {
 
     try {
       writeFileSync(filePath, JSON.stringify(record, null, 2), "utf-8");
-      log.debug(`[tool-log] 儲存 ${relativePath}（${tools.length} tools）`);
+      log.debug(`[tool-log] 儲存 ${filePath}（${tools.length} tools）`);
     } catch (err) {
       log.warn(`[tool-log] 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
 
-    return relativePath;
+    return filePath;
   }
 
   /**
@@ -102,7 +100,7 @@ export class ToolLogStore {
 
   /**
    * 產生供 session history 索引的摘要訊息文字
-   * 例：[工具記錄] read_file×2, edit_file×1 → tool-logs/discord_ch_111/turn_42.json
+   * 例：[工具記錄] read_file×2, edit_file×1 → /abs/path/tool-logs/discord_ch_111/turn_42.json
    */
   static buildIndexSummary(tools: ToolLogEntry[], logPath: string, turnIndex?: number): string {
     const counts = new Map<string, number>();
