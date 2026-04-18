@@ -612,36 +612,69 @@ export class CompactionStrategy implements ContextStrategy {
     }
 
     try {
-      const summaryPrompt = `以下是對話歷史，請用繁體中文精簡摘要（保留關鍵事實、決策、錯誤）：\n\n${
-        semanticMessages.map(m => {
-          let content: string;
-          if (typeof m.content === "string") {
-            content = m.content;
-          } else {
-            // 從 tool blocks 提取有意義的摘要文字（而非棄用 "[tool interaction]"）
-            content = (m.content as Array<{ type: string; name?: string; input?: unknown; tool_use_id?: string; content?: string }>)
-              .map(b => {
-                if (b.type === "tool_use") {
-                  const params = b.input ? JSON.stringify(b.input).slice(0, 120) : "";
-                  return `[工具:${b.name}] ${params}`;
-                }
-                if (b.type === "tool_result") {
-                  const result = typeof b.content === "string" ? b.content.slice(0, 200) : "";
-                  return `[結果] ${result}`;
-                }
-                if (b.type === "text") return (b as unknown as { text: string }).text;
-                return "";
-              })
-              .filter(Boolean)
-              .join(" ");
-          }
-          return `[${m.role}]: ${content.slice(0, 500)}`;
-        }).join("\n")
-      }`;
+      // 切割上限提高：避免使用者長指令 / tool 內容被截斷導致摘要失真
+      const SLICE_USER = 2000;
+      const SLICE_ASSISTANT = 1500;
+      const SLICE_TOOL_USE = 500;
+      const SLICE_TOOL_RESULT = 800;
+
+      const formatMsg = (m: Message): string => {
+        const role = (m as unknown as { role: string }).role;
+        let content: string;
+        if (typeof m.content === "string") {
+          content = m.content;
+        } else {
+          // 從 tool blocks 提取有意義的摘要文字（而非棄用 "[tool interaction]"）
+          content = (m.content as Array<{ type: string; name?: string; input?: unknown; tool_use_id?: string; content?: string }>)
+            .map(b => {
+              if (b.type === "tool_use") {
+                const params = b.input ? JSON.stringify(b.input).slice(0, SLICE_TOOL_USE) : "";
+                return `[工具:${b.name}] ${params}`;
+              }
+              if (b.type === "tool_result") {
+                const result = typeof b.content === "string" ? b.content.slice(0, SLICE_TOOL_RESULT) : "";
+                return `[結果] ${result}`;
+              }
+              if (b.type === "text") return (b as unknown as { text: string }).text;
+              return "";
+            })
+            .filter(Boolean)
+            .join(" ");
+        }
+        const limit = role === "user" ? SLICE_USER : SLICE_ASSISTANT;
+        return `[${role}]: ${content.slice(0, limit)}`;
+      };
+
+      const summaryPrompt = `以下是我（agent）與使用者過去的對話歷史。請用繁體中文以「我（接續工作的 agent）的視角」寫一份結構化筆記，幫助我接回後續對話時不偏離使用者意圖。
+
+# 必填章節（缺項以「無」表示，不要省略章節）
+
+## 使用者意圖
+使用者真正想完成的事是什麼？（用使用者的話描述目標，而非我做了什麼）
+
+## 已決策事項
+雙方明確同意要採用的方案 / 拒絕的方案 / 使用者明確的偏好
+
+## 待辦／進行中
+我答應要做但還沒完成的事；目前正在進行的步驟
+
+## 未解決問題
+使用者問了但還沒得到滿意答案的事；卡住的點；待釐清的歧義
+
+## 工具產出重點
+工具呼叫的「結論」（不要列工具名稱清單；要寫從工具拿到了什麼有用資訊）
+
+## 重要事實 / 限制
+不寫下會讓我接續對話時搞錯的關鍵事實（檔案路徑、決策原因、規格限制等）
+
+# 對話內容
+${semanticMessages.map(formatMsg).join("\n")}`;
 
       const result = await ceProvider.stream(
         [{ role: "user", content: summaryPrompt }],
-        { systemPrompt: "你是摘要助手，只輸出摘要文字，不加說明。" },
+        {
+          systemPrompt: "你是負責濃縮對話、讓同一個 agent 能無縫接續工作的紀錄員。寫摘要時用第一人稱（我），優先保留「使用者意圖」與「未解決問題」。不要寫成第三人稱旁觀報告，不要列工具流水帳，不要加開場白或結語。",
+        },
       );
 
       let summaryText = "";
@@ -649,9 +682,26 @@ export class CompactionStrategy implements ContextStrategy {
         if (evt.type === "text_delta" && evt.text) summaryText += evt.text;
       }
 
+      // C′ 輕量版：把使用者最近一則完整指令的原文當「意圖錨點」附在摘要後
+      // 即便摘要漏了什麼，agent 仍能讀到使用者最近一次親口說的話
+      const lastIntentAnchor = (() => {
+        for (let i = semanticMessages.length - 1; i >= 0; i--) {
+          const m = semanticMessages[i]!;
+          if ((m as unknown as { role: string }).role !== "user") continue;
+          const text = typeof m.content === "string" ? m.content : getMessageText(m);
+          if (text.length < 50) continue;
+          return text.slice(0, 800);
+        }
+        return null;
+      })();
+
+      const anchorBlock = lastIntentAnchor
+        ? `\n\n📌 使用者最近一則完整指令（原文，未壓縮）：\n${lastIntentAnchor}`
+        : "";
+
       const summaryMessage: Message = {
         role: "user",
-        content: `[對話摘要｜多輪壓縮，非原文，可能遺漏細節]\n${summaryText.trim()}\n⚠️ 若使用者要求引用本範圍的細節，承認這是壓縮摘要、請使用者提供正確版本，不得直接引用本段文字作答。`,
+        content: `[對話摘要｜多輪壓縮，非原文，可能遺漏細節]\n${summaryText.trim()}${anchorBlock}\n⚠️ 若使用者要求引用本範圍的細節，承認這是壓縮摘要、請使用者提供正確版本，不得直接引用本段文字作答。`,
       };
 
       const compressed = [...sysMessages, summaryMessage, ...toKeep];
