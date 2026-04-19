@@ -559,8 +559,9 @@ label.cfg-toggle { min-width: 36px; }
 
 <!-- Trace Detail（全域共用，任何 tab 都能開啟） -->
 <div class="card" style="margin:0 20px 20px;display:none" id="trace-detail-card">
-  <h2>Trace Detail <span id="trace-detail-id" style="font-size:0.8em;color:var(--fg2)"></span>
+  <h2>Trace Detail <span id="trace-detail-id" style="font-size:0.8em;color:var(--fg2);cursor:pointer;user-select:all" title="雙擊複製 Trace ID" ondblclick="navigator.clipboard.writeText(this.textContent).then(()=>{const o=this.textContent;this.textContent='✅ copied!';setTimeout(()=>this.textContent=o,1000)})"></span>
     <button class="btn btn-sm" style="float:right" onclick="document.getElementById('trace-detail-card').style.display='none'">✕ 關閉</button>
+    <a id="trace-export-link" class="btn btn-sm" style="float:right;margin-right:6px;text-decoration:none" target="_blank">📥 匯出</a>
   </h2>
   <div id="trace-detail"></div>
 </div>
@@ -793,6 +794,7 @@ label.cfg-toggle { min-width: 36px; }
           <button class="btn btn-sm btn-red" onclick="cbRestart()">⟳ 重啟</button>
           <button class="btn btn-sm" onclick="cbExport()">📥 匯出</button>
           <button class="btn btn-sm" onclick="cbLoadStatus()">↻ 刷新</button>
+          <button class="btn btn-sm btn-red" onclick="cbDeleteBridge()" style="margin-left:auto">🗑 移除</button>
         </div>
       </div>
       <div class="card">
@@ -2494,6 +2496,8 @@ async function showTraceDetail(traceId) {
   card.style.display = 'block';
   card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   idEl.textContent = traceId;
+  const exportLink = document.getElementById('trace-export-link');
+  if (exportLink) exportLink.href = '/api/traces/' + traceId + '/export';
   el.innerHTML = '<div style="color:var(--fg2)">載入中…</div>';
   try {
     const t = await authFetch('/api/traces/' + traceId).then(r => r.json());
@@ -3691,6 +3695,24 @@ function cbExport() {
   window.open(url, '_blank');
 }
 
+async function cbDeleteBridge() {
+  if (!_cbSelectedLabel) return;
+  if (!confirm('確定移除 CLI Bridge「' + _cbSelectedLabel + '」？\\n將關閉 process 並從 cli-bridges.json 移除設定。')) return;
+  try {
+    const res = await authFetch('/api/cli-bridge/' + encodeURIComponent(_cbSelectedLabel), { method: 'DELETE' });
+    const d = await res.json();
+    if (d.success) {
+      document.getElementById('cb-detail').style.display = 'none';
+      _cbSelectedLabel = null;
+      if (_cbEventSource) { _cbEventSource.close(); _cbEventSource = null; }
+      loadCliBridges();
+      cbLoadConfig();
+    } else {
+      alert('移除失敗: ' + (d.error || '未知錯誤'));
+    }
+  } catch (err) { alert('錯誤: ' + err.message); }
+}
+
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 loadOverview();
 loadStatus();
@@ -4399,6 +4421,131 @@ export class DashboardServer {
       if (url.startsWith("/api/traces") && method === "GET") {
         const traceStore = getTraceStore();
         if (!traceStore) { res.writeHead(500); res.end(JSON.stringify({ error: "TraceStore not initialized" })); return; }
+
+        // /api/traces/:traceId/export — 匯出單筆 trace 為 Markdown
+        const exportMatch = url.match(/^\/api\/traces\/([a-f0-9-]+)\/export/);
+        if (exportMatch) {
+          const entry = traceStore.getById(exportMatch[1]!);
+          if (!entry) { res.writeHead(404); res.end(JSON.stringify({ error: "Trace not found" })); return; }
+          const ctxStore = getTraceContextStore();
+          const ctx = ctxStore?.get(exportMatch[1]!);
+          let md = `# Trace Export: ${entry.traceId}\n\n`;
+          md += `匯出時間：${new Date().toISOString()}\n\n`;
+          md += `| 欄位 | 值 |\n|------|----|\n`;
+          md += `| Trace ID | \`${entry.traceId}\` |\n`;
+          md += `| 時間 | ${entry.ts} |\n`;
+          md += `| Channel | ${entry.channelId} |\n`;
+          md += `| Agent | ${entry.agentId ?? "-"} |\n`;
+          md += `| Category | ${entry.category ?? "-"} |\n`;
+          md += `| Status | ${entry.status} |\n`;
+          md += `| Duration | ${entry.totalDurationMs ? (entry.totalDurationMs / 1000).toFixed(1) + "s" : "-"} |\n`;
+          md += `| Effective Input | ${(entry.effectiveInputTokens ?? entry.totalInputTokens ?? 0).toLocaleString()} |\n`;
+          md += `| Output Tokens | ${(entry.totalOutputTokens ?? 0).toLocaleString()} |\n`;
+          md += `| Cache R/W | ${(entry.totalCacheRead ?? 0).toLocaleString()} / ${(entry.totalCacheWrite ?? 0).toLocaleString()} |\n`;
+          md += `| Tools | ${entry.totalToolCalls ?? 0} |\n`;
+          md += `| Cost | ${entry.estimatedCostUsd ? "$" + entry.estimatedCostUsd.toFixed(4) : "-"} |\n`;
+          if (entry.error) md += `| Error | ${entry.error} |\n`;
+          md += `\n`;
+          // Inbound
+          if (entry.inbound) {
+            md += `## ① Inbound\n\n`;
+            md += `- Text: ${entry.inbound.textPreview}\n`;
+            md += `- Chars: ${entry.inbound.charCount} | Attachments: ${entry.inbound.attachments}\n`;
+            if (entry.inbound.debounceMs) md += `- Debounce: ${entry.inbound.debounceMs}ms\n`;
+            md += `\n`;
+          }
+          // Context
+          if (entry.context) {
+            md += `## ② Context Assembly\n\n`;
+            md += `- Duration: ${entry.context.endMs - entry.context.startMs}ms\n`;
+            md += `- System Prompt: ~${entry.context.systemPromptTokens} tokens\n`;
+            md += `- History: ${entry.context.historyMessageCount} msgs (~${entry.context.historyTokens} tokens)\n`;
+            md += `- Total Context: ~${entry.context.totalContextTokens} tokens\n`;
+            if (entry.context.memoryRecall) {
+              const r = entry.context.memoryRecall;
+              md += `- Memory Recall: ${r.fragmentCount} fragments, ${r.injectedTokens} tokens (${r.durationMs}ms)\n`;
+              if (r.atomNames?.length) md += `  - Atoms: ${r.atomNames.join(", ")}\n`;
+            }
+            md += `\n`;
+          }
+          // LLM Calls
+          if (entry.llmCalls?.length) {
+            md += `## ③ LLM Call Loop (${entry.llmCalls.length} iterations)\n\n`;
+            for (const call of entry.llmCalls) {
+              md += `### Loop #${call.iteration} — ${call.model ?? "?"}\n\n`;
+              md += `- Duration: ${(call.durationMs / 1000).toFixed(1)}s | Stop: ${call.stopReason ?? "-"}\n`;
+              md += `- Input: ${call.inputTokens.toLocaleString()} | Output: ${call.outputTokens.toLocaleString()}`;
+              if (call.cacheRead || call.cacheWrite) md += ` | Cache R:${(call.cacheRead ?? 0).toLocaleString()} W:${(call.cacheWrite ?? 0).toLocaleString()}`;
+              md += `\n`;
+              if (call.toolCalls?.length) {
+                md += `\n| Tool | Duration | Params | Result |\n|------|----------|--------|--------|\n`;
+                for (const tc of call.toolCalls) {
+                  const p = (tc.paramsPreview ?? "").slice(0, 80).replace(/\|/g, "\\|");
+                  const r = tc.error ? `❌ ${tc.error.slice(0, 60)}` : (tc.resultPreview ?? "").slice(0, 60).replace(/\|/g, "\\|");
+                  md += `| \`${tc.name}\` | ${tc.durationMs}ms | ${p} | ${r} |\n`;
+                }
+              }
+              md += `\n`;
+            }
+          }
+          // CE
+          if (entry.contextEngineering?.strategiesApplied?.length) {
+            const ce = entry.contextEngineering;
+            md += `## ④ Context Engineering\n\n`;
+            md += `- Strategies: ${ce.strategiesApplied.join(", ")}\n`;
+            md += `- Before: ${ce.tokensBeforeCE.toLocaleString()} → After: ${ce.tokensAfterCE.toLocaleString()} (saved: ${ce.tokensSaved.toLocaleString()})\n`;
+            if (ce.overflowSignaled) md += `- ⚠ Overflow Hard Stop triggered\n`;
+            md += `\n`;
+          }
+          // Abort
+          if (entry.abort) {
+            md += `## ⑤ Abort\n\n- Trigger: ${entry.abort.trigger}\n- Rollback: ${entry.abort.rollback}\n\n`;
+          }
+          // Post-process
+          if (entry.postProcess) {
+            md += `## ⑥ Post-process\n\n`;
+            md += `- Extract: ${entry.postProcess.extractRan ? "✅" : "⏭"}\n`;
+            md += `- Snapshot: ${entry.postProcess.sessionSnapshotKept ? "✅" : "❌"}\n`;
+            md += `- Session note: ${entry.postProcess.sessionNoteUpdated ? "✅" : "⏭"}\n`;
+            md += `\n`;
+          }
+          // Response
+          if (entry.response) {
+            md += `## ⑦ Response\n\n`;
+            md += `- Chars: ${entry.response.charCount} | Duration: ${(entry.response.durationMs / 1000).toFixed(1)}s\n`;
+            md += `- Preview: ${entry.response.textPreview}\n\n`;
+          }
+          // Workflow Events
+          if (entry.workflowEvents?.length) {
+            md += `## Workflow Events\n\n`;
+            for (const we of entry.workflowEvents) {
+              md += `- [${we.ts}] **${we.type}** ${we.detail ?? ""}\n`;
+            }
+            md += `\n`;
+          }
+          // Context Snapshot
+          if (ctx) {
+            md += `## Context Snapshot\n\n`;
+            if (ctx.systemPrompt) {
+              md += `### System Prompt (${ctx.systemPrompt.length} chars)\n\n`;
+              md += "```\n" + ctx.systemPrompt.slice(0, 5000) + (ctx.systemPrompt.length > 5000 ? "\n…(truncated)" : "") + "\n```\n\n";
+            }
+            if (ctx.memoryContext) {
+              md += `### Memory Context (${ctx.memoryContext.length} chars)\n\n`;
+              md += "```\n" + ctx.memoryContext.slice(0, 2000) + (ctx.memoryContext.length > 2000 ? "\n…(truncated)" : "") + "\n```\n\n";
+            }
+          }
+          // Raw JSON
+          md += `## Raw JSON\n\n`;
+          md += "```json\n" + JSON.stringify(entry, null, 2) + "\n```\n";
+          const shortId = entry.traceId.slice(0, 8);
+          res.writeHead(200, {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Disposition": `attachment; filename="trace-${shortId}-export.md"`,
+          });
+          res.end(md);
+          return;
+        }
 
         // /api/traces/:traceId/context — context snapshot（lazy load）
         const ctxMatch = url.match(/^\/api\/traces\/([a-f0-9-]+)\/context/);
@@ -5445,6 +5592,34 @@ export class DashboardServer {
             res.end(JSON.stringify({ success: true }));
           } catch (err) {
             res.writeHead(500); res.end(JSON.stringify({ success: false, error: String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // DELETE /api/cli-bridge/:label — 關閉 bridge + 移除設定
+      if (url.match(/^\/api\/cli-bridge\/[^/]+$/) && method === "DELETE") {
+        const label = decodeURIComponent(url.split("/")[3]!);
+        void (async () => {
+          try {
+            const { getCliBridgeByLabel, loadAllCliBridgeConfigs, saveCliBridgeConfigs } = await import("../cli-bridge/index.js");
+            // 1. 關閉 bridge（如果存在）
+            const bridge = getCliBridgeByLabel(label);
+            if (bridge) await bridge.shutdown();
+            // 2. 從 config 移除
+            const configs = loadAllCliBridgeConfigs();
+            const filtered = configs.filter(c => c.label !== label);
+            if (filtered.length === configs.length) {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: false, error: `Bridge「${label}」不在設定中` }));
+              return;
+            }
+            saveCliBridgeConfigs(filtered);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true, removed: label }));
+          } catch (err) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, error: String(err) }));
           }
         })();
         return;
