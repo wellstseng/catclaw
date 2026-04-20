@@ -671,6 +671,11 @@ Bot-to-Bot 對話防呆（circuit breaker），Discord API 異常時自動斷路
     "args": ["./dist/mcp/discord-server.js"],
     "env": { "DISCORD_TOKEN": "${DISCORD_TOKEN}" },
     "tier": "public"       // public / standard / elevated / admin / owner（預設 elevated）
+  },
+  "computer-use": {
+    "command": "node",
+    "args": ["./mcp/computer-use/dist/index.js"],
+    "tier": "elevated"     // 螢幕截圖/鍵鼠操控，需 elevated 權限
   }
 }
 ```
