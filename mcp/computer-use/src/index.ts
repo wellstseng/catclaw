@@ -73,7 +73,7 @@ server.tool(
       // 附加尺寸資訊
       let info = `尺寸: ${result.width}×${result.height}`;
       if (result.width !== result.originalWidth) {
-        info += `（原始: ${result.originalWidth}×${result.originalHeight}）`;
+        info += `（原始: ${result.originalWidth}×${result.originalHeight}，座標自動換算，直接用截圖座標即可）`;
       }
       if (stuckInfo) {
         const s = stuckInfo as { isStuck: boolean; unchangedCount: number; diffRatio: number };
@@ -92,10 +92,10 @@ server.tool(
 
 server.tool(
   "computer_click",
-  "滑鼠點擊指定座標。支援左/右/中鍵、雙擊、組合鍵、長按。",
+  "滑鼠點擊指定座標。支援左/右/中鍵、雙擊、組合鍵、長按。座標使用截圖空間（與截圖回傳的尺寸一致），系統會自動換算為螢幕座標，不需手動換算。",
   {
-    x: z.number().describe("X 座標（pixel）"),
-    y: z.number().describe("Y 座標（pixel）"),
+    x: z.number().describe("X 座標（截圖空間 pixel，不需換算）"),
+    y: z.number().describe("Y 座標（截圖空間 pixel，不需換算）"),
     button: z.enum(["left", "right", "middle"]).optional().describe("滑鼠按鍵，預設 left"),
     clicks: z.number().optional().describe("點擊次數（1=單擊, 2=雙擊），預設 1"),
     modifiers: z.array(z.enum(["ctrl", "alt", "shift", "meta", "cmd"])).optional().describe("組合鍵修飾（如 ctrl+click）"),
@@ -137,10 +137,10 @@ server.tool(
 
 server.tool(
   "computer_scroll",
-  "滾輪操作。在指定座標位置滾動。",
+  "滾輪操作。在指定座標位置滾動。座標使用截圖空間，系統自動換算。",
   {
-    x: z.number().describe("滾動位置 X 座標"),
-    y: z.number().describe("滾動位置 Y 座標"),
+    x: z.number().describe("滾動位置 X（截圖空間，不需換算）"),
+    y: z.number().describe("滾動位置 Y（截圖空間，不需換算）"),
     direction: z.enum(["up", "down", "left", "right"]).describe("滾動方向"),
     amount: z.number().optional().describe("滾動量（行數），預設 3"),
   },
@@ -158,13 +158,13 @@ server.tool(
 
 server.tool(
   "computer_cursor",
-  "游標操作：移動（move）、取得位置（position）、拖曳（drag）。",
+  "游標操作：移動（move）、取得位置（position）、拖曳（drag）。座標使用截圖空間，系統自動換算為螢幕座標，不需手動換算。",
   {
     action: z.enum(["move", "position", "drag"]).describe("操作類型"),
-    x: z.number().optional().describe("目標 X（move/drag 用）"),
-    y: z.number().optional().describe("目標 Y（move/drag 用）"),
-    startX: z.number().optional().describe("拖曳起點 X（drag 用）"),
-    startY: z.number().optional().describe("拖曳起點 Y（drag 用）"),
+    x: z.number().optional().describe("目標 X（截圖空間，不需換算）"),
+    y: z.number().optional().describe("目標 Y（截圖空間，不需換算）"),
+    startX: z.number().optional().describe("拖曳起點 X（截圖空間，不需換算）"),
+    startY: z.number().optional().describe("拖曳起點 Y（截圖空間，不需換算）"),
   },
   async (params) => {
     const start = Date.now();
