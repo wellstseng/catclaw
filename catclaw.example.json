@@ -12,7 +12,7 @@
       "enabled": true
     },
 
-    // Per-guild 權限設定
+    // Per-guild / per-channel 權限設定
     // 繼承鏈：Thread → Parent Channel → Guild 預設
     "guilds": {
       // "<你的 Guild ID>": {
@@ -20,8 +20,15 @@
       //   "requireMention": true,
       //   "allowBot": false,
       //   "allowFrom": [],
+      //   "blockGroupMentions": false,
       //   "channels": {
-      //     "<頻道 ID>": { "allow": true, "requireMention": false },
+      //     "<頻道 ID>": {
+      //       "allow": true,
+      //       "requireMention": false,
+      //       "allowBot": false,
+      //       "blockGroupMentions": false,
+      //       "autoThread": false
+      //     },
       //     // autoThread: 每條訊息自動建立 Thread（適合多人討論頻道）
       //     "<thread 頻道 ID>": { "allow": true, "requireMention": false, "autoThread": true }
       //   }
@@ -29,22 +36,36 @@
     }
   },
 
-  // ── 管理員設定（slash commands 權限）─────────────────────────
+  // ── 管理員（slash commands 權限）─────────────────────────────
+  // 允許執行 /restart /reset-session /status 的 Discord user ID
+  // 空陣列 = 拒絕所有人（建議至少填入自己的 ID）
   "admin": {
-    // 允許執行 /restart /reset-session /status 的 Discord user ID
-    // 空陣列 = 拒絕所有人（建議至少填入自己的 ID）
     "allowedUserIds": []
   },
 
-  // ── 全域設定 ───────────────────────────────────────────────────
-  "turnTimeoutMs": 300000,         // 單次回應超時（毫秒），預設 5 分鐘
-  "turnTimeoutToolCallMs": 480000, // tool_call 時延長超時（毫秒），預設 8 分鐘
-  "sessionTtlHours": 168,          // Session 閒置超時（小時），預設 7 天
-  "showToolCalls": "summary",      // all / summary / none
+  // ── 全域基本設定 ───────────────────────────────────────────────
+  "turnTimeoutMs": 300000,            // 單回合逾時（毫秒），預設 5 分鐘
+  "turnTimeoutToolCallMs": 480000,    // tool_call 時延長逾時（毫秒），預設 8 分鐘
+  "showToolCalls": "none",            // all / summary / none
   "showThinking": false,
   "debounceMs": 500,
-  "fileUploadThreshold": 4000,     // 超過此字數上傳為 .md（0 = 停用）
-  "logLevel": "info",              // debug / info / warn / error / silent
+  "fileUploadThreshold": 4000,        // 超過此字數改以 .md 附件上傳（0 = 停用）
+  "streamingReply": true,
+  "logLevel": "debug",                // debug / info / warn / error / silent
+
+  // ── 排程（Cron）────────────────────────────────────────────────
+  "cron": {
+    "enabled": true,
+    "maxConcurrentRuns": 1,
+    "defaultAccountId": "_cron",
+    "defaultProvider": "claude-oauth"
+    // "jobs": [] 亦可放此處（若未使用 data/cron-jobs.json）
+  },
+
+  // ── History（inbound / outbound 歷史記錄開關）─────────────────
+  "history": {
+    "enabled": true
+  },
 
   // ══════════════════════════════════════════════════════════════
   // V2 三層分離設定（推薦）
@@ -55,86 +76,111 @@
   // ── Agent 預設模型 ────────────────────────────────────────────
   "agentDefaults": {
     "model": {
-      // primary：主要使用的模型（alias 或 "provider/model" 格式）
-      "primary": "sonnet",
-      // fallbacks：primary 不可用時依序嘗試
-      "fallbacks": ["anthropic/claude-opus-4-6"]
+      "primary": "sonnet"
     },
     // 模型對照表：key = "provider/model"，alias = 簡短名
     "models": {
-      "anthropic/claude-sonnet-4-6": { "alias": "sonnet" },
-      "anthropic/claude-opus-4-6": { "alias": "opus" },
-      "anthropic/claude-haiku-4-5-20251001": { "alias": "haiku" }
-      // "openai/gpt-4o": {},
-      // "openai-codex/gpt-5.4": {},
-      // "ollama/qwen3:8b": { "alias": "local" }
+      "anthropic/claude-opus-4-6":            { "alias": "opus" },
+      "anthropic/claude-sonnet-4-6":          { "alias": "sonnet" },
+      "anthropic/claude-haiku-4-5-20251001":  { "alias": "haiku" },
+      "ollama/qwen3:14b":                     { "alias": "qwen3" },
+      "ollama/gemma4:latest":                 { "alias": "gemma" },
+      "openai-codex/gpt-5.4":                 { "alias": "codex" },
+      "openai/gpt-4o":                        { "alias": "gpt4o" },
+      "cli-claude/claude":                    { "alias": "cli-claude" },
+      "cli-gemini/gemini":                    { "alias": "cli-gemini" }
     }
   },
 
-  // ── 模型目錄設定（可選）────────────────────────────────────────
+  // ── 自訂 Provider 目錄（與內建合併）─────────────────────────
   // 內建：anthropic、openai、openai-codex（自動載入）
-  // 自訂 provider 在此新增，mode="merge" 與內建合併
-  // "modelsConfig": {
-  //   "mode": "merge",
-  //   "providers": {
-  //     "ollama": {
-  //       "baseUrl": "http://localhost:11434",
-  //       "api": "ollama",
-  //       "models": [
-  //         {
-  //           "id": "qwen3:8b",
-  //           "name": "Qwen3 8B",
-  //           "reasoning": false,
-  //           "input": ["text"],
-  //           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-  //           "contextWindow": 32768,
-  //           "maxTokens": 8192
-  //         }
-  //       ]
-  //     }
-  //   }
-  // },
-
-  // ── 認證設定（可選，控制輪替順序和 cooldown）─────────────────
-  // 實際 credential 放在 {workspace}/agents/default/auth-profile.json
-  // 格式參考：
-  // {
-  //   "version": 1,
-  //   "profiles": {
-  //     "anthropic:default": { "type": "api_key", "provider": "anthropic", "key": "sk-ant-..." },
-  //     "openai:primary":    { "type": "api_key", "provider": "openai", "key": "sk-..." },
-  //     "openai-codex:default": { "type": "oauth", "provider": "openai-codex",
-  //                               "access": "...", "refresh": "...", "expires": 1774019983859 }
-  //   },
-  //   "order": { "anthropic": ["anthropic:default"] }
-  // }
-  // "authConfig": {
-  //   "order": { "anthropic": ["anthropic:default", "anthropic:backup"] },
-  //   "cooldowns": { "billingBackoffHours": 5 }
-  // },
-
-  // ── Provider 路由 ──────────────────────────────────────────────
-  // 優先序：channels > projects > roles > defaultProvider
-  // 值可以是 alias 或 "provider/model" 格式
-  "providerRouting": {
-    "roles": {
-      "default": "sonnet"
+  // mode = "merge" 與內建合併；此處新增的 provider 可在 agentDefaults.models 引用
+  "modelsConfig": {
+    "mode": "merge",
+    "providers": {
+      "cli-claude": {
+        "baseUrl": "",
+        "models": [
+          {
+            "id": "claude",
+            "name": "Claude CLI (Max Plan)",
+            "reasoning": true,
+            "input": ["text"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 200000,
+            "maxTokens": 16000
+          }
+        ]
+      },
+      "cli-gemini": {
+        "baseUrl": "",
+        "models": [
+          {
+            "id": "gemini",
+            "name": "Gemini CLI (Pro Plan)",
+            "reasoning": true,
+            "input": ["text"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 1000000,
+            "maxTokens": 32000
+          }
+        ]
+      },
+      "openai-codex": {
+        "baseUrl": "https://chatgpt.com/backend-api",
+        "api": "openai-codex-responses",
+        "models": []
+      },
+      "ollama": {
+        "baseUrl": "http://localhost:11434",
+        "api": "ollama",
+        "models": [
+          {
+            "id": "qwen3:14b",
+            "name": "Qwen3 14B",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 32768,
+            "maxTokens": 4096
+          },
+          {
+            "id": "gemma4:latest",
+            "name": "Gemma 4 12B",
+            "reasoning": true,
+            "input": ["text", "image"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 32768,
+            "maxTokens": 8192
+          }
+        ]
+      }
     }
-    // 範例：特定頻道走不同模型
-    // "channels": {
-    //   "<頻道 ID>": "anthropic/claude-opus-4-6"
-    // }
   },
 
   // ══════════════════════════════════════════════════════════════
   // V1 舊格式（保留相容，若有 agentDefaults 則以 V2 優先）
   // ══════════════════════════════════════════════════════════════
+  "provider": "ollama-local",
   "providers": {
-    "claude": {
-      "type": "claude",
-      "mode": "token",
-      "model": "claude-sonnet-4-6"
+    "ollama-local": {
+      "type": "ollama",
+      "host": "http://localhost:11434",
+      "model": "qwen3:1.7b"
     }
+  },
+
+  // ── Provider / Model 路由 ──────────────────────────────────────
+  // 優先序：channels > projects > roles > default
+  "providerRouting": {
+    "channels": {},
+    "roles": {
+      "default": "ollama-local"
+    },
+    "projects": {}
+  },
+  "modelRouting": {
+    "default": "sonnet"
   },
 
   // ── Session 持久化 ────────────────────────────────────────────
@@ -142,113 +188,13 @@
     "ttlHours": 168,
     "maxHistoryTurns": 50,
     "compactAfterTurns": 30,
-    "persistPath": "~/.catclaw/data/sessions-v2"
+    "persistPath": "~/.catclaw/workspace/data/sessions/"
   },
 
-  // ── Context Engineering（CE）─────────────────────────────────────
-  // 三段策略：decay → compaction → overflow-hard-stop
-  // 執行順序固定，每次 build 都跑
-  "contextEngineering": {
-    "enabled": true,
-    // "toolBudget": {
-    //   "resultTokenCap": 0,     // 單一工具結果 token 上限（0 = 無限制；per-tool resultTokenCap 仍生效）
-    //   "toolTimeoutMs": 0       // 全域工具逾時（0 = 無限制；per-tool timeoutMs 仍生效）
-    // },
-    "strategies": {
-      "decay": {
-        "enabled": true,
-        "mode": "auto",            // discrete / continuous / time-aware / auto
-        "baseDecay": 0.3,          // 指數衰減係數
-        "referenceIntervalSec": 60,
-        "tempoRange": [0.5, 2.0],
-        "externalize": {
-          "enabled": true,
-          "triggerLevel": 2,       // L1→L2 時外部化
-          "minTokens": 300,        // 最小 token 閾值
-          "ttlDays": 14            // 外部檔案保留天數
-        }
-      },
-      "compaction": {
-        "enabled": true,
-        "model": "claude-haiku-4-5-20251001",  // 壓縮用輕量模型
-        "triggerTokens": 20000,    // token 超過此值觸發 LLM 摘要
-        "preserveRecentTurns": 8   // 保留最近 N 輪不壓縮
-      },
-      "overflowHardStop": {
-        "enabled": true,
-        "hardLimitUtilization": 0.95  // 最後防線：token > window × 0.95 時緊急截斷
-      }
-    }
-  },
-
-  // ── Inbound History（requireMention 未觸發時記錄旁觀訊息）────────
-  "inboundHistory": {
-    "enabled": true,
-    "fullWindowHours": 24,
-    "decayWindowHours": 168,
-    "bucketBTokenCap": 600,
-    "decayIITokenCap": 300,
-    "inject": { "enabled": false }  // 預設關閉，確認 CE 後再開
-  },
-
-  // ── Ollama（本地語意處理：原子記憶萃取 + 向量語意搜尋）────────────
-  // 這是記憶系統的本地後端，與 providers 的 ollama LLM 用途不同
-  // providers.ollama-* = 對話用 LLM | 這裡 = embedding / context 分析
-  "ollama": {
-    "enabled": false,
-    "primary": {
-      "host": "http://localhost:11434",
-      "model": "qwen3:14b",
-      "embeddingModel": "qwen3-embedding:8b"
-    },
-    "failover": false,
-    "thinkMode": false,
-    "numPredict": 512,
-    "timeout": 60000
-  },
-
-  // ── 多 Agent ──────────────────────────────────────────────────
-  // 定義具名 agent，可在 providerRouting 或 cron job 中引用
-  // 每個 agent 繼承全域設定，可覆寫 provider / systemPrompt
-  "agents": {
-    // 主要對話 agent（預設）
-    "default": {
-      "provider": "claude-oauth",
-      "systemPrompt": "你是 catclaw，一個整合 Discord 的 AI 助手。"
-    }
-    // 範例：獨立 agent 給特定頻道或排程任務使用
-    // "helper": {
-    //   "provider": "ollama-local",
-    //   "systemPrompt": "你是一個輕量助理，負責快速查詢和簡短回答。"
-    // }
-  },
-
-  // ── Subagent 設定 ─────────────────────────────────────────────
-  "subagents": {
-    // 同一 parent session 最多同時執行幾個子 agent
-    "maxConcurrent": 3,
-    // 子 agent 預設逾時毫秒
-    "defaultTimeoutMs": 120000,
-    // 完成後是否保留子 session（mode:session 自動 true）
-    "defaultKeepSession": false
-  },
-
-  // ── 帳號管理 ──────────────────────────────────────────────────
-  "accounts": {
-    "registrationMode": "open",  // open / invite / closed
-    "defaultRole": "member",     // member / developer / admin
-    "pairingEnabled": true,
-    "pairingExpireMinutes": 5
-  },
-
-  // ── 預設 Agent ────────────────────────────────────────────────────
-  // providerRouting 未指定時使用此 agent
-  "defaultAgent": "default",
-
-  // ── 記憶系統 ──────────────────────────────────────────────────────
+  // ── 記憶系統 ──────────────────────────────────────────────────
   "memory": {
     "enabled": true,
-    "root": "",                       // 空字串 = 用 CATCLAW_WORKSPACE
+    "root": "",                           // 空字串 = 用 CATCLAW_WORKSPACE
     "vectorDbPath": "~/.catclaw/_vectordb",
     "contextBudget": 3000,
     "contextBudgetRatio": { "global": 1, "project": 1, "account": 1 },
@@ -262,31 +208,124 @@
       "llmSelect": false,
       "llmSelectMax": 5
     },
-    "extract": { "enabled": true, "perTurn": true, "onSessionEnd": true, "maxItemsPerTurn": 3 }
+    "extract": {
+      "enabled": true,
+      "perTurn": true,
+      "onSessionEnd": true,
+      "maxItemsPerTurn": 3,
+      "maxItemsSessionEnd": 5,
+      "minNewChars": 200
+    },
+    "consolidate": {
+      "autoPromoteThreshold": 3,
+      "suggestPromoteThreshold": 4,
+      "decay": {
+        "enabled": true,
+        "halfLifeDays": 14,
+        "archiveThreshold": 0.2
+      }
+    },
+    "episodic": { "enabled": true, "ttlDays": 24 },
+    "rutDetection": { "enabled": true, "windowSize": 3, "minOccurrences": 2 },
+    "oscillation": { "enabled": true },
+    "sessionMemory": {
+      "enabled": true,
+      "intervalTurns": 10,
+      "maxHistoryTurns": 15
+    }
   },
 
-  // ── 記憶管線（embedding / extraction / reranker 後端）────────────
+  // ── 記憶管線（embedding / extraction / reranker 後端）────────
   "memoryPipeline": {
-    "embedding": {
-      "provider": "ollama",
-      "model": "qwen3-embedding:8b",
-      "host": "http://localhost:11434"
-    },
-    "extraction": {
-      "provider": "ollama",
-      "model": "qwen3:14b",
-      "host": "http://localhost:11434"
-    },
-    "reranker": { "provider": "none", "model": "" }
+    "embedding":  { "provider": "ollama", "model": "qwen3-embedding:8b", "host": "http://localhost:11434" },
+    "extraction": { "provider": "ollama", "model": "qwen3:14b",          "host": "http://localhost:11434" },
+    "reranker":   { "provider": "none",   "model": "" }
   },
 
-  // ── Dashboard ─────────────────────────────────────────────────────
-  "dashboard": {
+  // ── Ollama 本地後端（記憶管線用，與對話 LLM 用途不同）──────
+  // providers.ollama-* = 對話用 LLM | 這裡 = embedding / context 分析
+  "ollama": {
     "enabled": true,
-    "port": 8088
+    "primary": {
+      "host": "http://localhost:11434",
+      "model": "qwen3:14b",
+      "embeddingModel": "qwen3-embedding:8b"
+    },
+    "failover": false,
+    "thinkMode": false,
+    "numPredict": 512,
+    "timeout": 600000
   },
 
-  // ── Rate Limit（每分鐘請求上限，依角色）──────────────────────────
+  // ── Safety（指令黑名單 / 檔案保護 / 執行授權）────────────────
+  "safety": {
+    "enabled": true,
+    "selfProtect": true,
+    "bash": {
+      "blacklist": [
+        "rm\\s+(-rf?|--recursive)\\s+[\\/~]",
+        "mkfs",
+        "dd\\s+if=",
+        "chmod\\s+(-R\\s+)?777\\s+\\/",
+        "chmod\\s+[ugoa]*\\+s\\s",
+        "kill\\s+-9\\s+1$",
+        "\\b(shutdown|reboot|poweroff)\\b",
+        "systemctl\\s+(stop|disable)\\s",
+        "\\$\\((curl|wget)\\s",
+        "find\\s+.*-exec\\s",
+        "git\\s+push\\s+.*--force.*\\s+(?:main|master)",
+        "pm2\\s+(delete|kill)\\s+all",
+        "^\\s*(env|printenv)\\s*$"
+      ]
+    },
+    "filesystem": {
+      "protectedPaths": [],
+      "credentialPatterns": []
+    },
+    "execApproval": {
+      "enabled": false,
+      "dmUserId": "",                     // 需要確認的指令會 DM 此使用者
+      "timeoutMs": 60000,
+      "allowedPatterns": ["echo", "ls", "cat", "pwd", "date", "git status", "git log"]
+    },
+    // "collabConflict": { "enabled": true, "windowMs": 300000 },
+    // "reversibility": { "threshold": 2 },
+    "toolPermissions": {
+      "defaultAllow": false
+    }
+  },
+
+  // ── Workflow（Guardian / Fix Escalation / Wisdom / AIDocs）───
+  "workflow": {
+    "guardian":      { "enabled": true, "syncReminder": true, "fileTracking": true },
+    "fixEscalation": { "enabled": true },
+    "wisdomEngine":  { "enabled": true },
+    "aidocs":        { "enabled": true, "contentGate": true }
+  },
+
+  // ── File Watcher（監控外部目錄變更，觸發事件）────────────────
+  "fileWatcher": {
+    "enabled": false,
+    "watches": [
+      // {
+      //   "label": "my-notes",
+      //   "path": "~/Notes",
+      //   "debounceMs": 1500,
+      //   "recursive": true,
+      //   "ignoreDirs": [".obsidian", ".trash", ".git"]
+      // }
+    ]
+  },
+
+  // ── 帳號 & 配對 ────────────────────────────────────────────────
+  "accounts": {
+    "registrationMode": "open",            // open / invite / closed
+    "defaultRole": "member",               // member / developer / admin
+    "pairingEnabled": true,
+    "pairingExpireMinutes": 5
+  },
+
+  // ── Rate Limit（每角色每分鐘請求上限）─────────────────────────
   "rateLimit": {
     "guest":          { "requestsPerMinute": 5 },
     "member":         { "requestsPerMinute": 30 },
@@ -295,105 +334,88 @@
     "platform-owner": { "requestsPerMinute": 300 }
   },
 
-  // ── Workflow（Guardian / Fix Escalation / AIDocs）────────────────
-  "workflow": {
-    "guardian": { "enabled": false, "syncReminder": true, "fileTracking": true },
-    "fixEscalation": { "enabled": false },
-    "wisdomEngine": { "enabled": false },
-    "aidocs": { "enabled": false, "contentGate": true }
+  // ── 預設 Agent（providerRouting 未指定時使用）─────────────────
+  "defaultAgent": "default",
+
+  // ── Dashboard ─────────────────────────────────────────────────
+  "dashboard": {
+    "enabled": true,
+    "port": 8088
   },
 
-  // ── Bot Circuit Breaker（Discord API 異常時自動斷路）─────────────
+  // ── Context Engineering（CE：decay → compaction → hard-stop）
+  "contextEngineering": {
+    "enabled": true,
+    "strategies": {
+      "compaction": {
+        "enabled": true,
+        "model": "sonnet",
+        "triggerTurns": 20,
+        "preserveRecentTurns": 5
+      },
+      "decay": {
+        "enabled": true,
+        "mode": "auto",
+        "externalize": { "enabled": true }
+      },
+      "overflowHardStop": { "enabled": true }
+    }
+  },
+
+  // ── Inbound History（requireMention 未觸發時記錄旁觀訊息）───
+  "inboundHistory": {
+    "enabled": true,
+    "fullWindowHours": 24,
+    "decayWindowHours": 168,
+    "bucketBTokenCap": 600,
+    "decayIITokenCap": 300,
+    "inject": { "enabled": false }        // 預設關閉，確認 CE 後再開
+  },
+
+  // ── Subagent ──────────────────────────────────────────────────
+  "subagents": {
+    "maxConcurrent": 3,
+    "defaultTimeoutMs": 120000,
+    "defaultKeepSession": false
+  },
+
+  // ── Prompt Assembler（system prompt 模組化組裝）──────────────
+  // 可用模組：identity / tools-usage / coding-rules / git-rules /
+  //          output-format / discord-reply / memory-rules
+  "promptAssembler": {
+    "disabledModules": []
+  },
+
+  // ── MCP Servers（CatClaw 內建 MCP server 設定）──────────────
+  // tier: public / elevated —— 決定需要哪種權限才能使用
+  "mcpServers": {
+    // "catclaw-discord": {
+    //   "command": "node",
+    //   "args": ["./dist/mcp/discord-server.js"],
+    //   "env": { "DISCORD_TOKEN": "" },
+    //   "tier": "public"
+    // },
+    // "computer-use": {
+    //   "command": "node",
+    //   "args": ["./mcp/computer-use/dist/index.js"],
+    //   "env": {
+    //     "COMPUTER_USE_ALLOWED_WINDOWS": "*",
+    //     "COMPUTER_USE_MAX_SCREENSHOT_WIDTH": "1568",
+    //     "COMPUTER_USE_HISTORY_DIR": "/tmp/computer-use-history"
+    //   },
+    //   "tier": "elevated"
+    // }
+  },
+
+  // ── Bot Circuit Breaker（Discord API 異常時自動斷路）─────────
   "botCircuitBreaker": {
     "enabled": false
-  },
+  }
 
-  // ── 重啟上線通知 ─────────────────────────────────────────────────
+  // ── 重啟上線通知（可選）──────────────────────────────────────
   // "restartNotify": {
   //   "enabled": true,
-  //   "channels": ["頻道ID"],  // 必須明確指定，不設 = 不通知
+  //   "channels": ["頻道ID"],              // 必須明確指定，不設 = 不通知
   //   "showPendingTasks": true
-  // },
-
-  // ── MCP Servers（CatClaw 內建 MCP server 設定）──────────────────
-  // "mcpServers": {
-  //   "catclaw-discord": {
-  //     "command": "node",
-  //     "args": ["./dist/mcp/discord-server.js"],
-  //     "env": { "DISCORD_TOKEN": "<你的 bot token>" },
-  //     "tier": "public"
-  //   }
-  // },
-
-  // ── Safety（Sprint 4 新增）────────────────────────────────────────
-  // "safety": {
-  //   "enabled": true,
-  //   "selfProtect": true,
-  //   "bash": { "blacklist": ["rm\\s+(-rf?)\\s+[\\/~]"] },
-  //   "filesystem": { "protectedPaths": [], "credentialPatterns": [] },
-  //   "execApproval": { "enabled": false, "dmUserId": "", "timeoutMs": 60000 },
-  //   // 協作衝突偵測：多人同頻道同時編輯同一檔案時發出警告
-  //   "collabConflict": {
-  //     "enabled": true,       // 是否啟用，預設 true
-  //     "windowMs": 300000     // 偵測窗口毫秒，預設 5 分鐘
-  //   },
-  //   // 可逆性評估：tool 操作風險評分，超過門檻觸發警告
-  //   "reversibility": {
-  //     "threshold": 2         // 0-3，>= 此值觸發警告（預設 2）
-  //   },
-  //   "toolPermissions": { "defaultAllow": false }
-  // },
-
-  // ── Prompt Assembler（Sprint 3 新增）─────────────────────────────
-  // 控制 system prompt 模組化組裝
-  // "promptAssembler": {
-  //   // 要停用的內建模組名稱
-  //   // 可用模組：identity / tools-usage / coding-rules / git-rules /
-  //   //          output-format / discord-reply / memory-rules
-  //   "disabledModules": []
-  // },
-
-  // ── 排程 ─────────────────────────────────────────────────────────
-  // jobs 亦可寫在 data/cron-jobs.json，此處 jobs 陣列優先
-  "cron": {
-    "enabled": false,
-    "maxConcurrentRuns": 1,
-    // subagent 任務預設使用的 accountId（不填預設 _cron）
-    "defaultAccountId": "_cron",
-    // subagent 任務預設 provider（不填則由 providerRouting 決定）
-    "defaultProvider": "claude-oauth",
-    // 預設 agent ID（job 未指定 agentId 時歸屬此 agent）
-    "defaultAgentId": "wendy",
-    "jobs": [
-      // action.type 可選：
-      //   message  → 傳送靜態訊息到指定頻道
-      //   command  → 執行 shell 指令
-      //   subagent → 啟動 AI agent 執行任務，結果回報到 notify 頻道
-      //
-      // 每個 job 可帶 "agentId": "wendy" 指定所屬 agent（/cron skill 建立時自動帶入）
-      //
-      // 範例：每天早上 9 點讓 AI 整理當日摘要
-      // {
-      //   "name": "daily-summary",
-      //   "cron": "0 9 * * *",
-      //   "action": {
-      //     "type": "subagent",
-      //     "task": "列出今天需要注意的事項並整理成摘要",
-      //     "provider": "claude-oauth",      // 不填則用 defaultProvider
-      //     "timeoutMs": 120000,
-      //     "notify": "<Discord 頻道 ID>" // 任務完成後發送結果
-      //   }
-      // },
-      //
-      // 範例：每小時執行 shell 指令
-      // {
-      //   "name": "hourly-check",
-      //   "cron": "0 * * * *",
-      //   "action": {
-      //     "type": "command",
-      //     "command": "echo 'heartbeat'"
-      //   }
-      // }
-    ]
-  }
+  // }
 }
