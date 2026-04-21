@@ -419,19 +419,19 @@ label.cfg-toggle { min-width: 36px; }
 </div>
 <div class="tabs">
   <div class="tab active" onclick="switchTab('overview',this)">概覽</div>
-  <div class="tab" onclick="switchTab('sessions',this)">Sessions</div>
+  <div class="tab" onclick="switchTab('sessions',this)">對話</div>
   <div class="tab" onclick="switchTab('logs',this)">日誌</div>
   <div class="tab" onclick="switchTab('ops',this)">操作</div>
   <div class="tab" onclick="switchTab('cron',this)">排程</div>
-  <div class="tab" onclick="switchTab('traces',this)">Traces</div>
-  <div class="tab" onclick="switchTab('tasks',this)">Tasks</div>
-  <div class="tab" onclick="switchTab('auth',this)">Auth Profiles</div>
-  <div class="tab" onclick="switchTab('config',this)">Config</div>
-  <div class="tab" onclick="switchTab('memory',this)">Memory</div>
-  <div class="tab" onclick="switchTab('pipeline',this)">Pipeline</div>
-  <div class="tab" onclick="switchTab('inbound',this)">Inbound</div>
-  <div class="tab" onclick="switchTab('clibridge',this)">CLI Bridge</div>
-  <div class="tab" onclick="switchTab('chat',this)" style="color:var(--accent);font-weight:600">💬 Chat</div>
+  <div class="tab" onclick="switchTab('traces',this)">追蹤</div>
+  <div class="tab" onclick="switchTab('tasks',this)">任務</div>
+  <div class="tab" onclick="switchTab('auth',this)">憑證</div>
+  <div class="tab" onclick="switchTab('config',this)">設定</div>
+  <div class="tab" onclick="switchTab('memory',this)">記憶</div>
+  <div class="tab" onclick="switchTab('pipeline',this)">管線</div>
+  <div class="tab" onclick="switchTab('inbound',this)">旁聽</div>
+  <div class="tab" onclick="switchTab('clibridge',this)">CLI 橋接</div>
+  <div class="tab" onclick="switchTab('chat',this)" style="color:var(--accent);font-weight:600">💬 對話</div>
 </div>
 
 <!-- 概覽 -->
@@ -2966,9 +2966,19 @@ function renderMemStats(s) {
     (s.neverRecalled.length ? '<div style="font-size:0.78rem;color:var(--warn)">從未召回: ' + s.neverRecalled.map(a => a.name).join(', ') + '</div>' : '');
 }
 
+let _memSortKey = 'name';
+let _memSortAsc = true;
+
+function memSortBy(key) {
+  if (_memSortKey === key) { _memSortAsc = !_memSortAsc; } else { _memSortKey = key; _memSortAsc = true; }
+  sortMemAtoms();
+}
+
 function renderMemAtoms(atoms) {
   if (!atoms.length) { document.getElementById('mem-atoms').innerHTML = '<div style="color:var(--fg3);padding:12px">無 atom</div>'; return; }
   const confColors = { '[固]': 'var(--green)', '[觀]': 'var(--accent)', '[臨]': 'var(--warn)' };
+  const arrow = (key) => _memSortKey === key ? (_memSortAsc ? ' ▲' : ' ▼') : '';
+  const thStyle = 'cursor:pointer;user-select:none;white-space:nowrap';
   const rows = atoms.map(a =>
     '<tr style="cursor:pointer" onclick="showMemDetail(\\'' + a.name.replace(/'/g,"\\\\'") + '\\')">' +
     '<td style="font-weight:500">' + a.name + '</td>' +
@@ -2980,7 +2990,12 @@ function renderMemAtoms(atoms) {
     '</tr>'
   ).join('');
   document.getElementById('mem-atoms').innerHTML =
-    '<table class="tbl"><thead><tr><th>名稱</th><th>信心</th><th>確認</th><th>Last Used</th><th>Triggers</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    '<table class="tbl"><thead><tr>' +
+    '<th style="' + thStyle + '" onclick="memSortBy(\\'name\\')">名稱' + arrow('name') + '</th>' +
+    '<th style="' + thStyle + '" onclick="memSortBy(\\'confidence\\')">信心' + arrow('confidence') + '</th>' +
+    '<th style="' + thStyle + '" onclick="memSortBy(\\'confirmations\\')">確認' + arrow('confirmations') + '</th>' +
+    '<th style="' + thStyle + '" onclick="memSortBy(\\'lastUsed\\')">Last Used' + arrow('lastUsed') + '</th>' +
+    '<th>Triggers</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
 function filterMemAtoms() {
@@ -2990,12 +3005,13 @@ function filterMemAtoms() {
 }
 
 function sortMemAtoms() {
-  const key = document.getElementById('mem-sort').value;
+  const key = _memSortKey;
+  const dir = _memSortAsc ? 1 : -1;
   const sorted = [..._memAtoms];
-  if (key === 'name') sorted.sort((a, b) => a.name.localeCompare(b.name));
-  else if (key === 'confirmations') sorted.sort((a, b) => b.confirmations - a.confirmations);
-  else if (key === 'lastUsed') sorted.sort((a, b) => (b.lastUsed||'').localeCompare(a.lastUsed||''));
-  else if (key === 'confidence') sorted.sort((a, b) => { const o = {'[固]':0,'[觀]':1,'[臨]':2}; return (o[a.confidence]??3) - (o[b.confidence]??3); });
+  if (key === 'name') sorted.sort((a, b) => dir * a.name.localeCompare(b.name));
+  else if (key === 'confirmations') sorted.sort((a, b) => dir * (a.confirmations - b.confirmations));
+  else if (key === 'lastUsed') sorted.sort((a, b) => dir * (a.lastUsed||'').localeCompare(b.lastUsed||''));
+  else if (key === 'confidence') sorted.sort((a, b) => { const o = {'[固]':0,'[觀]':1,'[臨]':2}; return dir * ((o[a.confidence]??3) - (o[b.confidence]??3)); });
   renderMemAtoms(sorted);
 }
 
