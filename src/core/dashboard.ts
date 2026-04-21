@@ -600,12 +600,12 @@ label.cfg-toggle { min-width: 36px; }
           <option value="ollama">Ollama</option>
         </select>
         <span id="auth-apikey-fields" style="display:contents">
-          <input id="auth-new-id" placeholder="名稱（如 key-1）" style="flex:0 0 120px;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;padding:4px 8px;font-size:0.78rem;font-family:monospace">
+          <input id="auth-new-id" placeholder="名稱（如 key-1）" value="" autocomplete="off" style="flex:0 0 120px;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;padding:4px 8px;font-size:0.78rem;font-family:monospace">
           <select id="auth-new-type" style="flex:0 0 100px;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;padding:4px 8px;font-size:0.78rem">
             <option value="api_key">API Key</option>
             <option value="token">Token</option>
           </select>
-          <input id="auth-new-cred" type="password" placeholder="Token / API Key" style="flex:1;min-width:200px;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;padding:4px 8px;font-size:0.78rem;font-family:monospace">
+          <input id="auth-new-cred" type="password" placeholder="Token / API Key" value="" autocomplete="off" style="flex:1;min-width:200px;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;padding:4px 8px;font-size:0.78rem;font-family:monospace">
           <button class="btn btn-green btn-sm" onclick="addAuthProfile()">+ 新增</button>
         </span>
         <span id="auth-oauth-fields" style="display:none">
