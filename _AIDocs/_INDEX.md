@@ -56,7 +56,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [00-OVERVIEW.md](00-OVERVIEW.md) | 架構全貌：資料流圖、模組關係、常數速查、config 欄位一覽 | 2026-03-22 |
 | [01-ARCHITECTURE.md](01-ARCHITECTURE.md) | 整體架構 + 資料流 + 專案結構（含 Sprint 1-4 新子系統） | 2026-04-05 |
 | [02-CONFIG-REFERENCE.md](02-CONFIG-REFERENCE.md) | catclaw.json 完整設定參考 + V2 三層分離 + 環境變數 | 2026-04-18 |
-| [04-DEPLOY.md](04-DEPLOY.md) | 部署流程、PM2 管理、hot-reload、健康檢查 | 2026-03-22 |
+| [04-DEPLOY.md](04-DEPLOY.md) | 部署流程（setup.sh 互動安裝 + MCP 設定）、PM2 管理、hot-reload、健康檢查 | 2026-04-21 |
 | [08-CLAUDE-CLI.md](08-CLAUDE-CLI.md) | Claude CLI 指令格式 + stream-json event 規格（舊版，acp.ts 參考用） | 2026-03-19 |
 | [09-PITFALLS.md](09-PITFALLS.md) | 22 項陷阱速查 + 錯誤訊息對照表 | 2026-04-18 |
 | [_CHANGELOG.md](_CHANGELOG.md) | 知識庫變更紀錄 | rolling |

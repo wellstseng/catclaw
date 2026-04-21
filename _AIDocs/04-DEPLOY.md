@@ -1,6 +1,6 @@
 # catclaw 部署指南
 
-> 根據 `catclaw.js`、`ecosystem.config.cjs`、`package.json`、`_AIDocs/modules/pm2.md` 整理，2026-03-22
+> 根據 `catclaw.js`、`setup.sh`、`setup.ps1`、`package.json`、`_AIDocs/modules/pm2.md` 整理，2026-04-21
 
 ---
 
@@ -8,37 +8,62 @@
 
 ### 前置條件
 
-- Node.js（支援 ESM）
-- pnpm（套件管理）
-- Claude Code CLI（`claude` 在 PATH 中可用）
-- PM2（全域安裝，或使用 npx）
+- Node.js >= 18（支援 ESM）
+- pnpm（套件管理，setup 會自動安裝）
+- PM2（背景執行，setup 會自動安裝）
 
-### 步驟
+### 一鍵安裝（推薦）
 
 ```bash
 # 1. clone 專案
 git clone <repo-url> catclaw
 cd catclaw
 
-# 2. 安裝依賴（pnpm）
+# 2. 執行互動式安裝腳本
+bash setup.sh          # macOS / Linux
+# powershell -ExecutionPolicy Bypass -File setup.ps1  # Windows
+```
+
+setup 腳本會依序引導：
+
+| 步驟 | 說明 |
+|------|------|
+| 1/10 | 前置需求檢查（Node.js / pnpm / PM2） |
+| 2/10 | 安裝 Node.js 依賴（pnpm install） |
+| 3/10 | 環境變數設定（.env） |
+| 4/10 | 初始化目錄結構 + catclaw.json + Boot Agent |
+| 5/10 | Admin 帳號設定（Discord User ID → platform-owner） |
+| 6/10 | Discord Bot Token |
+| 7/10 | Discord 預設頻道（serverId/channelId） |
+| 8/10 | LLM Provider API Key（auth-profile.json） |
+| 9/10 | 功能開關：Dashboard、Cron、**MCP Servers** |
+| 10/10 | 編譯 & 啟動 |
+
+#### MCP Servers 設定（Step 9）
+
+| MCP | 用途 | 預設 | 細節設定 |
+|-----|------|------|---------|
+| Discord | 讓 Agent 讀寫 Discord 訊息/附件/反應 | Y（建議啟用） | 無（token 由 CatClaw 自動注入） |
+| Computer Use | 螢幕截圖/鍵鼠操控/視窗管理 | N | 截圖寬度、允許視窗、歷程目錄 |
+| Playwright | headless 瀏覽器自動化（不佔螢幕） | N | 瀏覽器類型、viewport、headless 開關 |
+
+> 未在 setup 啟用的 MCP，可之後從 Dashboard → Config → MCP Servers → 一鍵預設新增。
+
+### 手動安裝（進階）
+
+```bash
+# 1. clone + 安裝
+git clone <repo-url> catclaw && cd catclaw
 pnpm install
 
-# 3. 初始化環境（自動複製 catclaw.example.json → catclaw.json）
-node catclaw.js init
-# 編輯 $CATCLAW_CONFIG_DIR/catclaw.json：填入 discord.token，設定 guilds 權限
+# 2. 複製設定檔
+cp catclaw.example.json ~/.catclaw/catclaw.json
+# 編輯 ~/.catclaw/catclaw.json：填入 discord.token、guilds、mcpServers
 
-# 4. 建立 data/ 目錄（session 和 cron-jobs 儲存位置）
-mkdir -p data signal
-
-# 5. （選用）建立 cron-jobs.json
-cp cron-jobs.example.json data/cron-jobs.json
-# 編輯 data/cron-jobs.json：設定排程 job
-
-# 6. 編譯 TypeScript
+# 3. 編譯（含 MCP 子專案）
 pnpm build
-# 或：npx tsc
 
-# 7. 啟動 bot（PM2 背景執行）
+# 4. 啟動
 node catclaw.js start
 ```
 
