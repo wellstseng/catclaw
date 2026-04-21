@@ -4363,6 +4363,54 @@ export class DashboardServer {
                 writeFileSync(tmp, JSON.stringify(apData, null, 2), "utf-8");
                 renameSync(tmp, credPath);
                 log.info(`[dashboard:codex-oauth] auth-profile.json 已更新 ${apProfileId}`);
+
+                // 同步 models-config.json：確保 openai-codex alias 存在
+                try {
+                  const { resolveCatclawDir } = await import("./config.js");
+                  const mcPath = join(resolveCatclawDir(), "models-config.json");
+                  const mc = existsSync(mcPath) ? JSON.parse(readFileSync(mcPath, "utf-8")) : { mode: "merge", primary: "sonnet", fallbacks: [], aliases: {}, providers: {} };
+                  const aliases = mc.aliases ?? {};
+                  const hasCodexAlias = Object.values(aliases).some((v: unknown) => typeof v === "string" && (v as string).startsWith("openai-codex/"));
+                  if (!hasCodexAlias) {
+                    const modelsPath = join(ws, "agents", "default", "models.json");
+                    const modelsData = existsSync(modelsPath) ? JSON.parse(readFileSync(modelsPath, "utf-8")) : null;
+                    const codexProvider = modelsData?.providers?.["openai-codex"];
+                    const firstModel = codexProvider?.models?.[0];
+                    if (firstModel) {
+                      aliases["codex"] = `openai-codex/${firstModel.id}`;
+                      mc.aliases = aliases;
+                      if (!mc.providers) mc.providers = {};
+                      if (!mc.providers["openai-codex"]) {
+                        mc.providers["openai-codex"] = {
+                          baseUrl: codexProvider.baseUrl ?? "https://chatgpt.com/backend-api",
+                          api: codexProvider.api ?? "openai-codex-responses",
+                          ...(codexProvider.models ? { models: codexProvider.models } : {}),
+                        };
+                      }
+                      const mcTmp = mcPath + ".tmp";
+                      writeFileSync(mcTmp, JSON.stringify(mc, null, 2), "utf-8");
+                      renameSync(mcTmp, mcPath);
+                      log.info(`[dashboard:codex-oauth] models-config.json 同步：codex → openai-codex/${firstModel.id}`);
+                    } else {
+                      // models.json 裡沒有 openai-codex provider，直接寫入硬編碼預設值
+                      aliases["codex"] = "openai-codex/gpt-5.4";
+                      mc.aliases = aliases;
+                      if (!mc.providers) mc.providers = {};
+                      if (!mc.providers["openai-codex"]) {
+                        mc.providers["openai-codex"] = {
+                          baseUrl: "https://chatgpt.com/backend-api",
+                          api: "openai-codex-responses",
+                        };
+                      }
+                      const mcTmp = mcPath + ".tmp";
+                      writeFileSync(mcTmp, JSON.stringify(mc, null, 2), "utf-8");
+                      renameSync(mcTmp, mcPath);
+                      log.info(`[dashboard:codex-oauth] models-config.json 同步（硬編碼預設）：codex → openai-codex/gpt-5.4`);
+                    }
+                  }
+                } catch (mcErr) {
+                  log.warn(`[dashboard:codex-oauth] models-config.json 同步失敗：${mcErr instanceof Error ? mcErr.message : String(mcErr)}`);
+                }
               } catch (apErr) {
                 log.warn(`[dashboard:codex-oauth] auth-profile.json 寫入失敗：${apErr instanceof Error ? apErr.message : String(apErr)}`);
               }
