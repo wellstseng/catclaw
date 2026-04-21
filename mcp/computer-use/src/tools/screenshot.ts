@@ -5,6 +5,7 @@
 
 import { screen, Region, getWindows } from "@nut-tree-fork/nut-js";
 import { processScreenshot, cropImage } from "../utils/image.js";
+import { updateScreenshotScale } from "../utils/coordinate.js";
 
 export interface ScreenshotParams {
   windowTitle?: string;
@@ -58,7 +59,9 @@ export async function takeScreenshot(params: ScreenshotParams): Promise<Screensh
     rawBuf = await grabFullScreen();
   }
 
-  return processScreenshot(rawBuf, params.scale);
+  const result = await processScreenshot(rawBuf, params.scale);
+  updateScreenshotScale(result.width, result.originalWidth);
+  return result;
 }
 
 async function grabFullScreen(): Promise<Buffer> {

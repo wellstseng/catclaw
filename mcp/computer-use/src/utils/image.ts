@@ -8,8 +8,7 @@
 
 import sharp from "sharp";
 
-const MAX_LONG_SIDE = 1568;
-const MAX_SHORT_SIDE = 768;
+const MAX_LONG_SIDE = parseInt(process.env.COMPUTER_USE_MAX_SCREENSHOT_WIDTH ?? "1024", 10);
 
 export interface ImageResult {
   base64: string;
@@ -37,22 +36,17 @@ export async function processScreenshot(buf: Buffer, scale?: number | null): Pro
     targetW = Math.round(origW * scale);
     targetH = Math.round(origH * scale);
   } else {
-    // 自動縮放：符合 Anthropic Vision 最佳實踐
+    // 自動等比縮放：長邊 ≤ MAX_LONG_SIDE，保持原始比例
     const longSide = Math.max(origW, origH);
-    const shortSide = Math.min(origW, origH);
-
-    let ratio = 1;
-    if (longSide > MAX_LONG_SIDE) ratio = Math.min(ratio, MAX_LONG_SIDE / longSide);
-    if (shortSide * ratio > MAX_SHORT_SIDE) ratio = Math.min(ratio, MAX_SHORT_SIDE / shortSide);
-
-    if (ratio < 1) {
+    if (longSide > MAX_LONG_SIDE) {
+      const ratio = MAX_LONG_SIDE / longSide;
       targetW = Math.round(origW * ratio);
       targetH = Math.round(origH * ratio);
     }
   }
 
   const resized = (targetW !== origW || targetH !== origH)
-    ? await sharp(buf).resize(targetW, targetH, { fit: "fill" }).png().toBuffer()
+    ? await sharp(buf).resize(targetW, targetH, { fit: "inside" }).png().toBuffer()
     : buf;
 
   return {

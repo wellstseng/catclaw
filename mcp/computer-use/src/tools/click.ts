@@ -5,6 +5,7 @@
 
 import { mouse, Button, Point, Key, keyboard } from "@nut-tree-fork/nut-js";
 import { validateCoordinates, checkRateLimit } from "../utils/safety.js";
+import { screenshotToScreen } from "../utils/coordinate.js";
 
 export interface ClickParams {
   x: number;
@@ -31,11 +32,12 @@ const MODIFIER_MAP: Record<string, Key> = {
 
 export async function performClick(params: ClickParams): Promise<{ success: boolean; clickedAt: { x: number; y: number }; button: string; timestamp: string }> {
   checkRateLimit();
-  await validateCoordinates(params.x, params.y);
+  const { x, y } = screenshotToScreen(params.x, params.y);
+  await validateCoordinates(x, y);
 
   const btn = BUTTON_MAP[params.button ?? "left"] ?? Button.LEFT;
   const clicks = params.clicks ?? 1;
-  const point = new Point(params.x, params.y);
+  const point = new Point(x, y);
 
   // 按下 modifier keys
   const modKeys = (params.modifiers ?? []).map(m => MODIFIER_MAP[m]).filter((k): k is Key => k != null);
@@ -61,7 +63,7 @@ export async function performClick(params: ClickParams): Promise<{ success: bool
 
   return {
     success: true,
-    clickedAt: { x: params.x, y: params.y },
+    clickedAt: { x, y },
     button: params.button ?? "left",
     timestamp: new Date().toISOString(),
   };
