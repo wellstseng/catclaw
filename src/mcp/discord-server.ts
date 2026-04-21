@@ -53,7 +53,9 @@ async function discordFetch(method: string, path: string, body?: unknown): Promi
   return data;
 }
 
-async function discordUpload(channelId: string, filePath: string, content?: string): Promise<void> {
+async function discordUpload(channelId: string, rawPath: string, content?: string): Promise<void> {
+  // 修正 AI 產生的雙重 drive letter（如 C:\C:\Users\... → C:\Users\...）
+  const filePath = rawPath.replace(/^([A-Za-z]):\\(?=[A-Za-z]:\\)/, "");
   const buf = readFileSync(filePath);
   const filename = filePath.replace(/\\/g, "/").split("/").pop() ?? "file";
   const form = new FormData();
