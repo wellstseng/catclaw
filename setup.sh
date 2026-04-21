@@ -466,8 +466,21 @@ read -r ENABLE_CU_MCP
 if [[ "$ENABLE_CU_MCP" =~ ^[Yy] ]]; then
   CU_MCP=true
   ok "Computer Use MCP 已啟用"
+  # 細節設定
+  echo -n "    截圖最大寬度（預設 1024）: "
+  read -r CU_SCREENSHOT_W
+  CU_SCREENSHOT_W="${CU_SCREENSHOT_W:-1024}"
+  echo -n "    允許操控的視窗（* = 全部，預設 *）: "
+  read -r CU_ALLOWED_WIN
+  CU_ALLOWED_WIN="${CU_ALLOWED_WIN:-*}"
+  echo -n "    操作歷程目錄（預設 /tmp/computer-use-history）: "
+  read -r CU_HISTORY_DIR
+  CU_HISTORY_DIR="${CU_HISTORY_DIR:-/tmp/computer-use-history}"
 else
   CU_MCP=false
+  CU_SCREENSHOT_W="1024"
+  CU_ALLOWED_WIN="*"
+  CU_HISTORY_DIR="/tmp/computer-use-history"
   info "Computer Use MCP 已跳過（稍後可從 Dashboard 一鍵新增）"
 fi
 
@@ -478,8 +491,21 @@ read -r ENABLE_PW_MCP
 if [[ "$ENABLE_PW_MCP" =~ ^[Yy] ]]; then
   PW_MCP=true
   ok "Playwright MCP 已啟用"
+  # 細節設定
+  echo -n "    瀏覽器（chromium / firefox / webkit，預設 chromium）: "
+  read -r PW_BROWSER
+  PW_BROWSER="${PW_BROWSER:-chromium}"
+  echo -n "    Viewport 解析度（預設 1280x720）: "
+  read -r PW_VIEWPORT
+  PW_VIEWPORT="${PW_VIEWPORT:-1280x720}"
+  echo -n "    Headless 模式（true/false，預設 true）: "
+  read -r PW_HEADLESS
+  PW_HEADLESS="${PW_HEADLESS:-true}"
 else
   PW_MCP=false
+  PW_BROWSER="chromium"
+  PW_VIEWPORT="1280x720"
+  PW_HEADLESS="true"
   info "Playwright MCP 已跳過（稍後可從 Dashboard 一鍵新增）"
 fi
 
@@ -501,7 +527,11 @@ node -e "
     c.mcpServers['computer-use']={
       command:'node',
       args:['./mcp/computer-use/dist/index.js'],
-      env:{COMPUTER_USE_ALLOWED_WINDOWS:'*',COMPUTER_USE_MAX_SCREENSHOT_WIDTH:'1024',COMPUTER_USE_HISTORY_DIR:'/tmp/computer-use-history'},
+      env:{
+        COMPUTER_USE_ALLOWED_WINDOWS:process.argv[8],
+        COMPUTER_USE_MAX_SCREENSHOT_WIDTH:process.argv[7],
+        COMPUTER_USE_HISTORY_DIR:process.argv[9]
+      },
       tier:'elevated'
     };
   }
@@ -509,12 +539,18 @@ node -e "
     c.mcpServers['playwright']={
       command:'node',
       args:['./mcp/playwright/dist/index.js'],
-      env:{PLAYWRIGHT_HEADLESS:'true',PLAYWRIGHT_BROWSER:'chromium',PLAYWRIGHT_VIEWPORT:'1280x720'},
+      env:{
+        PLAYWRIGHT_HEADLESS:process.argv[12],
+        PLAYWRIGHT_BROWSER:process.argv[10],
+        PLAYWRIGHT_VIEWPORT:process.argv[11]
+      },
       tier:'elevated'
     };
   }
   fs.writeFileSync(p,JSON.stringify(c,null,2),'utf-8');
-" "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED" "$DC_MCP" "$CU_MCP" "$PW_MCP"
+" "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED" "$DC_MCP" "$CU_MCP" "$PW_MCP" \
+  "$CU_SCREENSHOT_W" "$CU_ALLOWED_WIN" "$CU_HISTORY_DIR" \
+  "$PW_BROWSER" "$PW_VIEWPORT" "$PW_HEADLESS"
 
 # ═══════════════════════════════════════════════════════════════════
 # Step 9: 編譯 & 啟動
