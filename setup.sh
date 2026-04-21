@@ -448,7 +448,19 @@ echo ""
 echo -e "  ${BOLD}MCP Servers（擴充工具伺服器）${NC}"
 echo ""
 
+# Discord MCP
+echo -n "  啟用 Discord MCP（讓 Agent 讀寫 Discord 訊息/附件/反應）？(Y/n) "
+read -r ENABLE_DC_MCP
+if [[ "$ENABLE_DC_MCP" =~ ^[Nn] ]]; then
+  DC_MCP=false
+  info "Discord MCP 已跳過（稍後可從 Dashboard 一鍵新增）"
+else
+  DC_MCP=true
+  ok "Discord MCP 已啟用"
+fi
+
 # Computer Use MCP
+echo ""
 echo -n "  啟用 Computer Use MCP（螢幕截圖/鍵鼠操控/視窗管理）？(y/N) "
 read -r ENABLE_CU_MCP
 if [[ "$ENABLE_CU_MCP" =~ ^[Yy] ]]; then
@@ -479,6 +491,13 @@ node -e "
   c.cron.enabled=(process.argv[3]==='true');
   if(!c.mcpServers)c.mcpServers={};
   if(process.argv[4]==='true'){
+    c.mcpServers['catclaw-discord']={
+      command:'node',
+      args:['./dist/mcp/discord-server.js'],
+      tier:'public'
+    };
+  }
+  if(process.argv[5]==='true'){
     c.mcpServers['computer-use']={
       command:'node',
       args:['./mcp/computer-use/dist/index.js'],
@@ -486,7 +505,7 @@ node -e "
       tier:'elevated'
     };
   }
-  if(process.argv[5]==='true'){
+  if(process.argv[6]==='true'){
     c.mcpServers['playwright']={
       command:'node',
       args:['./mcp/playwright/dist/index.js'],
@@ -495,7 +514,7 @@ node -e "
     };
   }
   fs.writeFileSync(p,JSON.stringify(c,null,2),'utf-8');
-" "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED" "$CU_MCP" "$PW_MCP"
+" "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED" "$DC_MCP" "$CU_MCP" "$PW_MCP"
 
 # ═══════════════════════════════════════════════════════════════════
 # Step 9: 編譯 & 啟動
