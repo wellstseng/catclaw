@@ -443,14 +443,59 @@ else
   info "排程已停用（稍後可在 catclaw.json 開啟）"
 fi
 
+# ── MCP Servers ─────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}MCP Servers（擴充工具伺服器）${NC}"
+echo ""
+
+# Computer Use MCP
+echo -n "  啟用 Computer Use MCP（螢幕截圖/鍵鼠操控/視窗管理）？(y/N) "
+read -r ENABLE_CU_MCP
+if [[ "$ENABLE_CU_MCP" =~ ^[Yy] ]]; then
+  CU_MCP=true
+  ok "Computer Use MCP 已啟用"
+else
+  CU_MCP=false
+  info "Computer Use MCP 已跳過（稍後可從 Dashboard 一鍵新增）"
+fi
+
+# Playwright MCP
+echo ""
+echo -n "  啟用 Playwright MCP（headless 瀏覽器自動化，不佔用螢幕）？(y/N) "
+read -r ENABLE_PW_MCP
+if [[ "$ENABLE_PW_MCP" =~ ^[Yy] ]]; then
+  PW_MCP=true
+  ok "Playwright MCP 已啟用"
+else
+  PW_MCP=false
+  info "Playwright MCP 已跳過（稍後可從 Dashboard 一鍵新增）"
+fi
+
 # 寫入設定（parse → modify → write）
 node -e "
   const fs=require('fs'),p=process.argv[1];
   const c=JSON.parse(fs.readFileSync(p,'utf-8'));
   c.dashboard.enabled=(process.argv[2]==='true');
   c.cron.enabled=(process.argv[3]==='true');
+  if(!c.mcpServers)c.mcpServers={};
+  if(process.argv[4]==='true'){
+    c.mcpServers['computer-use']={
+      command:'node',
+      args:['./mcp/computer-use/dist/index.js'],
+      env:{COMPUTER_USE_ALLOWED_WINDOWS:'*',COMPUTER_USE_MAX_SCREENSHOT_WIDTH:'1024',COMPUTER_USE_HISTORY_DIR:'/tmp/computer-use-history'},
+      tier:'elevated'
+    };
+  }
+  if(process.argv[5]==='true'){
+    c.mcpServers['playwright']={
+      command:'node',
+      args:['./mcp/playwright/dist/index.js'],
+      env:{PLAYWRIGHT_HEADLESS:'true',PLAYWRIGHT_BROWSER:'chromium',PLAYWRIGHT_VIEWPORT:'1280x720'},
+      tier:'elevated'
+    };
+  }
   fs.writeFileSync(p,JSON.stringify(c,null,2),'utf-8');
-" "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED"
+" "$CATCLAW_JSON" "$DASH_ENABLED" "$CRON_ENABLED" "$CU_MCP" "$PW_MCP"
 
 # ═══════════════════════════════════════════════════════════════════
 # Step 9: 編譯 & 啟動
