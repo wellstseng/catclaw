@@ -108,8 +108,7 @@ export async function applyAutoChannelName(bridge: CliBridge, sender: BridgeSend
         _warnedMissingPerm.add(bridge.channelId);
         try {
           await sender.send(
-            `ℹ️ Bridge bot 沒有 **Manage Channels** 權限，無法自動將頻道 / 討論串更名為 \`${newName}\`。\n` +
-            `若要啟用，請在伺服器設定開啟此 bot 的「管理頻道」權限；不想啟用可忽略。`,
+            `ℹ️ 無頻道更名權限。當前工作目錄：\`${workingDir}\``,
           );
         } catch { /* 連提示都送不出就放棄 */ }
       }
