@@ -426,9 +426,17 @@ export async function handleCliBridgeReply(
 
       // ── tool_call ──
       if (evt.type === "tool_call") {
-        // flush 中間推理文字（quote/spoiler/none）
+        // flush 中間推理文字 — 所有模式都定稿當前 buffer，
+        // 工具執行後的回覆改用新訊息（觸發推播通知，避免 edit 靜默更新）
         if (intermediateStyle !== "normal") {
           await flushIntermediateBuffer();
+        } else if (buffer.trim() && state.editMsg) {
+          // normal 模式：定稿 streaming edit 訊息，清空 buffer + editMsg
+          cancelEditTimer();
+          const content = closeFenceIfOpen(buffer);
+          try { await sender.edit(state.editMsg, content.slice(0, TEXT_LIMIT)); } catch { /* */ }
+          buffer = "";
+          state.editMsg = null;
         }
 
         // 如果有累積的 thinking，先送出

@@ -429,22 +429,28 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
       .map(b => b.text ?? "")
       .join("");
 
+    let textDelta: CliBridgeEvent | null = null;
     if (fullText.length > this.lastTextLength) {
       const delta = fullText.slice(this.lastTextLength);
       this.lastTextLength = fullText.length;
-      return { type: "text_delta", text: delta };
+      textDelta = { type: "text_delta", text: delta };
     }
 
-    // tool_use blocks
+    // tool_use blocks — 先 emit text_delta 再 emit tool_call，確保順序正確
     const toolBlocks = msg.content.filter(b => b.type === "tool_use");
     if (toolBlocks.length > this.lastToolCount) {
+      // 如果同時有 text delta，先 emit 它
+      if (textDelta) {
+        this.emit("event", textDelta);
+        textDelta = null;
+      }
       for (let i = this.lastToolCount; i < toolBlocks.length; i++) {
         this.emit("event", { type: "tool_call", title: toolBlocks[i]!.name ?? "unknown" });
       }
       this.lastToolCount = toolBlocks.length;
     }
 
-    return null;
+    return textDelta;
   }
 
   private flushBuffer(): void {
