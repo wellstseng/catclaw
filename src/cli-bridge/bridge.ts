@@ -588,6 +588,10 @@ export class CliBridge {
         "官方 plugin:discord:discord 的 bot 可能無權限存取本頻道，會撞 Missing Access。" +
         "一般回覆直接用 stdout 即可，CatClaw 會自動轉送到 Discord。";
 
+    // 注入當前日期到 tag 屬性（Asia/Taipei），避免 model 以 knowledge cutoff 推斷錯誤年份
+    const nowTW = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).replace(" ", "T");
+    attrs.push(`current_time="${nowTW}+08:00"`);
+
     return `<channel ${attrs.join(" ")}>\n<!-- ${hint} -->\n${text}\n</channel>`;
   }
 

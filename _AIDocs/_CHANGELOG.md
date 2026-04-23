@@ -3,6 +3,7 @@
 > 知識庫變更紀錄（最新在上，超過 8 筆觸發滾動淘汰）
 
 | 日期 | 變更 | 影響文件 |
+| 2026-04-23 | **feat: 時間脈絡強化（避免 LLM 以 cutoff 推斷錯誤年份）** — (1) `prompt-assembler.ts` date-time 模組從簡短「當前時間」改為「系統時鐘」格式，注入今日完整日期（年月日+星期）+ 當前時間，並明示「使用者說『今天』『昨天』『這週』等相對時間時以此日期為基準」；(2) `cli-bridge/bridge.ts` inbound 訊息 `<channel>` tag 加 `current_time="YYYY-MM-DDTHH:mm:ss+08:00"` 屬性（Asia/Taipei），上線補處理與 bridge 內注入的所有訊息都帶時間戳 | src/core/prompt-assembler.ts, src/cli-bridge/bridge.ts, _AIDocs/modules/prompt-assembler.md |
 | 2026-04-23 | **feat: Discord messageUpdate 處理（編輯訊息感知）** — (1) 新增 `messageUpdate` event listener（支援 partial fetch）；(2) Debounce 窗口內：`debounceMessageIndex` Map 追蹤 message ID → buffer 位置，編輯時直接替換 buffer 內容，agent 拿到修正後版本；(3) 已 dispatch 後：偵測 channel 是否有 active CLI Bridge（status=busy），透過 `bridge.send()` 注入 `[訊息編輯]` 通知，Claude Code 收到後自行調整回覆方向（利用既有插話機制中斷舊 turn） | src/discord.ts |
 | 2026-04-22 | **fix(dashboard): Inbound History 展開無 entries** — (1) `listChannels()` regex 從 `^discord_(.+?)` 改為 `^discord_(\\d+?)(?:_([a-zA-Z][^.]*))?` 修正 channelId/scope 分割錯位；(2) Dashboard API handler `url.match(/[?&]channelId=/)` 永遠找不到（`url` 是 pathname 不含 query string），改用 `urlParams.get("channelId")` | src/discord/inbound-history.ts, src/core/dashboard.ts |
 | 2026-04-22 | **fix(build): Playwright MCP Windows 建置失敗** — build script 加 `pnpm -r install` 確保子 workspace packages 的 node_modules 存在 | package.json |

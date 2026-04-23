@@ -11,7 +11,7 @@
 
 | 模組名 | Priority | 說明 |
 |--------|----------|------|
-| `date-time` | 5 | 當前時間（Asia/Taipei） |
+| `date-time` | 5 | 系統時鐘：注入今日日期（含星期）+ 當前時間（Asia/Taipei），並明示 LLM 以此為「今天/昨天/這週」相對時間基準，避免以 knowledge cutoff 推斷錯誤年份 |
 | `identity` | 10 | CatClaw 身份描述 + 群組場景說話者 |
 | `context-integrity` | 15 | Anti-Hallucination 鐵則（禁止憑 stub/標記推論原文 + retry escalation 防線） |
 | `catclaw-md` | 15 | CATCLAW.md 層級繼承（root → project） |

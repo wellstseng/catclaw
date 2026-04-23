@@ -92,8 +92,10 @@ const dateTimeModule: PromptModule = {
   name: "date-time",
   priority: 5,
   build: () => {
-    const nowStr = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
-    return `[系統資訊] 當前時間（Asia/Taipei）：${nowStr}`;
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("zh-TW", { timeZone: "Asia/Taipei", year: "numeric", month: "long", day: "numeric", weekday: "long" });
+    const timeStr = now.toLocaleTimeString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
+    return `[系統時鐘] 今天是 ${dateStr}，現在時間 ${timeStr}（Asia/Taipei）。使用者說「今天」「昨天」「這週」等相對時間時，以此日期為基準。`;
   },
 };
 
