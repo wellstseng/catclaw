@@ -33,10 +33,17 @@ export function buildChannelName(
 ): { newName: string; basename: string } {
   const bn = sanitizeForDiscord(crossPlatformBasename(workingDir));
   let base = currentName;
-  // 剝除舊尾綴（若現有名稱確實以 `_<lastSuffix>` 結尾）
-  if (lastSuffix && base.endsWith(SEPARATOR + lastSuffix)) {
+
+  // 循環剝除歷史累積的尾綴（防疊加）：
+  //   1. 先剝 lastSuffix（可能與當前 bn 不同，例如 cwd 從 X 切到 Y）
+  //   2. 再循環剝 bn（歷史上可能已被加過多次，例如 "session1_catclaw_catclaw_catclaw"）
+  if (lastSuffix && lastSuffix !== bn && base.endsWith(SEPARATOR + lastSuffix)) {
     base = base.slice(0, -(SEPARATOR.length + lastSuffix.length));
   }
+  while (base.length > SEPARATOR.length + bn.length && base.endsWith(SEPARATOR + bn)) {
+    base = base.slice(0, -(SEPARATOR.length + bn.length));
+  }
+
   // 避免 base 已是空字串
   if (!base) base = bn;
   const composed = (base === bn ? bn : base + SEPARATOR + bn);
