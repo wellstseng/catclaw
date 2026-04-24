@@ -76,7 +76,15 @@ function toolResultPreview(result: unknown, error?: string): string {
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
-const MAX_LOOPS = 20;
+// 自適應 loop cap：
+//   - BASE 是基礎預算（正常對話綽綽有餘）
+//   - 接近 cap 時，若近 5 輪「全成功、tool_search 沒超過 2 次」→ 延長一階（+STEP）
+//   - CEILING 是絕對天花板（擋失控成本）
+// 理由：Playwright MCP 之類一連串 20+ 工具呼叫的任務，固定 20 做不完；
+//       但無條件放寬會讓 buggy loop 吃掉成本。進展健康才准擴展是折衷。
+const BASE_LOOPS = 20;
+const LOOP_EXTEND_STEP = 10;
+const LOOP_CAP_CEILING = 60;
 const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最多自動續接次數
 const DEFAULT_RESULT_TOKEN_CAP = 0;   // 0 = 不截斷（讓上游/per-tool 自行控制）
 
@@ -509,6 +517,24 @@ function isFailingResult(result: unknown, error: string | undefined): boolean {
   if (r.error) return true;
   if (r.isError === true) return true;
   return false;
+}
+
+/**
+ * 近 5 輪進展是否健康 — 用於自適應 loop cap 延長判斷。
+ *
+ * 健康條件（全部要符合）：
+ *   1. 近 5 個 tool 呼叫沒有 error
+ *   2. 近 5 個中 tool_search 不超過 2 個（tool_search 多 = 模型在瞎查 schema，不是實作進展）
+ *
+ * 不夠 5 個 tool 時視為「資料不足，不擴展」（保守），避免初始幾輪誤判。
+ */
+function isHealthyProgress(recentCalls: ToolCallRecord[]): boolean {
+  const last5 = recentCalls.slice(-5);
+  if (last5.length < 5) return false;
+  if (last5.some(c => isFailingResult(c.result, c.error))) return false;
+  const toolSearchCount = last5.filter(c => c.name === "tool_search").length;
+  if (toolSearchCount >= 3) return false;
+  return true;
 }
 
 type BeforeToolResult =
@@ -1079,6 +1105,7 @@ export async function* agentLoop(
 
   const tracker = new TurnTracker();
   let loopCount = 0;
+  let loopCap = BASE_LOOPS;  // 自適應：進展健康時會被延長（見迴圈尾巴的 cap extend 邏輯）
   let continuationCount = 0;  // Output Token Recovery 續接計數
   // Deferred Tool Nudge：tool_search 後 LLM 空回應 end_turn 時自動注入續接提示
   let deferredJustActivated: string[] = [];   // 本 iteration 剛活化的 deferred tool 名稱
@@ -1155,7 +1182,7 @@ export async function* agentLoop(
   log.debug(`[agent-loop] ── turn 開始 ── sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
 
   try {
-    while (loopCount++ < MAX_LOOPS) {
+    while (loopCount++ < loopCap) {
       // 把「本 iter 剛活化」移到「上一 iter 活化」槽，供本 iter end_turn 判斷
       prevIterDeferredActivated = deferredJustActivated;
       deferredJustActivated = [];
@@ -1753,6 +1780,17 @@ export async function* agentLoop(
 
       // 把 tool results 加入 messages
       messages.push(makeToolResultMessage(toolResults));
+
+      // ── 自適應 loop cap：接近上限 + 進展健康 → 延長 ─────────────────────────
+      //   「接近」：剩 ≤2 輪時判斷（避免太早擴展讓 buggy case 也被放寬）
+      //   「健康」：近 5 輪全部成功 + tool_search 不超過 2 次（tool_search 多 = 空轉訊號）
+      if (loopCount >= loopCap - 2 && loopCap < LOOP_CAP_CEILING) {
+        if (isHealthyProgress(tracker.toolCalls)) {
+          const oldCap = loopCap;
+          loopCap = Math.min(LOOP_CAP_CEILING, loopCap + LOOP_EXTEND_STEP);
+          log.info(`[agent-loop] [loop=${loopCount}] 自適應延長 cap ${oldCap} → ${loopCap}（近 5 輪健康進展）`);
+        }
+      }
     }
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -1760,16 +1798,17 @@ export async function* agentLoop(
   }
 
   // ── 6. Turn 結束 ────────────────────────────────────────────────────────────
-  // MAX_LOOPS 觸頂判斷：post-increment 讓自然退出時 loopCount === MAX_LOOPS+1；break 則 ≤ MAX_LOOPS
+  // 觸頂判斷：post-increment 讓自然退出時 loopCount === loopCap+1；break 則 ≤ loopCap
   // 不讓使用者以為 bot 消失 — 把現況補進 response，讓 Discord 端至少有訊息、可用「繼續」追
-  const maxLoopsReached = loopCount > MAX_LOOPS;
+  const maxLoopsReached = loopCount > loopCap;
   let fullResponse = tracker.getFullResponse();
   if (maxLoopsReached) {
     const toolsRun = tracker.toolCalls.length;
     const lastTools = tracker.toolCalls.slice(-3).map(tc => tc.name).join(" → ") || "（無）";
-    const notice = `\n\n⚠️ 已達工具呼叫上限 ${MAX_LOOPS} 輪（執行了 ${toolsRun} 個工具，最後 3 個：${lastTools}），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」或補充指示。`;
+    const extended = loopCap > BASE_LOOPS ? `（已自適應延長到 ${loopCap}）` : "";
+    const notice = `\n\n⚠️ 已達工具呼叫上限 ${loopCap} 輪${extended}（執行了 ${toolsRun} 個工具，最後 3 個：${lastTools}），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」或補充指示。`;
     fullResponse = fullResponse.trim() ? fullResponse + notice : notice.trimStart();
-    log.warn(`[agent-loop] MAX_LOOPS 觸頂：sessionKey=${sessionKey} tools=${toolsRun}`);
+    log.warn(`[agent-loop] loop cap 觸頂：sessionKey=${sessionKey} cap=${loopCap} tools=${toolsRun}`);
   }
 
   // Tool Log Store：儲存 tool 執行記錄，session history 加索引摘要

@@ -15,7 +15,24 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync, writeFileSync, readdirSync, unlinkSync, renameSync, existsSync, mkdirSync, statSync, watchFile, unwatchFile, createReadStream } from "node:fs";
 import { dirname, basename, join, join as pathJoin, resolve } from "node:path";
 import { homedir } from "node:os";
+import { execSync } from "node:child_process";
 import { log } from "../logger.js";
+
+// ── Build Info（讓使用者從 dashboard 確認載入哪個版本）───────────────────────
+// 原因：pm2 restart 忘了跑時，dashboard 看起來正常但實際跑舊 code —
+// 把 commit 顯示在 topbar 可以直接比對 `git log`，免去「是不是沒更新到」的猜測
+function computeBuildInfo(): { commit: string; commitTime: string; startedAt: number } {
+  let commit = "unknown";
+  let commitTime = "";
+  try {
+    commit = execSync("git rev-parse --short HEAD", { cwd: dirname(new URL(import.meta.url).pathname), stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    commitTime = execSync("git log -1 --format=%cI HEAD", { cwd: dirname(new URL(import.meta.url).pathname), stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    // 非 git repo / 沒裝 git → 保留 unknown
+  }
+  return { commit, commitTime, startedAt: Date.now() };
+}
+const BUILD_INFO = computeBuildInfo();
 import { getTraceStore, getTraceContextStore, MessageTrace, type MessageTraceEntry } from "./message-trace.js";
 import { getSessionManager } from "./session.js";
 import { getContextEngine } from "./context-engine.js";
@@ -411,6 +428,7 @@ label.cfg-toggle { min-width: 36px; }
 <body>
 <div class="topbar">
   <h1>🐱 CatClaw Dashboard</h1>
+  <span id="build-info" title="" style="font-size:0.72rem;color:var(--fg2);font-family:monospace;user-select:all">載入中…</span>
   <span style="font-size:0.72rem;color:var(--fg2)">字體</span>
   <input type="range" id="font-slider" min="0.7" max="1.4" step="0.05" value="1" style="width:80px;accent-color:var(--accent)" onchange="setFontScale(this.value)" oninput="setFontScale(this.value)">
   <span id="font-pct" style="font-size:0.72rem;color:var(--fg2);min-width:30px">100%</span>
@@ -3933,7 +3951,27 @@ async function cbDeleteBridge() {
   } catch (err) { alert('錯誤: ' + err.message); }
 }
 
+// ── Build info（topbar 顯示版本 + 啟動時間）─────────────────────────────────
+async function loadBuildInfo() {
+  try {
+    const r = await fetch('/api/version' + (_authToken ? '?token=' + encodeURIComponent(_authToken) : ''));
+    const j = await r.json();
+    const el = document.getElementById('build-info');
+    if (!el) return;
+    const started = j.startedAt ? new Date(j.startedAt) : null;
+    const startedStr = started ? started.toLocaleString('zh-TW', { hour12: false }) : '?';
+    const commitTime = j.commitTime ? new Date(j.commitTime).toLocaleString('zh-TW', { hour12: false }) : '';
+    el.textContent = '· ' + (j.commit || 'unknown') + ' · 啟動 ' + startedStr;
+    el.title = 'commit: ' + (j.commit || '?') + (commitTime ? '\\ncommit time: ' + commitTime : '') + '\\n啟動時間: ' + startedStr + '\\n雙擊複製 commit hash';
+    el.ondblclick = () => navigator.clipboard.writeText(j.commit || '');
+  } catch (e) {
+    const el = document.getElementById('build-info');
+    if (el) el.textContent = '(version load failed)';
+  }
+}
+
 // ── 初始化 ───────────────────────────────────────────────────────────────────
+loadBuildInfo();
 loadOverview();
 loadStatus();
 setInterval(loadStatus, 30000);
@@ -3982,6 +4020,13 @@ export class DashboardServer {
       if (url === "/" || url === "/index.html" || url.match(/^\/(\?token=[^&]+)?$/)) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(HTML);
+        return;
+      }
+
+      // GET /api/version — commit hash + 啟動時間（給 dashboard topbar 顯示，驗證有沒有 reload）
+      if (url === "/api/version") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(BUILD_INFO));
         return;
       }
 
