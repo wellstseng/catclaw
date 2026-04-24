@@ -154,10 +154,28 @@ function debounce(
  * 處理 Discord messageUpdate 事件
  * A. 若訊息還在 debounce buffer 內 → 直接替換內容
  * B. 若已離開 debounce（已 dispatch）→ 透過 CLI Bridge 注入編輯通知
+ *
+ * 過濾規則（避免誤打斷正在進行中的 turn）：
+ * - 主 bot 自身編輯 → skip（Discord 自己的修飾，例如 placeholder→full）
+ * - 任何已註冊的 CLI bridge 獨立 bot 編輯 → skip（避免 bridge bot streaming edit 觸發自我中斷迴圈）
+ * - 使用者編輯距原訊息 < EDIT_TYPO_WINDOW_MS → skip（視為 typo 修正）
  */
+const EDIT_TYPO_WINDOW_MS = 30_000;
+
 async function handleMessageEdit(message: Message, config: BridgeConfig): Promise<void> {
-  // 忽略 bot 自身
+  // 忽略主 bot 自身
   if (message.author.id === message.client.user?.id) return;
+
+  // 忽略所有已註冊的 CLI bridge 獨立 bot（茱蒂#3861 等）
+  // 這些 bot 在 streaming 過程會編輯自己的訊息（placeholder → 完整內容），
+  // 若不過濾會被當成新使用者輸入 → 注入新 turn → abort 自己當前的 turn
+  if (message.author.bot) {
+    try {
+      const { getCliBridgeBotUserIds } = await import("./cli-bridge/index.js");
+      if (getCliBridgeBotUserIds().has(message.author.id)) return;
+    } catch { /* CLI Bridge 模組未載入 → 走原邏輯 */ }
+  }
+
   const newContent = message.content?.trim();
   if (!newContent) return;
 
@@ -176,6 +194,15 @@ async function handleMessageEdit(message: Message, config: BridgeConfig): Promis
     }
   }
 
+  // 使用者短時間內編輯（< EDIT_TYPO_WINDOW_MS）→ 視為 typo 修正，silent skip
+  // 不打斷 bridge 當前 turn；bridge 下一輪自然會看到使用者的後續訊息
+  const editedAt = message.editedAt ?? new Date();
+  const ageMs = editedAt.getTime() - message.createdAt.getTime();
+  if (ageMs >= 0 && ageMs < EDIT_TYPO_WINDOW_MS) {
+    log.info(`[discord] messageUpdate：typo-window skip msgId=${message.id} age=${ageMs}ms`);
+    return;
+  }
+
   // B. 已離開 debounce → 注入編輯通知到 CLI Bridge
   try {
     const { getCliBridge } = await import("./cli-bridge/index.js");
@@ -183,7 +210,7 @@ async function handleMessageEdit(message: Message, config: BridgeConfig): Promis
     if (cliBridge && cliBridge.status === "busy") {
       const editNotice = `[訊息編輯] ${message.author.displayName ?? message.author.username} 將訊息修改為：\n${newContent}`;
       cliBridge.send(editNotice, "discord", { user: message.author.tag, sourceChannelId: message.channelId });
-      log.info(`[discord] messageUpdate：注入編輯通知到 CLI Bridge ${cliBridge.label} msgId=${message.id}`);
+      log.info(`[discord] messageUpdate：注入編輯通知到 CLI Bridge ${cliBridge.label} msgId=${message.id} age=${ageMs}ms`);
       return;
     }
   } catch { /* CLI Bridge 未初始化 → 忽略 */ }
