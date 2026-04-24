@@ -292,7 +292,7 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
       input,
       approvalPolicy: useButtonApproval ? "on-request" : "never",
       sandboxPolicy: useButtonApproval
-        ? { type: "workspaceWrite", networkAccess: "restricted" }
+        ? { type: "workspaceWrite", networkAccess: false }
         : { type: "dangerFullAccess" },
     }).catch((err: unknown) => {
       const msg = typeof err === "object" && err !== null && "message" in err
