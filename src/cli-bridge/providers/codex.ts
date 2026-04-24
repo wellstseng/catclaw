@@ -530,20 +530,35 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
 
   /**
    * 依 method 產生對應的 response schema。
-   * 第一版大多用 generic decision 欄位；若 codex 嚴格校驗某些 method 的 response shape，再依 schema 補。
+   * Codex 0.124 同時存在新舊兩套 API，decision enum 不同：
+   *   - 舊 execCommandApproval / applyPatchApproval：approved / approved_for_session / denied / timed_out / abort
+   *   - 新 item/commandExecution/requestApproval / item/fileChange/requestApproval：accept / acceptForSession / decline / cancel
+   * Schema 來源：/tmp/codex-schema/*Response.json
    */
   private buildApprovalResponse(method: string, allowed: boolean, _reason?: string): unknown {
-    const decision = allowed ? "approved" : "denied";
-    // applyPatchApproval / execCommandApproval 已驗證 probe 可接受 generic decision 格式
-    // 若未來某 method 嚴格要求特定欄位，在這裡加 switch case
     switch (method) {
-      case "execCommandApproval":
-      case "applyPatchApproval":
+      // 新 API
       case "item/commandExecution/requestApproval":
       case "item/fileChange/requestApproval":
+        return { decision: allowed ? "accept" : "decline" };
+
+      // 舊 API
+      case "execCommandApproval":
+      case "applyPatchApproval":
+        return { decision: allowed ? "approved" : "denied" };
+
+      // 權限請求：複雜 object，第一版用空權限集合代替（等於 no-op approve）。
+      // 嚴格講不是「approve」語意，但 codex 不會 block turn；Phase 3.5 再補。
       case "item/permissions/requestApproval":
+        return allowed
+          ? { permissions: {}, scope: "turn", strictAutoReview: false }
+          : { permissions: null, scope: "turn", strictAutoReview: true };
+
+      // MCP elicitation / tool user input：未驗證，回 generic，讓 codex 自行判定
+      case "mcpServer/elicitation/request":
+      case "item/tool/requestUserInput":
       default:
-        return { decision, approved: allowed, allow: allowed, allowed };
+        return { decision: allowed ? "accept" : "decline" };
     }
   }
 
