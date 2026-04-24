@@ -35,8 +35,10 @@ export const tool: Tool = {
     const registry = getToolRegistry();
     const allTools = registry.all();
 
-    // 嘗試精確名稱匹配（逗號分隔）
-    const names = query.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+    // 嘗試精確名稱匹配（逗號或空白分隔）
+    // LLM 常以空白分隔批次查多個 tool name（如 "mcp_x_snapshot mcp_x_fill_form"），
+    // 只認逗號會讓批次查詢全落到關鍵字模糊匹配，然後因為兩個 keyword 都要同時命中而找不到
+    const names = query.split(/[,\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
     const exactMatches = allTools.filter(t => names.includes(t.name.toLowerCase()));
 
     let matched: typeof allTools;

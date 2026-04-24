@@ -1760,7 +1760,17 @@ export async function* agentLoop(
   }
 
   // ── 6. Turn 結束 ────────────────────────────────────────────────────────────
+  // MAX_LOOPS 觸頂判斷：post-increment 讓自然退出時 loopCount === MAX_LOOPS+1；break 則 ≤ MAX_LOOPS
+  // 不讓使用者以為 bot 消失 — 把現況補進 response，讓 Discord 端至少有訊息、可用「繼續」追
+  const maxLoopsReached = loopCount > MAX_LOOPS;
   let fullResponse = tracker.getFullResponse();
+  if (maxLoopsReached) {
+    const toolsRun = tracker.toolCalls.length;
+    const lastTools = tracker.toolCalls.slice(-3).map(tc => tc.name).join(" → ") || "（無）";
+    const notice = `\n\n⚠️ 已達工具呼叫上限 ${MAX_LOOPS} 輪（執行了 ${toolsRun} 個工具，最後 3 個：${lastTools}），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」或補充指示。`;
+    fullResponse = fullResponse.trim() ? fullResponse + notice : notice.trimStart();
+    log.warn(`[agent-loop] MAX_LOOPS 觸頂：sessionKey=${sessionKey} tools=${toolsRun}`);
+  }
 
   // Tool Log Store：儲存 tool 執行記錄，session history 加索引摘要
   const toolLogStore = getToolLogStore();

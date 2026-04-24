@@ -21,6 +21,7 @@
 
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   Client, GatewayIntentBits, Events,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType,
@@ -53,9 +54,43 @@ async function discordFetch(method: string, path: string, body?: unknown): Promi
   return data;
 }
 
+/**
+ * 正規化本地路徑：處理 file:// URI、Windows 雙 drive letter、leading slash 等 AI 常見錯誤輸入。
+ *
+ * 已知失敗模式：
+ *   - `file:///C:/path` → 之前的 `replace(/^file:\/\//, "")` 留下 `/C:/path`，Node fs 在 Windows
+ *     把 `/C:/` 解析成 `C:\C:\`（drive root + 剩下），導致 `ENOENT: C:\C:\path\to\file`
+ *   - `C:\C:\path` → AI 自己產生的雙 drive letter
+ *
+ * 不用 `fileURLToPath`：該 API 的 Windows-path 判定取決於執行 OS，在 macOS 上跑也會看到
+ * `file:///C:/...` 被當 posix → 回傳 `/C:/...`（= 錯誤結果）。直接 pattern 判斷跨平台穩定。
+ */
+function normalizeLocalPath(rawPath: string): string {
+  // 1) Windows file URI：file:///C:/path 或 file:///C:\path（字元：drive letter + `:`）
+  const winFileUri = /^file:\/\/\/?([A-Za-z]:)(.*)$/i.exec(rawPath);
+  if (winFileUri) {
+    try {
+      return winFileUri[1] + decodeURIComponent(winFileUri[2]);
+    } catch {
+      return winFileUri[1] + winFileUri[2];
+    }
+  }
+  // 2) Posix file URI：file:///Users/... → 用原生 fileURLToPath
+  if (/^file:\/\//i.test(rawPath)) {
+    try {
+      return fileURLToPath(rawPath);
+    } catch {
+      return rawPath.replace(/^file:\/\/\/?/i, "/");
+    }
+  }
+  // 3) leading slash + drive letter：`/C:/path` 或 `/C:\path`（Node fs Windows 會誤解成 `C:\C:\`）
+  if (/^\/[A-Za-z]:[\\/]/.test(rawPath)) return rawPath.slice(1);
+  // 4) 雙 drive letter：`C:\C:\path` 或 `C:/C:/path`
+  return rawPath.replace(/^([A-Za-z]):[\\/](?=[A-Za-z]:[\\/])/, "");
+}
+
 async function discordUpload(channelId: string, rawPath: string, content?: string): Promise<void> {
-  // 修正 AI 產生的雙重 drive letter（如 C:\C:\Users\... → C:\Users\...）
-  const filePath = rawPath.replace(/^([A-Za-z]):\\(?=[A-Za-z]:\\)/, "");
+  const filePath = normalizeLocalPath(rawPath);
   const buf = readFileSync(filePath);
   const filename = filePath.replace(/\\/g, "/").split("/").pop() ?? "file";
   const form = new FormData();
@@ -118,8 +153,8 @@ async function runTool(p: P): Promise<string> {
     case "send": {
       const ch = channelId(p);
       if (p.media) {
-        const mediaPath = String(p.media).replace(/^file:\/\//, "");
-        await discordUpload(ch, mediaPath, str(p, "message"));
+        // 路徑正規化交給 discordUpload 內部的 normalizeLocalPath
+        await discordUpload(ch, String(p.media), str(p, "message"));
         return "訊息 + 檔案已送出";
       }
       let text = str(p, "message") ?? "";

@@ -266,16 +266,20 @@ export class McpClient {
     for (const mcpTool of this.tools) {
       const toolName = `mcp_${this.serverName}_${mcpTool.name}`;
       const client = this;
+      const schema = mcpTool.inputSchema;
 
       this.registry.register({
         name: toolName,
         description: mcpTool.description ?? `MCP tool ${mcpTool.name} from ${this.serverName}`,
         tier,
         deferred,
-        parameters: (mcpTool.inputSchema ?? { type: "object", properties: {} }) as import("../tools/types.js").JsonSchema,
+        parameters: (schema ?? { type: "object", properties: {} }) as import("../tools/types.js").JsonSchema,
         async execute(params) {
           try {
-            const rich = await client.callRich(mcpTool.name, params);
+            // LLM 常把 number/array/boolean 當 string 送過來（如 depth:"3"、fields:"[{...}]"）
+            // → 依 inputSchema 做寬容型別強制，避免 MCP 端 Zod validation 失敗讓 loop 空轉
+            const coerced = coerceByMcpSchema(params, schema);
+            const rich = await client.callRich(mcpTool.name, coerced);
             return {
               result: rich.text,
               ...(rich.contentBlocks ? { contentBlocks: rich.contentBlocks } : {}),
@@ -287,4 +291,70 @@ export class McpClient {
       });
     }
   }
+}
+
+// ── MCP 參數型別寬容強制 ──────────────────────────────────────────────────────
+
+/**
+ * 依 MCP tool inputSchema 把 LLM 送來的錯誤型別強制轉回預期型別。
+ *
+ * 只處理「單純型別誤植」，不做 fuzzy matching：
+ *   - schema 期望 number，收到 "3" → 3
+ *   - schema 期望 array，收到 "[{...}]"（JSON 字串）→ JSON.parse
+ *   - schema 期望 boolean，收到 "true"/"false" → true/false
+ *   - schema 期望 object，收到 JSON 字串 → JSON.parse
+ *
+ * 強制失敗時原樣放行，交給 MCP server 的 validation 吐錯（不隱藏真正的 schema 違反）。
+ */
+function coerceByMcpSchema(
+  params: Record<string, unknown>,
+  schema: { properties?: Record<string, unknown>; [k: string]: unknown } | undefined,
+): Record<string, unknown> {
+  if (!schema?.properties || typeof schema.properties !== "object") return params;
+  const props = schema.properties as Record<string, { type?: string | string[]; [k: string]: unknown }>;
+  const out: Record<string, unknown> = { ...params };
+  for (const [key, value] of Object.entries(params)) {
+    const propSchema = props[key];
+    if (!propSchema) continue;
+    const expected = Array.isArray(propSchema.type) ? propSchema.type[0] : propSchema.type;
+    if (!expected) continue;
+    out[key] = coerceValue(value, expected);
+  }
+  return out;
+}
+
+function coerceValue(value: unknown, expected: string): unknown {
+  // number / integer：string 數字 → Number
+  if ((expected === "number" || expected === "integer") && typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return value;
+    const n = Number(trimmed);
+    if (Number.isFinite(n)) return expected === "integer" ? Math.trunc(n) : n;
+    return value;
+  }
+  // boolean：字串 "true"/"false" → boolean
+  if (expected === "boolean" && typeof value === "string") {
+    const lower = value.trim().toLowerCase();
+    if (lower === "true") return true;
+    if (lower === "false") return false;
+    return value;
+  }
+  // array / object：JSON 字串 → 對應型別（僅當 JSON.parse 後型別符合）
+  if ((expected === "array" || expected === "object") && typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    const firstChar = trimmed[0];
+    if ((expected === "array" && firstChar !== "[") || (expected === "object" && firstChar !== "{")) {
+      return value;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (expected === "array" && Array.isArray(parsed)) return parsed;
+      if (expected === "object" && parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // 解析失敗 → 原樣放行
+    }
+    return value;
+  }
+  return value;
 }
