@@ -20,6 +20,8 @@ import { log } from "../logger.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolTier } from "../tools/types.js";
 
+const MCP_CALL_TIMEOUT_MS = 60_000;
+
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
 export interface McpServerConfig {
@@ -186,13 +188,13 @@ export class McpClient {
       this.pending.set(id, { resolve, reject });
       const req: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
       this.proc.stdin.write(JSON.stringify(req) + "\n");
-      // 30s 超時
+      // 60s 超時（原本 30s 對 Playwright 在 iframe 裡跑 async JS 不夠 — run_code 等頁面 frame 反應常常就破 30s）
       setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
           reject(new Error(`MCP call timeout: ${method}`));
         }
-      }, 30_000);
+      }, MCP_CALL_TIMEOUT_MS);
     });
   }
 

@@ -41,6 +41,7 @@ function computeBuildInfo(): { commit: string; commitTime: string; startedAt: nu
 }
 const BUILD_INFO = computeBuildInfo();
 import { getTraceStore, getTraceContextStore, MessageTrace, type MessageTraceEntry } from "./message-trace.js";
+import { readToolLog } from "./tool-log-store.js";
 import { getSessionManager } from "./session.js";
 import { getContextEngine } from "./context-engine.js";
 import { getInboundHistoryStore } from "../discord/inbound-history.js";
@@ -2779,6 +2780,11 @@ async function showTraceDetail(traceId) {
     html += '<div class="card" style="background:var(--bg4);margin-top:12px">';
     html += '<h3 style="color:var(--accent);margin-bottom:6px">③ LLM Call Loop (' + (t.llmCalls?.length ?? 0) + ' iterations)</h3>';
     if (t.llmCalls?.length > 0) {
+      // 全 turn 的 tool 全域索引（tool-log-store 是以 tracker.toolCalls 整列存檔，跨 loop 序號連續）
+      let globalToolIdx = 0;
+      const sessionKeyAttr = esc(t.sessionKey || '');
+      const turnIdxAttr = t.turnIndex ?? -1;
+      const hasToolLog = !!(t.sessionKey && typeof t.turnIndex === 'number' && t.llmCalls.some(c => c.toolCalls?.length));
       for (const call of t.llmCalls) {
         html += '<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;font-size:0.82rem">';
         const toolNames = (call.toolCalls ?? []).map(tc => tc.name);
@@ -2804,13 +2810,21 @@ async function showTraceDetail(traceId) {
           html += '<div style="margin-top:4px">';
           for (const tc of call.toolCalls) {
             const tcColor = tc.error ? 'var(--red2)' : 'var(--green2)';
-            html += '<div style="padding:2px 0;border-top:1px solid var(--border)">';
+            // Click-to-expand：有完整 tool log 才掛 click（hasToolLog 前置檢查）
+            const clickable = hasToolLog;
+            const rowAttrs = clickable
+              ? 'style="padding:2px 0;border-top:1px solid var(--border);cursor:pointer" title="點擊展開完整 params / result"'
+                + ' onclick="openToolLog(\\'' + sessionKeyAttr + '\\',' + turnIdxAttr + ',' + globalToolIdx + ')"'
+              : 'style="padding:2px 0;border-top:1px solid var(--border)"';
+            html += '<div ' + rowAttrs + '>';
             html += '<span style="color:' + tcColor + '">🔧 ' + tc.name + '</span>';
             html += ' <span style="color:var(--fg2)">' + tc.durationMs + 'ms</span>';
+            if (clickable) html += ' <span style="color:var(--fg3);font-size:0.7rem">🔍</span>';
             if (tc.paramsPreview) html += ' <span style="color:var(--accent2);font-size:0.75rem">' + esc(tc.paramsPreview).slice(0, 80) + '</span>';
             if (tc.error) html += ' <span style="color:var(--red2)">❌ ' + esc(tc.error).slice(0, 60) + '</span>';
             else if (tc.resultPreview) html += ' <span style="color:var(--fg3);font-size:0.75rem">→ ' + esc(tc.resultPreview).slice(0, 60) + '</span>';
             html += '</div>';
+            globalToolIdx++;
           }
           html += '</div>';
         } else if (call.stopReason === 'end_turn') {
@@ -3977,12 +3991,69 @@ async function loadBuildInfo() {
   }
 }
 
+// ── Tool log modal（trace click-to-expand）───────────────────────────────────
+// params/result 在 trace export 只存 60-100 字元 preview，完整內容在 tool-logs/<safeKey>/turn_N.json
+// 點 tool row → 從 /api/tool-log 抓該 turn 的完整 array，依 globalToolIdx 秀 params + result
+async function openToolLog(sessionKey, turn, toolIdx) {
+  const modal = document.getElementById('tool-log-modal');
+  const content = document.getElementById('tool-log-content');
+  const title = document.getElementById('tool-log-title');
+  if (!modal || !content || !title) return;
+  title.textContent = 'Tool #' + toolIdx + ' · 載入中…';
+  content.textContent = '';
+  modal.style.display = 'flex';
+  try {
+    const qs = 'session=' + encodeURIComponent(sessionKey) + '&turn=' + turn + (_authToken ? '&token=' + encodeURIComponent(_authToken) : '');
+    const r = await fetch('/api/tool-log?' + qs);
+    if (!r.ok) { title.textContent = '讀取失敗 (' + r.status + ')'; content.textContent = await r.text(); return; }
+    const tl = await r.json();
+    const tc = tl.tools?.[toolIdx];
+    if (!tc) { title.textContent = 'Tool #' + toolIdx + ' 不存在'; content.textContent = JSON.stringify(tl, null, 2); return; }
+    title.textContent = '🔧 ' + tc.name + ' · Tool #' + toolIdx + ' · turn ' + turn + ' · ' + tc.durationMs + 'ms';
+    const sections = [];
+    sections.push('=== PARAMS ===\\n' + (typeof tc.params === 'string' ? tc.params : JSON.stringify(tc.params, null, 2)));
+    if (tc.error) sections.push('=== ERROR ===\\n' + tc.error);
+    if (tc.result !== undefined && tc.result !== null) {
+      sections.push('=== RESULT ===\\n' + (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2)));
+    }
+    content.textContent = sections.join('\\n\\n');
+  } catch (e) {
+    title.textContent = '載入失敗';
+    content.textContent = String(e);
+  }
+}
+function closeToolLog() {
+  const modal = document.getElementById('tool-log-modal');
+  if (modal) modal.style.display = 'none';
+}
+function copyToolLog() {
+  const content = document.getElementById('tool-log-content');
+  if (content) navigator.clipboard.writeText(content.textContent).then(() => {
+    const btn = document.getElementById('tool-log-copy');
+    if (btn) { const o = btn.textContent; btn.textContent = '✅ copied'; setTimeout(() => { btn.textContent = o; }, 1200); }
+  });
+}
+
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 loadBuildInfo();
 loadOverview();
 loadStatus();
 setInterval(loadStatus, 30000);
 </script>
+
+<!-- Tool Log Detail Modal -->
+<div id="tool-log-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center" onclick="if(event.target===this)closeToolLog()">
+  <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:900px;width:92%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
+      <h3 id="tool-log-title" style="margin:0;font-size:0.95rem;word-break:break-all">Tool</h3>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-sm" id="tool-log-copy" onclick="copyToolLog()">📋 複製</button>
+        <button class="btn btn-sm" onclick="closeToolLog()">✕</button>
+      </div>
+    </div>
+    <pre id="tool-log-content" style="white-space:pre-wrap;word-break:break-word;font-size:0.78rem;background:var(--bg2);padding:12px;border-radius:8px;flex:1;overflow-y:auto;margin:0;font-family:monospace"></pre>
+  </div>
+</div>
 </body>
 </html>`;
 
@@ -4034,6 +4105,29 @@ export class DashboardServer {
       if (url === "/api/version") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(BUILD_INFO));
+        return;
+      }
+
+      // GET /api/tool-log?session=<safeKey>&turn=<N>
+      // 讀整個 turn 的完整 tool log（未截斷的 params/result）— 給 trace 的 click-to-expand 用
+      if (url.startsWith("/api/tool-log")) {
+        const qs = new URLSearchParams(url.slice(url.indexOf("?") + 1));
+        const session = qs.get("session") ?? "";
+        const turnStr = qs.get("turn") ?? "";
+        const turn = parseInt(turnStr, 10);
+        if (!session || !Number.isFinite(turn)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "session & turn required" }));
+          return;
+        }
+        const tl = readToolLog(session, turn);
+        if (!tl) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "tool log not found" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(tl));
         return;
       }
 

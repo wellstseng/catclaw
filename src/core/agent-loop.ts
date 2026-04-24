@@ -80,11 +80,11 @@ function toolResultPreview(result: unknown, error?: string): string {
 //   - BASE 是基礎預算（正常對話綽綽有餘）
 //   - 接近 cap 時，若近 5 輪「全成功、tool_search 沒超過 2 次」→ 延長一階（+STEP）
 //   - CEILING 是絕對天花板（擋失控成本）
-// 理由：Playwright MCP 之類一連串 20+ 工具呼叫的任務，固定 20 做不完；
+// 理由：Playwright MCP 之類一連串 30-50 工具呼叫的任務，固定 20 做不完；
 //       但無條件放寬會讓 buggy loop 吃掉成本。進展健康才准擴展是折衷。
-const BASE_LOOPS = 20;
+const BASE_LOOPS = 50;
 const LOOP_EXTEND_STEP = 10;
-const LOOP_CAP_CEILING = 60;
+const LOOP_CAP_CEILING = 80;
 const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最多自動續接次數
 const DEFAULT_RESULT_TOKEN_CAP = 0;   // 0 = 不截斷（讓上游/per-tool 自行控制）
 

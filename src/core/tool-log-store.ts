@@ -8,7 +8,7 @@
  * - LLM context 只存 "[工具記錄] op×N → path" 摘要，不佔大量 token
  */
 
-import { writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
@@ -41,6 +41,10 @@ export class ToolLogStore {
       dataDir.startsWith("~") ? dataDir.replace("~", homedir()) : dataDir,
       "tool-logs",
     );
+  }
+
+  getLogDir(): string {
+    return this.logDir;
   }
 
   /**
@@ -126,4 +130,17 @@ export function initToolLogStore(dataDir: string): ToolLogStore {
 
 export function getToolLogStore(): ToolLogStore | null {
   return _toolLogStore;
+}
+
+/** 供 dashboard endpoint 依 sessionKey + turnIndex 讀回完整 tool log（含未截斷的 params/result） */
+export function readToolLog(sessionKey: string, turnIndex: number): ToolLog | null {
+  if (!_toolLogStore) return null;
+  const safeKey = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const path = join(_toolLogStore.getLogDir(), safeKey, `turn_${turnIndex}.json`);
+  try {
+    const raw = readFileSync(path, "utf-8");
+    return JSON.parse(raw) as ToolLog;
+  } catch {
+    return null;
+  }
 }
