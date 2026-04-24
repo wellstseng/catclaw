@@ -54,6 +54,8 @@ export class CliBridge {
   private _lastUsedAt = Date.now();
   /** ensureAlive mutex — 防止多訊息同時觸發雙 spawn */
   private _ensureAliveLock: Promise<void> | null = null;
+  /** shutdown 中 flag — 拒絕新 turn */
+  private _draining = false;
 
   // Turn 追蹤
   private activeTurnId: string | null = null;
@@ -137,6 +139,10 @@ export class CliBridge {
   send(text: string, source: "discord" | "dashboard", meta?: { user?: string; ts?: string; imageBlocks?: StdinImageBlock[]; sourceChannelId?: string }): TurnHandle {
     this._lastUsedAt = Date.now();
     const turnId = randomUUID();
+
+    if (this._draining) {
+      return this.createErrorHandle(turnId, "bridge 正在關閉，無法接受新訊息");
+    }
 
     if (!this.process?.alive) {
       // process 不在 → 觸發重啟，但先回傳 error handle
@@ -378,7 +384,31 @@ export class CliBridge {
 
   async shutdown(): Promise<void> {
     log.info(`[cli-bridge:${this.label}] shutdown`);
+    this._draining = true;
     this.stopKeepAlive();
+
+    // 等 pending turns 自然完成（最多 shutdownDrainTimeoutMs）
+    const drainTimeoutMs = this.bridgeConfig.shutdownDrainTimeoutMs ?? 30_000;
+    if (this.turnListeners.size > 0 && drainTimeoutMs > 0) {
+      const pendingCount = this.turnListeners.size;
+      log.info(`[cli-bridge:${this.label}] shutdown: 等 ${pendingCount} 個 pending turn 完成（timeout=${drainTimeoutMs}ms）`);
+      const start = Date.now();
+      while (this.turnListeners.size > 0 && Date.now() - start < drainTimeoutMs) {
+        // 檢查是否所有 listener 都 done（generator 尚未消費完也算）
+        let allDone = true;
+        for (const [, l] of this.turnListeners) { if (!l.done) { allDone = false; break; } }
+        if (allDone) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+      const remaining = this.turnListeners.size;
+      if (remaining > 0) {
+        log.warn(`[cli-bridge:${this.label}] shutdown: drain timeout, 強制關閉 ${remaining} 個殘留 turn`);
+      } else {
+        log.info(`[cli-bridge:${this.label}] shutdown: drain 完成 (${Date.now() - start}ms)`);
+      }
+    }
+
+    // 剩下還沒 done 的 → silent fail（通常已 done 只是 generator 沒消費完）
     this.failAllPendingTurns("bridge 關閉中", true);
 
     if (this.process?.alive) {

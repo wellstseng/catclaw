@@ -117,6 +117,8 @@ export interface CliBridgeConfig {
   showIntermediateText?: "normal" | "quote" | "spoiler" | "none";
   /** 閒置超過此毫秒後自動卸載 CLI process（預設 0 = 不卸載） */
   idleSuspendMs?: number;
+  /** Graceful shutdown 等待 pending turns 完成的上限（預設 30000ms） */
+  shutdownDrainTimeoutMs?: number;
 }
 
 /** catclaw.json 中的 cliBridges 區塊（陣列，每個 entry 一個獨立 CLI） */

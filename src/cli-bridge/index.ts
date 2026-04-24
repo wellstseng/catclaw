@@ -464,7 +464,7 @@ function _appendInboundHistory(bridge: CliBridge, msg: Message): void {
         content: msg.content.trim(),
         wasProcessed: false,
       }, `bridge:${bridge.label}`);
-    } catch { /* 靜默 */ }
+    } catch (e) { log.debug(`[cli-bridge] inbound history append 失敗：${e instanceof Error ? e.message : String(e)}`); }
   })();
 }
 
@@ -768,7 +768,7 @@ export async function shutdownAllBridges(): Promise<void> {
 
 // ── Idle Suspend Scanner ────────────────────────────────────────────────────
 
-const DEFAULT_IDLE_SUSPEND_MS = 600_000; // 10 分鐘
+const DEFAULT_IDLE_SUSPEND_MS = 1_800_000; // 30 分鐘
 const IDLE_SCAN_INTERVAL_MS = 30_000;
 let _idleScannerTimer: ReturnType<typeof setInterval> | null = null;
 

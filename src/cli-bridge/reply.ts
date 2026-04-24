@@ -226,6 +226,8 @@ export async function handleCliBridgeReply(
   let editBusy = false;
   let isFirst = true;
   let toolHintSent = false;
+  let editFailCount = 0;
+  const MAX_EDIT_FAILURES = 2;
 
   // Intermediate 累積（quote/spoiler 模式：所有中間文字 edit 同一條訊息）
   let intermediateMsg: Message | null = null;
@@ -267,7 +269,7 @@ export async function handleCliBridgeReply(
 
     if (intermediateStyle === "none") {
       // style=none → 刪除 placeholder（如有）
-      if (state.editMsg) { try { await state.editMsg.delete(); } catch { /* */ } }
+      if (state.editMsg) { try { await state.editMsg.delete(); } catch (e) { log.debug(`[cli-bridge-reply] delete editMsg 失敗：${e instanceof Error ? e.message : String(e)}`); } }
       state.editMsg = null;
       return;
     }
@@ -280,7 +282,7 @@ export async function handleCliBridgeReply(
     if (formatted.length > TEXT_LIMIT - 100 && intermediateMsg) {
       const prevFormatted = formatIntermediate(intermediateAccum.slice(0, -raw.trim().length).trim());
       if (prevFormatted) {
-        try { await sender.edit(intermediateMsg, prevFormatted.slice(0, TEXT_LIMIT)); } catch { /* */ }
+        try { await sender.edit(intermediateMsg, prevFormatted.slice(0, TEXT_LIMIT)); } catch (e) { log.debug(`[cli-bridge-reply] intermediate edit 失敗：${e instanceof Error ? e.message : String(e)}`); }
       }
       intermediateMsg = null;
       intermediateAccum = raw.trim();
@@ -290,16 +292,16 @@ export async function handleCliBridgeReply(
 
     if (intermediateMsg) {
       // edit 既有的中間訊息
-      try { await sender.edit(intermediateMsg, safe); } catch { /* */ }
+      try { await sender.edit(intermediateMsg, safe); } catch (e) { log.debug(`[cli-bridge-reply] intermediate edit 失敗：${e instanceof Error ? e.message : String(e)}`); }
     } else if (state.editMsg) {
       // 首次 flush：複用 streaming edit 的訊息
       intermediateMsg = state.editMsg;
-      try { await sender.edit(intermediateMsg, safe); } catch { /* */ }
+      try { await sender.edit(intermediateMsg, safe); } catch (e) { log.debug(`[cli-bridge-reply] intermediate edit(reuse) 失敗：${e instanceof Error ? e.message : String(e)}`); }
     } else {
       // 沒有既有訊息（例如前一條已滿），建新的
       try {
         intermediateMsg = await sender.send(safe);
-      } catch { /* */ }
+      } catch (e) { log.debug(`[cli-bridge-reply] intermediate send 失敗：${e instanceof Error ? e.message : String(e)}`); }
     }
 
     state.editMsg = null;
@@ -321,7 +323,17 @@ export async function handleCliBridgeReply(
       lastEditTime = now;
       editCount++;
       await sender.edit(state.editMsg, safe);
-    } catch { /* rate-limited or deleted */ }
+      editFailCount = 0;
+    } catch (e) {
+      editFailCount++;
+      log.debug(`[cli-bridge-reply] streaming edit 失敗 (${editFailCount}/${MAX_EDIT_FAILURES})：${e instanceof Error ? e.message : String(e)}`);
+      // 連續失敗 → 放棄 editMsg，下次 text_delta 會建新訊息
+      if (editFailCount >= MAX_EDIT_FAILURES) {
+        log.warn(`[cli-bridge-reply] editMsg 連續 ${editFailCount} 次失敗，切換為新訊息模式`);
+        state.editMsg = null;
+        editFailCount = 0;
+      }
+    }
     finally { editBusy = false; }
   }
 
@@ -346,7 +358,7 @@ export async function handleCliBridgeReply(
         state.editMsg = await sender.send("...");
       }
     } catch (err) {
-      log.debug(`[cli-bridge-reply] initEditMsg 失敗：${err instanceof Error ? err.message : String(err)}`);
+      log.warn(`[cli-bridge-reply] initEditMsg 失敗（後續回覆可能遺失）：${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -407,7 +419,7 @@ export async function handleCliBridgeReply(
               } else {
                 await sender.send(chunk);
               }
-            } catch { /* */ }
+            } catch (e) { log.debug(`[cli-bridge-reply] chunk send/edit 失敗：${e instanceof Error ? e.message : String(e)}`); }
           }
           buffer = "";
           state.editMsg = null;
@@ -434,7 +446,7 @@ export async function handleCliBridgeReply(
           // normal 模式：定稿 streaming edit 訊息，清空 buffer + editMsg
           cancelEditTimer();
           const content = closeFenceIfOpen(buffer);
-          try { await sender.edit(state.editMsg, content.slice(0, TEXT_LIMIT)); } catch { /* */ }
+          try { await sender.edit(state.editMsg, content.slice(0, TEXT_LIMIT)); } catch (e) { log.debug(`[cli-bridge-reply] tool_call finalize edit 失敗：${e instanceof Error ? e.message : String(e)}`); }
           buffer = "";
           state.editMsg = null;
         }
@@ -651,7 +663,7 @@ async function handleControlRequest(
     await sender.editComponents(promptMsg, {
       content: `🔐 **權限請求** → ⏰ 超時（自動拒絕）\n工具：\`${evt.tool}\`\n${evt.description}`,
       components: [],
-    }).catch(() => {});
+    }).catch((e) => { log.debug(`[cli-bridge-reply] control_request timeout edit 失敗：${e instanceof Error ? e.message : String(e)}`); });
     log.info(`[cli-bridge-reply] control_request ${evt.requestId} → timeout (denied)`);
   }
 }
@@ -712,7 +724,7 @@ async function handleTimeoutAsk(
     await sender.editComponents(msg, {
       content: `⏰ **Idle 超時** → 無回應，自動中斷`,
       components: [],
-    }).catch(() => {});
+    }).catch((e) => { log.debug(`[cli-bridge-reply] timeout ask edit 失敗：${e instanceof Error ? e.message : String(e)}`); });
     log.info(`[cli-bridge-reply] timeout ask turn=${turnId.slice(0, 8)} → auto interrupt (no response)`);
   }
 }

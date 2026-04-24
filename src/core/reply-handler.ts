@@ -138,7 +138,7 @@ export async function handleAgentLoopReply(
     try {
       editBusy = true;
       await progressMsg.edit(safeContent);
-    } catch { /* rate-limited 或訊息被刪，靜默 */ }
+    } catch (e) { log.debug(`[reply-handler] streaming edit 失敗：${e instanceof Error ? e.message : String(e)}`); }
     finally { editBusy = false; }
   }
 
@@ -178,7 +178,7 @@ export async function handleAgentLoopReply(
       }
       progressMsg = msg;
     } catch (err) {
-      log.debug(`[reply-handler] initProgressMsg 失敗：${err instanceof Error ? err.message : String(err)}`);
+      log.warn(`[reply-handler] initProgressMsg 失敗（後續回覆可能遺失）：${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -413,7 +413,7 @@ export async function handleAgentLoopReply(
             }
             isFirst = false;
             if (progressMsg !== null) {
-              try { await (progressMsg as Message).edit("📎 完整回覆已上傳（見附件）"); } catch { /* 靜默 */ }
+              try { await (progressMsg as Message).edit("📎 完整回覆已上傳（見附件）"); } catch (e) { log.debug(`[reply-handler] fileMode progressMsg edit 失敗：${e instanceof Error ? e.message : String(e)}`); }
             }
           } else {
             // 非 fileMode：清 segmentBuffer 中 MEDIA token，最終 edit progressMsg
@@ -447,7 +447,7 @@ export async function handleAgentLoopReply(
               const attachment = new AttachmentBuilder(buf2, { name: basename(filePath) });
               await threadChannel.send({ files: [attachment] });
               isFirst = false;
-            } catch { /* 靜默 */ }
+            } catch (e) { log.debug(`[reply-handler] media upload(thread) 失敗：${filePath} — ${e instanceof Error ? e.message : String(e)}`); }
           } else {
             const uploaded = await uploadMediaFile(filePath, originalMessage, isFirst);
             if (uploaded) isFirst = false;
@@ -466,7 +466,7 @@ export async function handleAgentLoopReply(
         };
         const names = event.strategies.map(s => stratNames[s] ?? s).join(" + ");
         const ceMsg = `📦 **Context 壓縮**：${names}（${event.tokensBefore.toLocaleString()} → ${event.tokensAfter.toLocaleString()} tokens，節省 ${saved.toLocaleString()}）`;
-        try { await send(ceMsg); isFirst = false; } catch { /* 靜默 */ }
+        try { await send(ceMsg); isFirst = false; } catch (e) { log.debug(`[reply-handler] ce_applied send 失敗：${e instanceof Error ? e.message : String(e)}`); }
 
       } else if (event.type === "context_warning") {
         const icon = event.level === "critical" ? "🔴" : "🟡";
@@ -476,7 +476,7 @@ export async function handleAgentLoopReply(
           ? "建議開新對話或執行 /reset-session"
           : "接近上限，請留意";
         const warnMsg = `${icon} **Context 用量警告**（${src}）：${pct}%（${event.estimatedTokens.toLocaleString()} / ${event.contextWindow.toLocaleString()} tokens）— ${hint}`;
-        try { await send(warnMsg); isFirst = false; } catch { /* 靜默 */ }
+        try { await send(warnMsg); isFirst = false; } catch (e) { log.debug(`[reply-handler] context_warning send 失敗：${e instanceof Error ? e.message : String(e)}`); }
 
       } else if (event.type === "error") {
         stopTyping();
@@ -486,7 +486,7 @@ export async function handleAgentLoopReply(
           await waitEditDone();
           // 若 progressMsg 還是空白 placeholder（無實質 segment 內容），直接 edit 為錯誤訊息
           if (progressMsg !== null && !segmentBuffer.trim()) {
-            try { await (progressMsg as Message).edit(errorMsg); } catch { /* 靜默 */ }
+            try { await (progressMsg as Message).edit(errorMsg); } catch (e) { log.debug(`[reply-handler] error edit 失敗：${e instanceof Error ? e.message : String(e)}`); }
             progressMsg = null; segmentBuffer = "";
           } else {
             await finalizeStreamEdit();

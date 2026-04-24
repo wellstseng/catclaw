@@ -578,7 +578,7 @@ async function handleMessage(
   log.debug(`[discord] 通過過濾，text="${text.slice(0, 80)}" → 進入 debounce`);
 
   // Debounce：合併短時間內同一人的多則訊息
-  debounce(message, text, imageAttachments, config, (combinedText, firstMessage, allImages) => { void (async () => {
+  debounce(message, text, imageAttachments, config, (combinedText, firstMessage, allImages) => { void (async () => { try {
     // 生成 turn_id，串聯 user input + AI response
     const turnId = randomUUID();
 
@@ -638,10 +638,10 @@ async function handleMessage(
           }
         }
         const result = await skill.execute(skillCtx);
-        void firstMessage.reply(result.text);
+        await firstMessage.reply(result.text).catch((e) => log.warn(`[discord] skill ${skill.name} reply 失敗：${e instanceof Error ? e.message : String(e)}`));
       } catch (err) {
         log.warn(`[discord] skill ${skill.name} 執行失敗：${err instanceof Error ? err.message : String(err)}`);
-        void firstMessage.reply(`❌ ${skill.name} 執行失敗`);
+        await firstMessage.reply(`❌ ${skill.name} 執行失敗`).catch((e) => log.warn(`[discord] skill error reply 失敗：${e instanceof Error ? e.message : String(e)}`));
       }
       return;
     }
@@ -717,8 +717,8 @@ async function handleMessage(
             void handleCliBridgeReply(cliBridge, fullText, firstMessage, config, cliBridge.getBridgeConfig(), imageBlocks);
             return;
           }
-        } catch {
-          // sender 未初始化 → 跳過 CLI Bridge 路由
+        } catch (err) {
+          log.debug(`[discord] CLI Bridge 路由跳過（sender 未就緒）：${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }
@@ -745,7 +745,7 @@ async function handleMessage(
               );
               return;
             }
-          } catch { /* registration not initialized, fall through */ }
+          } catch (err) { log.debug(`[discord] registration 未初始化：${err instanceof Error ? err.message : String(err)}`); }
         }
       }
 
@@ -758,7 +758,7 @@ async function handleMessage(
           accountRole = acct.role;
           currentProjectId = acct.projects?.[0];
         }
-      } catch { /* account registry not available */ }
+      } catch (err) { log.debug(`[discord] account registry 無法存取：${err instanceof Error ? err.message : String(err)}`); }
 
       // 頻道綁定的專案優先於帳號的 currentProject
       const guildId = firstMessage.guild?.id ?? null;
@@ -947,5 +947,8 @@ async function handleMessage(
 
       void handleAgentLoopReply(withAckReactions(gen), firstMessage, config, replyThread ? { threadChannel: replyThread } : undefined);
     }
-  })(); });
+  } catch (err) {
+    log.error(`[discord] debounce handler 未預期錯誤：${err instanceof Error ? err.message : String(err)}`);
+    void firstMessage.react("❌").catch(() => {});
+  } })(); });
 }
