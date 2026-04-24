@@ -15,8 +15,10 @@ import { toDefinition } from "./types.js";
 
 // ── ToolRegistry ──────────────────────────────────────────────────────────────
 
-/** tool 執行超過此時間時發軟警告 log（不中斷執行） */
+/** tool 執行超過此時間時發軟警告 log */
 const SOFT_WARN_MS = 60_000;
+/** 絕對安全閥：即使 tool 自己宣告無逾時，也強制在此時間後中斷（10 分鐘） */
+const ABSOLUTE_HARD_LIMIT_MS = 600_000;
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
@@ -113,25 +115,24 @@ export class ToolRegistry {
     // 計算 effective timeout（per-tool 優先，0 = 無限制）
     const effectiveMs = tool.timeoutMs ?? this.defaultTimeoutMs;
 
-    try {
-      if (effectiveMs <= 0) {
-        // 無限制模式：不逾時，但超過 SOFT_WARN_MS 發軟警告（不中斷）
-        const warnTimer = setTimeout(() => {
-          log.warn(`[tool-registry] 工具執行時間過長 tool=${toolName} 已超過 ${SOFT_WARN_MS}ms（不中斷，僅警告）`);
-        }, SOFT_WARN_MS);
-        try {
-          return await tool.execute(params, ctx);
-        } finally {
-          clearTimeout(warnTimer);
-        }
-      }
+    // 絕對上限：effectiveMs<=0 或過大時，fallback 到 ABSOLUTE_HARD_LIMIT_MS
+    // 防止 tool 誤設 timeoutMs=0 導致 turn 卡死無法回復
+    const guardedMs = (effectiveMs > 0 && effectiveMs <= ABSOLUTE_HARD_LIMIT_MS)
+      ? effectiveMs
+      : ABSOLUTE_HARD_LIMIT_MS;
 
+    try {
+      let warnTimer: ReturnType<typeof setTimeout> | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      warnTimer = setTimeout(() => {
+        log.warn(`[tool-registry] 工具執行時間過長 tool=${toolName} 已超過 ${SOFT_WARN_MS}ms（仍在執行，將在 ${guardedMs}ms 硬中斷）`);
+      }, SOFT_WARN_MS);
+
       const timeoutPromise = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           // 安全：不在 error 訊息中暴露 toolName 或 params
-          reject(new Error("工具執行逾時"));
-        }, effectiveMs);
+          reject(new Error(`工具執行逾時（${guardedMs}ms）`));
+        }, guardedMs);
       });
 
       try {
@@ -139,6 +140,7 @@ export class ToolRegistry {
         return result;
       } finally {
         clearTimeout(timer);
+        clearTimeout(warnTimer);
       }
     } catch (err) {
       // timeout 或執行錯誤統一由此 catch 轉換
@@ -156,7 +158,7 @@ export class ToolRegistry {
               event: "ToolTimeout",
               toolName,
               toolParams: params,
-              timeoutMs: effectiveMs,
+              timeoutMs: guardedMs,
               agentId: ctx.agentId,
               accountId: ctx.accountId,
             });

@@ -1583,7 +1583,23 @@ export async function* agentLoop(
         eventBus.emit("tool:before", { id: call.id, name: call.name, params: effectiveParams });
         const t0 = Date.now();
 
+        // Tool 執行：逾時自動重試 1 次（總共最多 2 次嘗試）
+        // 非逾時錯誤不重試，避免無效放大副作用
+        const TOOL_TIMEOUT_MAX_RETRIES = 1;
         let toolResult = await toolRegistry.execute(call.name, effectiveParams, toolCtx);
+        for (let attempt = 1; attempt <= TOOL_TIMEOUT_MAX_RETRIES; attempt++) {
+          if (!toolResult.error || !toolResult.error.includes("逾時")) break;
+          log.warn(`[agent-loop] tool ${call.name} 逾時，重試 ${attempt}/${TOOL_TIMEOUT_MAX_RETRIES}`);
+          toolResult = await toolRegistry.execute(call.name, effectiveParams, toolCtx);
+        }
+        if (toolResult.error?.includes("逾時")) {
+          const totalAttempts = TOOL_TIMEOUT_MAX_RETRIES + 1;
+          log.warn(`[agent-loop] tool ${call.name} 連續 ${totalAttempts} 次逾時，放棄並回報 LLM`);
+          toolResult = {
+            ...toolResult,
+            error: `${toolResult.error}；已重試共 ${totalAttempts} 次仍逾時，請改變策略或拆分操作後再試`,
+          };
+        }
         const durationMs = Date.now() - t0;
         // PostToolUse hook
         const postHookResult = await runPostToolUseHook(call.name, effectiveParams, toolResult, durationMs, { accountId, sessionKey, channelId });

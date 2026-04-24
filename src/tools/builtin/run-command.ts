@@ -14,7 +14,8 @@ import { log } from "../../logger.js";
 import type { Tool } from "../types.js";
 
 const STDOUT_CAP = 100_000; // 100KB
-const DEFAULT_TIMEOUT_MS = 0; // 0 = 無逾時限制
+const DEFAULT_TIMEOUT_MS = 300_000; // 5 分鐘硬上限（LLM 未傳 timeoutMs 時的預設）
+const SIGKILL_GRACE_MS = 2_000;  // SIGTERM 後等 2 秒再 SIGKILL
 
 // ── Git Safety Protocol ─────────────────────────────────────────────────────
 
@@ -170,21 +171,29 @@ export const tool: Tool = {
       proc.stdout?.on("data", onData);
       proc.stderr?.on("data", onData);
 
+      let killEscalationTimer: ReturnType<typeof setTimeout> | undefined;
       const timer = timeoutMs > 0
         ? setTimeout(() => {
-            proc.kill();
-            resolve({ error: `指令逾時（${timeoutMs}ms）：${command}` });
+            // 先送 SIGTERM 給 shell，讓它有機會清理 child
+            try { proc.kill("SIGTERM"); } catch { /* 已死亡 */ }
+            // 2 秒後若仍未退出，強制 SIGKILL
+            killEscalationTimer = setTimeout(() => {
+              try { proc.kill("SIGKILL"); } catch { /* 已死亡 */ }
+            }, SIGKILL_GRACE_MS);
+            resolve({ error: `指令逾時（${timeoutMs}ms 已強制終結）：${command.slice(0, 120)}` });
           }, timeoutMs)
         : null;
 
       proc.on("close", (code) => {
         if (timer) clearTimeout(timer);
+        if (killEscalationTimer) clearTimeout(killEscalationTimer);
         const suffix = truncated ? "\n...[輸出超過 100KB，已截斷]" : "";
         resolve({ result: { exitCode: code, output: output + suffix } });
       });
 
       proc.on("error", (err) => {
         if (timer) clearTimeout(timer);
+        if (killEscalationTimer) clearTimeout(killEscalationTimer);
         resolve({ error: `執行失敗：${err.message}` });
       });
     });
