@@ -84,12 +84,17 @@ export interface CliBridgeChannelConfig {
   autoNameSuffix?: string | null;
 }
 
+/** Provider 類型（決定 spawn 哪個 CLI binary 與用什麼 protocol） */
+export type CliProviderName = "claude";
+
 /** 單一 CLI Bridge 實例設定 */
 export interface CliBridgeConfig {
   enabled: boolean;
   /** 識別標籤（全域唯一） */
   label: string;
-  /** Claude CLI binary 路徑（預設 "claude"） */
+  /** CLI provider 類型（預設 "claude" 向後相容；Phase 2 會擴增 codex） */
+  provider?: CliProviderName;
+  /** Claude CLI binary 路徑（預設 "claude"，僅 provider=claude 用到） */
   claudeBin?: string;
   /** CLI 工作目錄 */
   workingDir: string;
@@ -126,8 +131,10 @@ export type CliBridgesConfig = CliBridgeConfig[];
 
 /** CliProcess 建構參數 */
 export interface CliProcessConfig {
-  /** Claude CLI binary 路徑 */
-  claudeBin: string;
+  /** Provider 類型（決定 instantiate 哪個 CliProvider） */
+  provider: CliProviderName;
+  /** CLI binary 路徑（依 provider 由 bridge 決定 — claudeBin / 未來 codexBin） */
+  cliBin: string;
   /** 工作目錄 */
   workingDir: string;
   /** Session ID（可選） */

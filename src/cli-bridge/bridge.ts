@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { log } from "../logger.js";
 import { resolveCatclawDir } from "../core/config.js";
 import { CliProcess } from "./process.js";
+import { ClaudeProvider } from "./providers/claude.js";
 import { StdoutLogger } from "./stdout-log.js";
 import type {
   CliBridgeConfig,
@@ -202,16 +203,10 @@ export class CliBridge {
     // Per-turn meta tag 注入：讓 CLI 每 turn 重新知道部署脈絡，不怕 context 壓縮
     const wrappedText = this.wrapWithChannelTag(text, source, meta);
 
-    // 送 stdin（有圖片時改送 content block 陣列，讓 CLI 直接把 base64 圖傳給 API）
+    // 送 stdin（有圖片時 provider encode 成 content block 陣列）
     const imageBlocks = meta?.imageBlocks;
-    const content = imageBlocks && imageBlocks.length > 0
-      ? [{ type: "text" as const, text: wrappedText }, ...imageBlocks]
-      : wrappedText;
     try {
-      this.process.send({
-        type: "user",
-        message: { role: "user", content },
-      });
+      this.process.sendUserMessage(wrappedText, imageBlocks);
     } catch (err) {
       this.turnListeners.delete(turnId);
       this.pendingTurns.delete(turnId);
@@ -238,11 +233,7 @@ export class CliBridge {
   sendControlResponse(requestId: string, allowed: boolean): void {
     if (!this.process?.alive) return;
     try {
-      this.process.send({
-        type: "control_response",
-        permission_request_id: requestId,
-        allowed,
-      });
+      this.process.sendControlResponse(requestId, allowed);
       log.info(`[cli-bridge:${this.label}] control_response ${requestId} allowed=${allowed}`);
     } catch (err) {
       log.warn(`[cli-bridge:${this.label}] control_response 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
@@ -628,8 +619,13 @@ export class CliBridge {
   // ── 內部：process 建立 ────────────────────────────────────────────────────
 
   private async spawnProcess(): Promise<void> {
+    const providerName = this.bridgeConfig.provider ?? "claude";
+    const cliBin = providerName === "claude"
+      ? (this.bridgeConfig.claudeBin ?? "claude")
+      : "claude"; // Phase 2 才會加 codex 分支
     const procConfig: CliProcessConfig = {
-      claudeBin: this.bridgeConfig.claudeBin ?? "claude",
+      provider: providerName,
+      cliBin,
       workingDir: this.bridgeConfig.workingDir,
       sessionId: this.sessionId ?? this.channelConfig.sessionId ?? undefined,
       dangerouslySkipPermissions: this.channelConfig.dangerouslySkipPermissions ?? false,
@@ -638,7 +634,8 @@ export class CliBridge {
       channelId: this.channelId,
     };
 
-    this.process = new CliProcess(procConfig);
+    const provider = new ClaudeProvider(); // Phase 2 才會依 providerName 切換
+    this.process = new CliProcess(procConfig, provider);
     this._lastSpawnTime = Date.now();
 
     // 綁定事件
