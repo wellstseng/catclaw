@@ -86,6 +86,7 @@ const BASE_LOOPS = 50;
 const LOOP_EXTEND_STEP = 10;
 const LOOP_CAP_CEILING = 80;
 const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最多自動續接次數
+const MAX_DEFERRED_NUDGES = 3;  // Deferred tool 活化後空回應 → 注入續接提示的最大次數
 const DEFAULT_RESULT_TOKEN_CAP = 0;   // 0 = 不截斷（讓上游/per-tool 自行控制）
 
 // ── Tool result 智慧截斷 ──────────────────────────────────────────────────────
@@ -1110,7 +1111,8 @@ export async function* agentLoop(
   // Deferred Tool Nudge：tool_search 後 LLM 空回應 end_turn 時自動注入續接提示
   let deferredJustActivated: string[] = [];   // 本 iteration 剛活化的 deferred tool 名稱
   let prevIterDeferredActivated: string[] = []; // 上一 iteration 活化的（供本 iter 判斷用）
-  let deferredNudgeUsed = false;              // 每 turn 最多 nudge 一次
+  let deferredNudgeCount = 0;                 // Deferred tool 活化後的空回應續接次數
+  let deferredNudgeExhausted = false;         // nudge 用完還在空轉 → 給使用者通知
   const turnStartMs = Date.now();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -1330,15 +1332,22 @@ export async function* agentLoop(
         }
         // Deferred Tool Nudge：上一 iter 活化 deferred tool + 本 iter 空回應 → 注入中性續接
         // 文案改中性（去「[系統提示]」前綴）避開 Anthropic Common cause #1（tool_result 後加 text 強化 end_turn）
-        if (prevIterDeferredActivated.length > 0 && outputEmpty && !deferredNudgeUsed) {
-          deferredNudgeUsed = true;
+        // 上限 3 次：單次 nudge 不一定救得回來（觀察過連續 2 次 nudge 才啟動的 case），
+        // 但也不能無限，不然真的卡死的 case 會燒 cost
+        if (prevIterDeferredActivated.length > 0 && outputEmpty && deferredNudgeCount < MAX_DEFERRED_NUDGES) {
+          deferredNudgeCount++;
           const loaded = prevIterDeferredActivated.join(", ");
-          log.warn(`[agent-loop] [loop=${loopCount}] tool_search 後空回應 end_turn，自動注入 continuation（已載入 ${loaded}）`);
+          log.warn(`[agent-loop] [loop=${loopCount}] tool_search 後空回應 end_turn，自動注入 continuation ${deferredNudgeCount}/${MAX_DEFERRED_NUDGES}（已載入 ${loaded}）`);
           messages.push({
             role: "user",
             content: `Tools now available: ${loaded}.`,
           });
           continue;
+        }
+        // 如果 nudge 用完還在 empty end_turn → 標記，讓最終 response 補通知給使用者
+        if (prevIterDeferredActivated.length > 0 && outputEmpty && deferredNudgeCount >= MAX_DEFERRED_NUDGES) {
+          deferredNudgeExhausted = true;
+          log.warn(`[agent-loop] [loop=${loopCount}] deferred nudge 用完仍空回應，放棄 turn`);
         }
         break;
       }
@@ -1809,6 +1818,12 @@ export async function* agentLoop(
     const notice = `\n\n⚠️ 已達工具呼叫上限 ${loopCap} 輪${extended}（執行了 ${toolsRun} 個工具，最後 3 個：${lastTools}），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」或補充指示。`;
     fullResponse = fullResponse.trim() ? fullResponse + notice : notice.trimStart();
     log.warn(`[agent-loop] loop cap 觸頂：sessionKey=${sessionKey} cap=${loopCap} tools=${toolsRun}`);
+  } else if (deferredNudgeExhausted) {
+    // 不是 loop cap 觸頂，而是 Anthropic API 在 tool_search 後連續空回應 end_turn
+    // nudge 已經注入 3 次還是沒用 → 提醒使用者，不讓模型看起來裝死
+    const notice = `\n\n⚠️ 模型在工具查詢後連續 ${MAX_DEFERRED_NUDGES + 1} 次空回應（Anthropic API 已知 quirk），自動中止。若要繼續請回覆「繼續」，或重述需求更具體一點。`;
+    fullResponse = fullResponse.trim() ? fullResponse + notice : notice.trimStart();
+    log.warn(`[agent-loop] deferred nudge 耗盡：sessionKey=${sessionKey}`);
   }
 
   // Tool Log Store：儲存 tool 執行記錄，session history 加索引摘要
