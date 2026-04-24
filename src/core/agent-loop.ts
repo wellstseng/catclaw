@@ -87,6 +87,7 @@ const LOOP_EXTEND_STEP = 10;
 const LOOP_CAP_CEILING = 80;
 const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最多自動續接次數
 const MAX_DEFERRED_NUDGES = 3;  // Deferred tool 活化後空回應 → 注入續接提示的最大次數
+const ACTIVATE_PER_ITER_LIMIT = 3;  // 每輪最多活化幾個 deferred tool（防 Anthropic 批次活化空回應 quirk）
 const DEFAULT_RESULT_TOKEN_CAP = 0;   // 0 = 不截斷（讓上游/per-tool 自行控制）
 
 // ── Tool result 智慧截斷 ──────────────────────────────────────────────────────
@@ -1769,6 +1770,12 @@ export async function* agentLoop(
       // 不再從 query 字串 fuzzy 推導——這會導致 `_navigate` 被查到時，`_navigate_back` 也因
       // 子字串匹配被活化，造成 Claude API 空回應 end_turn（見 trace 9cc832ce，tools=18）。
       // 正解：tool_search 自己已經做過 exact/keyword 匹配，直接信任它的 result，取 name 陣列。
+      //
+      // 每輪活化上限 ACTIVATE_PER_ITER_LIMIT：
+      //   LLM 現在會批次預查（`tool_search "a,b,c,d,e"`）一次活化 5+ deferred tools。
+      //   這會觸發 Anthropic 空回應 quirk（下輪 LLM 收到 5 個新 tool 突然加入，直接 end_turn），
+      //   trace 82aa1fec 實測：一次活化 ≥3 個 → 連 4 輪 empty。
+      //   改成每輪最多活化 3 個，剩下的留在 loadedDeferredNames 裡，LLM 再 tool_search 會拿到剩下的。
       for (const call of streamResult.toolCalls) {
         if (call.name !== "tool_search") continue;
         const rec = tracker.toolCalls.find(tc => tc.name === "tool_search");
@@ -1780,14 +1787,20 @@ export async function* agentLoop(
           }
         }
         if (matchedNames.size === 0) continue;
+        let activatedThisIter = 0;
         for (const def of deferredDefs) {
           if (loadedDeferredNames.has(def.name)) continue;
           if (matchedNames.has(def.name)) {
+            if (activatedThisIter >= ACTIVATE_PER_ITER_LIMIT) break;
             toolDefs.push(def);
             loadedDeferredNames.add(def.name);
             deferredJustActivated.push(def.name);
+            activatedThisIter++;
             log.debug(`[agent-loop] deferred tool activated: ${def.name}`);
           }
+        }
+        if (activatedThisIter < matchedNames.size) {
+          log.info(`[agent-loop] deferred 活化節流：本輪 ${activatedThisIter}/${matchedNames.size}（防 Anthropic 空回應 quirk）`);
         }
       }
 
