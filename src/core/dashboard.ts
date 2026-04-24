@@ -16,19 +16,26 @@ import { readFileSync, writeFileSync, readdirSync, unlinkSync, renameSync, exist
 import { dirname, basename, join, join as pathJoin, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { log } from "../logger.js";
 
 // ── Build Info（讓使用者從 dashboard 確認載入哪個版本）───────────────────────
 // 原因：pm2 restart 忘了跑時，dashboard 看起來正常但實際跑舊 code —
 // 把 commit 顯示在 topbar 可以直接比對 `git log`，免去「是不是沒更新到」的猜測
+//
+// 踩坑記錄：第一版用 `dirname(new URL(import.meta.url).pathname)` 取 cwd，
+// 在 Windows 會變成 `/C:/.../dist/core` 這種 leading-slash 路徑，execSync 的
+// cwd 會解析失敗 → git 指令丟例外 → 被 catch 吃掉 → commit 永遠是 "unknown"。
+// 改用 `fileURLToPath` 取 OS-native 路徑（Windows 會回 `C:\...`、posix 回 `/...`）。
 function computeBuildInfo(): { commit: string; commitTime: string; startedAt: number } {
   let commit = "unknown";
   let commitTime = "";
   try {
-    commit = execSync("git rev-parse --short HEAD", { cwd: dirname(new URL(import.meta.url).pathname), stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-    commitTime = execSync("git log -1 --format=%cI HEAD", { cwd: dirname(new URL(import.meta.url).pathname), stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  } catch {
-    // 非 git repo / 沒裝 git → 保留 unknown
+    const cwd = dirname(fileURLToPath(import.meta.url));
+    commit = execSync("git rev-parse --short HEAD", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    commitTime = execSync("git log -1 --format=%cI HEAD", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch (err) {
+    log.warn(`[dashboard] 讀取 git commit 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
   return { commit, commitTime, startedAt: Date.now() };
 }
