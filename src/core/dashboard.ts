@@ -1319,7 +1319,7 @@ function exportLogs() {
 }
 
 async function clearLogs() {
-  if (!confirm('清除 PM2 日誌檔（out + error）？\n注意：此操作會 truncate 檔案，無法復原。')) return;
+  if (!confirm('清除 PM2 日誌檔（out + error）？\\n注意：此操作會 truncate 檔案，無法復原。')) return;
   const msg = document.getElementById('log-clear-msg');
   try {
     const d = await authFetch('/api/logs/clear', { method: 'POST' }).then(r => r.json());
