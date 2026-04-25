@@ -974,6 +974,27 @@ export async function* agentLoop(
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${planNotice}` : planNotice;
   }
 
+  // Agent 專屬 skills（agents/{agentId}/skills/*.md）+ 自建提示
+  // 之前只有 spawn_subagent 路徑會載入，主對話 turn 看不到 → wendy 等主 agent
+  // 完全不知道自己有 skills 能用、也不知能自建。改成主對話一視同仁。
+  if (opts.agentId) {
+    try {
+      const { loadAgentSkills, buildSkillsPrompt, buildSkillCreationHint } = await import("./agent-skill-loader.js");
+      const skills = loadAgentSkills(opts.agentId);
+      const skillsPrompt = buildSkillsPrompt(skills);
+      const creationHint = buildSkillCreationHint(opts.agentId);
+      const block = `${skillsPrompt}${creationHint}`.trim();
+      if (block) {
+        systemPrompt = systemPrompt ? `${systemPrompt}\n\n${block}` : block;
+        if (skills.length > 0) {
+          log.debug(`[agent-loop] agent=${opts.agentId} 載入 ${skills.length} 個 skill 注入 system prompt`);
+        }
+      }
+    } catch (err) {
+      log.debug(`[agent-loop] agent skill 載入失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // ── 4a. Deferred Tool Listing（改為每 iter 動態重組）──
   // 避免：若 listing 在 turn 外靜態組裝，deferred tool 活化後仍在 listing 中，
   // Claude 同時看到「X 在 deferred 清單」+「X 已在 tools array」的矛盾 state → 空回應 end_turn
