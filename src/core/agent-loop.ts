@@ -66,6 +66,38 @@ function toolParamsPreview(name: string, params: unknown): string {
   }
 }
 
+// ── Interrupt Message Queue（per-session，跨檔案共用）──────────────────────
+// discord.ts 收到使用者插話/編輯後丟訊息進來，agent-loop 在每 iter 開頭 drain 並 inject。
+// 實現「不打斷 LLM 的進行中呼叫，但下一 iter 模型能看到新內容」的軟插隊。
+
+const _interruptQueue = new Map<string, string[]>();
+
+export function registerInterruptQueue(sessionKey: string): void {
+  if (!_interruptQueue.has(sessionKey)) _interruptQueue.set(sessionKey, []);
+}
+
+export function unregisterInterruptQueue(sessionKey: string): void {
+  _interruptQueue.delete(sessionKey);
+}
+
+export function drainInterruptQueue(sessionKey: string): string[] {
+  const list = _interruptQueue.get(sessionKey);
+  if (!list || list.length === 0) return [];
+  const drained = list.splice(0);
+  return drained;
+}
+
+/**
+ * 把使用者新訊息塞進「正在執行的 turn」。
+ * 回傳 true 表示 turn 正在跑、訊息已 queue；false 表示沒有 active turn，呼叫端應走正常 enqueue 流程開新 turn。
+ */
+export function pushInterruptMessage(sessionKey: string, msg: string): boolean {
+  const list = _interruptQueue.get(sessionKey);
+  if (!list) return false;
+  list.push(msg);
+  return true;
+}
+
 /** 安全序列化 tool result 為預覽字串 */
 function toolResultPreview(result: unknown, error?: string): string {
   if (error) return error;
@@ -1164,6 +1196,12 @@ export async function* agentLoop(
   eventBus.on("file:modified", _onFileEditForRecovery);
   _wfListeners.push(() => eventBus.off("file:modified", _onFileEditForRecovery));
 
+  // ── Interrupt Message Queue（插話/編輯訊息注入到當前 turn）──────────────
+  // 之前是 abort + 開新 turn，會丟脈絡。現在改 soft-inject：
+  // discord.ts 把新訊息丟進這個 map，agent-loop 在每 iter 開頭 drain 進 messages，
+  // LLM 在下次 iteration 自然看到「[使用者插話]」+ 新內容並接續處理。
+  registerInterruptQueue(sessionKey);
+
   // ── Background Agent Result Queue ─────────────────────────────────────────
   // 監聽 subagent:completed/failed 事件，累積結果，在下次 LLM 呼叫前注入
   const pendingBgResults: Array<{ type: "completed" | "failed"; runId: string; label: string; content: string }> = [];
@@ -1192,6 +1230,16 @@ export async function* agentLoop(
 
       // ── abort 快速出口（/stop 或 timeout 觸發後，下一輪不再呼叫 LLM）────
       if (controller.signal.aborted) break;
+
+      // ── 使用者插話/編輯訊息注入（soft inject，不打斷 LLM 進行中的呼叫）──
+      const pendingInterrupts = drainInterruptQueue(sessionKey);
+      if (pendingInterrupts.length > 0) {
+        const block = pendingInterrupts.map(i => `[使用者插話] ${i}`).join("\n\n");
+        messages.push({ role: "user", content: block });
+        log.info(`[agent-loop] [loop=${loopCount}] 注入 ${pendingInterrupts.length} 則插話訊息到當前 turn`);
+        // 給 Discord 一個視覺提示，模型會在這之後自然接續
+        yield { type: "text_delta", text: `\n\n📥 收到插話，加入當前任務脈絡：${pendingInterrupts.map(s => s.slice(0, 30)).join(" / ")}\n\n` };
+      }
 
       // ── Background Agent 結果注入 ──────────────────────────────────────────
       if (pendingBgResults.length > 0) {
@@ -2099,5 +2147,7 @@ export async function* agentLoop(
   } finally {
     // Turn Queue 釋放：無論成功、錯誤、或 abort，都讓下一個 turn 繼續
     sessionManager.dequeueTurn(sessionKey);
+    // 清掉 interrupt queue（避免下一 turn 收到上一 turn 殘留的插話）
+    unregisterInterruptQueue(sessionKey);
   }
 }

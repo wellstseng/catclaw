@@ -203,7 +203,19 @@ async function handleMessageEdit(message: Message, config: BridgeConfig): Promis
     return;
   }
 
-  // B. 已離開 debounce → 注入編輯通知到 CLI Bridge
+  // B. 已離開 debounce → 嘗試 soft-inject 到 active agentLoop turn
+  try {
+    const { pushInterruptMessage } = await import("./core/agent-loop.js");
+    const sessionKey = `discord:ch:${message.channelId}`;
+    const editNotice = `[訊息編輯] ${message.author.displayName ?? message.author.username} 將訊息修改為：\n${newContent}`;
+    if (pushInterruptMessage(sessionKey, editNotice)) {
+      log.info(`[discord] messageUpdate：soft-inject 到 active agentLoop turn msgId=${message.id} age=${ageMs}ms`);
+      try { await message.react("✏️"); } catch { /* ignore */ }
+      return;
+    }
+  } catch { /* agent-loop import 失敗 → 不擋，繼續 fallback */ }
+
+  // C. fallback：注入編輯通知到 CLI Bridge（judy-cli 等子代理）
   try {
     const { getCliBridge } = await import("./cli-bridge/index.js");
     const cliBridge = getCliBridge(message.channelId);
@@ -215,7 +227,7 @@ async function handleMessageEdit(message: Message, config: BridgeConfig): Promis
     }
   } catch { /* CLI Bridge 未初始化 → 忽略 */ }
 
-  log.debug(`[discord] messageUpdate：msgId=${message.id} 無對應 debounce 或 active bridge，忽略`);
+  log.debug(`[discord] messageUpdate：msgId=${message.id} 無對應 debounce 或 active turn/bridge，忽略`);
 }
 
 // ── 附件下載 ─────────────────────────────────────────────────────────────────
@@ -859,14 +871,20 @@ async function handleMessage(
       const combinedSystemPrompt = pipeline.systemPrompt;
       const { inboundContext } = pipeline;
 
-      // ── 中途插隊（強制啟用）──────────────────────────────────────────────
-      // 新訊息到來時自動 abort 正在執行的 turn
+      // ── 中途插隊：soft-inject 取代 abort ─────────────────────────────────
+      // 之前是 abort + clearQueue + 開新 turn → 丟脈絡、可能空回應 fallback。
+      // 現在優先 push 到 active turn 的 interrupt queue，agent-loop 在下一 iter
+      // 開頭會 drain 進 messages，模型自然接續處理「[使用者插話] xxx」。
       {
         const sessionKey = `discord:ch:${firstMessage.channelId}`;
-        if (abortRunningTurn(sessionKey)) {
-          getPlatformSessionManager().clearQueue(sessionKey);
-          log.debug(`[discord] interruptOnNewMessage：已中斷 turn sessionKey=${sessionKey}`);
+        const { pushInterruptMessage } = await import("./core/agent-loop.js");
+        if (pushInterruptMessage(sessionKey, combinedText)) {
+          log.info(`[discord] 插話 soft-inject 到 active turn sessionKey=${sessionKey} text="${combinedText.slice(0, 60)}"`);
+          // 在 user 訊息加 👀 emoji 表示 bot 已收到，不開新 reply
+          try { await firstMessage.react("👀"); } catch { /* 失敗忽略 */ }
+          return;  // 不走後面的新 turn 流程
         }
+        // 沒 active turn → 維持原本流程，啟新 turn
       }
 
       // ── AutoThread：為每條訊息建立獨立 Thread ────────────────────────────
