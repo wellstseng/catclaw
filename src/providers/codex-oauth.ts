@@ -30,12 +30,87 @@ import type { ProviderEntry } from "../core/config.js";
 import type { AuthProfileStore, CooldownReason } from "./auth-profile-store.js";
 
 // ── OAuth token JSON 格式 ─────────────────────────────────────────────────────
+//
+// Codex CLI 在 2025 改成 nested 格式：
+//   { "auth_mode": "chatgpt",
+//     "tokens": { "access_token", "refresh_token", "id_token", "account_id" },
+//     "last_refresh": ISO timestamp }
+// 沒有 expires_at — exp 要從 access_token 這個 JWT 的 payload.exp 解出來。
+//
+// 舊版 catclaw 寫的 flat 格式（refresh 寫回時用）仍然支援作為 fallback。
 
-interface CodexAuthJson {
+interface CodexAuthJsonFlat {
   access_token: string;
   refresh_token?: string;
   expires_at?: number;    // epoch seconds
   token_type?: string;
+}
+
+interface CodexAuthJsonNested {
+  auth_mode?: string;
+  OPENAI_API_KEY?: string | null;
+  tokens?: {
+    id_token?: string;
+    access_token?: string;
+    refresh_token?: string;
+    account_id?: string;
+  };
+  last_refresh?: string;  // ISO timestamp
+}
+
+type CodexAuthJson = CodexAuthJsonFlat | CodexAuthJsonNested;
+
+interface ExtractedTokens {
+  access_token: string | undefined;
+  refresh_token: string | undefined;
+  expires_at_ms: number;  // 0 = 不知道
+}
+
+/**
+ * 把 refresh 後的新 token 寫回 auth.json，保留原本格式：
+ * - 原本是 nested（Codex CLI 標準）→ 更新 tokens.access_token / refresh_token + last_refresh
+ * - 原本是 flat（catclaw 舊版自己寫的）→ 沿用 flat 結構
+ * - 從未存在 / 解析失敗 → 預設 nested
+ */
+function mergeAuthJson(original: CodexAuthJson, fresh: CodexAuthJsonFlat): CodexAuthJson {
+  const nested = original as CodexAuthJsonNested;
+  const isNested = !!nested.tokens || !!nested.auth_mode;
+  if (isNested) {
+    return {
+      ...nested,
+      tokens: {
+        ...(nested.tokens ?? {}),
+        access_token: fresh.access_token,
+        refresh_token: fresh.refresh_token ?? nested.tokens?.refresh_token,
+      },
+      last_refresh: new Date().toISOString(),
+    };
+  }
+  return fresh;
+}
+
+/** 從 flat 或 nested auth.json 抽出 token 與過期時間（exp 來自 JWT 解析） */
+function extractCodexTokens(auth: CodexAuthJson): ExtractedTokens {
+  const flat = auth as CodexAuthJsonFlat;
+  const nested = auth as CodexAuthJsonNested;
+  // Nested 有 tokens 子物件 → 用它；否則用 flat 頂層欄位
+  const access = nested.tokens?.access_token ?? flat.access_token;
+  const refresh = nested.tokens?.refresh_token ?? flat.refresh_token;
+  // exp：先看 flat.expires_at（舊格式），不然解 JWT payload.exp（nested 格式必走這條）
+  let expMs = 0;
+  if (typeof flat.expires_at === "number") {
+    expMs = flat.expires_at * 1000;
+  } else if (access) {
+    try {
+      const payload = access.split(".")[1];
+      if (payload) {
+        const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
+        const decoded = JSON.parse(Buffer.from(padded.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8")) as { exp?: number };
+        if (typeof decoded.exp === "number") expMs = decoded.exp * 1000;
+      }
+    } catch { /* JWT 解析失敗 → expMs 留 0，讓上層當作過期觸發 refresh */ }
+  }
+  return { access_token: access, refresh_token: refresh, expires_at_ms: expMs };
 }
 
 // ── Responses API 型別 ────────────────────────────────────────────────────────
@@ -161,34 +236,38 @@ export class CodexOAuthProvider implements LLMProvider {
       throw new Error(`[codex-oauth] 解析 auth.json 失敗：${err instanceof Error ? err.message : String(err)}`);
     }
 
+    // 抽出 token（自動處理 flat / nested 兩種格式 + JWT exp 解析）
+    const extracted = extractCodexTokens(auth);
+
     // 尚未過期 → 直接用
-    const expiresAtMs = (auth.expires_at ?? 0) * 1000;
-    if (auth.access_token && now < expiresAtMs - REFRESH_BUFFER_MS) {
-      this.cachedToken = auth.access_token;
-      this.tokenExpiresAt = expiresAtMs;
+    if (extracted.access_token && now < extracted.expires_at_ms - REFRESH_BUFFER_MS) {
+      this.cachedToken = extracted.access_token;
+      this.tokenExpiresAt = extracted.expires_at_ms;
       this.cachedFileMtime = fileMtime;
-      return auth.access_token;
+      return extracted.access_token;
     }
 
     // 需要刷新
-    if (!auth.refresh_token) {
+    if (!extracted.refresh_token) {
       throw new Error(`[codex-oauth] token 已過期且無 refresh_token，請重新執行 codex auth login`);
     }
 
     log.info(`[codex-oauth] token 過期，刷新中...`);
-    const newAuth = await this._refresh(auth.refresh_token);
+    const refreshed = await this._refresh(extracted.refresh_token);
 
-    // 寫回 auth.json，並把 mtime 同步起來（避免下次自己讀又以為「外部更新」白工 re-read）
+    // 寫回 auth.json：保留原本檔案結構（auth_mode / last_refresh 等），只更新 tokens 子物件
+    // 不能直接 JSON.stringify(refreshed) 蓋掉，那會把 Codex CLI 用的 nested 格式破壞掉
     try {
-      writeFileSync(this.tokenPath, JSON.stringify(newAuth, null, 2), "utf-8");
+      const merged = mergeAuthJson(auth, refreshed);
+      writeFileSync(this.tokenPath, JSON.stringify(merged, null, 2), "utf-8");
       this.cachedFileMtime = statSync(this.tokenPath).mtimeMs;
     } catch (err) {
       log.warn(`[codex-oauth] 寫回 auth.json 失敗：${err instanceof Error ? err.message : String(err)}`);
     }
 
-    this.cachedToken = newAuth.access_token;
-    this.tokenExpiresAt = (newAuth.expires_at ?? 0) * 1000;
-    return newAuth.access_token;
+    this.cachedToken = refreshed.access_token;
+    this.tokenExpiresAt = (refreshed.expires_at ?? 0) * 1000;
+    return refreshed.access_token;
   }
 
   /** 強制丟棄記憶體 cache，下次 getAccessToken 會重讀 auth.json（用於 401 回應後重試） */
@@ -198,7 +277,7 @@ export class CodexOAuthProvider implements LLMProvider {
     this.cachedFileMtime = 0;
   }
 
-  private async _refresh(refreshToken: string): Promise<CodexAuthJson> {
+  private async _refresh(refreshToken: string): Promise<CodexAuthJsonFlat> {
     const params = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
