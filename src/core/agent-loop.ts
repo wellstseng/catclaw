@@ -1253,10 +1253,11 @@ export async function* agentLoop(
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // 使用者主動中止（/stop 或外部 signal）→ 靜默退出，不送 Discord 錯誤訊息
+        // 使用者主動中止（/stop 或插話）：改 `return` → `break`，讓 post-loop 跑完，
+        // 否則 user prompt 不會寫進 session history → 新 turn 看不到先前對話 → 模型空回應 → fallback
         if (controller.signal.aborted) {
-          log.debug(`[agent-loop] turn 已中止（abort signal），靜默退出`);
-          return;
+          log.debug(`[agent-loop] turn 已中止（abort signal），break 走 post-loop 寫 history + yield done`);
+          break;
         }
         log.warn(`[agent-loop] LLM 呼叫失敗 provider=${provider.id} loop=${loopCount}: ${msg}`);
         // 辨識「所有憑證耗盡」→ 不重試，直接回報
@@ -1845,12 +1846,22 @@ export async function* agentLoop(
   // 觸頂判斷：post-increment 讓自然退出時 loopCount === loopCap+1；break 則 ≤ loopCap
   // 不讓使用者以為 bot 消失 — 把現況補進 response，讓 Discord 端至少有訊息、可用「繼續」追
   const maxLoopsReached = loopCount > loopCap;
+  const wasAborted = controller.signal.aborted;
   let fullResponse = tracker.getFullResponse();
   // 關鍵：reply-handler 從 text_delta 事件串流累積 Discord 訊息，不讀 done.text
   // → 在 loop 後直接 append 到 fullResponse 的通知 **永遠不會上 Discord**
   // 修法：算出 notice 後，yield 一個 text_delta 事件讓 Discord 端收得到
   let bailNotice: string | null = null;
-  if (maxLoopsReached) {
+  if (wasAborted) {
+    // 插話/外部 abort：之前是 `return;` 直接跳過 post-loop，導致 user prompt 沒寫 history、
+    // 新 turn 缺脈絡 → fallback「暫時無法回覆」。現在改 break 後落到這裡，
+    // 1) 補一行 notice 給使用者 2) prompt 仍會被下面的 addMessages 寫入 history
+    const toolsRun = tracker.toolCalls.length;
+    bailNotice = toolsRun > 0
+      ? `\n\n⏸️ 本輪被插話中斷（已執行 ${toolsRun} 個工具）。下一輪會接續處理你的新訊息。`
+      : `⏸️ 本輪被插話中斷。下一輪會處理你的新訊息。`;
+    log.info(`[agent-loop] turn 被中斷：sessionKey=${sessionKey} tools=${toolsRun}`);
+  } else if (maxLoopsReached) {
     const toolsRun = tracker.toolCalls.length;
     const lastTools = tracker.toolCalls.slice(-3).map(tc => tc.name).join(" → ") || "（無）";
     const extended = loopCap > BASE_LOOPS ? `（已自適應延長到 ${loopCap}）` : "";
