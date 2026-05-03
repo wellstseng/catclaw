@@ -175,6 +175,15 @@ export interface MessageTraceEntry {
         tokensBefore: number;
         tokensAfter: number;
       }>;
+      /** Compaction 結構化摘要（項目 7） */
+      summaryStructure?: {
+        activeTask?: string;
+        resolved: string[];
+        pending: string[];
+        remaining: string[];
+      };
+      /** Compaction 模式（項目 7） */
+      summaryMode?: "first-time" | "iterative";
     }>;
     originalMessageDigest?: Array<{
       index: number;
@@ -569,6 +578,15 @@ export class MessageTrace {
         tokensBefore: number;
         tokensAfter: number;
       }>;
+      /** Compaction 結構化摘要（項目 7） */
+      summaryStructure?: {
+        activeTask?: string;
+        resolved: string[];
+        pending: string[];
+        remaining: string[];
+      };
+      /** Compaction 模式（項目 7） */
+      summaryMode?: "first-time" | "iterative";
     }>;
     originalMessageDigest?: Array<{
       index: number;

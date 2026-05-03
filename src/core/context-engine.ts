@@ -27,6 +27,18 @@ export interface LevelChange {
   tokensAfter: number;
 }
 
+/** Compaction 結構化摘要（項目 7：4 section diff-able 摘要） */
+export interface SummaryStructure {
+  /** 唯一一句話的當前進行任務 */
+  activeTask?: string;
+  /** Q→A 配對的已解決項 */
+  resolved: string[];
+  /** 只列問題未答的項 */
+  pending: string[];
+  /** 名詞描述的待辦項 */
+  remaining: string[];
+}
+
 export interface StrategyDetail {
   name: string;
   tokensBefore: number;
@@ -34,6 +46,46 @@ export interface StrategyDetail {
   messagesRemoved?: number;
   messagesDecayed?: number;
   levelChanges?: LevelChange[];
+  /** Compaction 結構化摘要解析結果（項目 7） */
+  summaryStructure?: SummaryStructure;
+  /** Compaction 模式（項目 7）：first-time = 從零生成；iterative = 基於舊摘要 diff */
+  summaryMode?: "first-time" | "iterative";
+}
+
+/**
+ * 解析 4 個固定 section 的 compaction 摘要文字 → 結構化物件。
+ * Header 必為 `## Active Task` / `## Resolved Questions` / `## Pending Questions` / `## Remaining Work`。
+ * 失敗或無 section 命中則回傳 null（caller 應 fallback 原文字）。
+ */
+export function parseSummaryStructure(text: string): SummaryStructure | null {
+  if (!text) return null;
+  const sections: Record<string, string> = {};
+  const headers = ["Active Task", "Resolved Questions", "Pending Questions", "Remaining Work"];
+  for (const h of headers) {
+    const escaped = h.replace(/ /g, "\\s+");
+    const re = new RegExp(`^##\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=^##\\s+|$(?![\\r\\n]))`, "m");
+    const m = text.match(re);
+    if (m && m[1]) sections[h] = m[1].trim();
+  }
+  if (Object.keys(sections).length === 0) return null;
+
+  const parseList = (s?: string): string[] => {
+    if (!s) return [];
+    const trimmed = s.trim();
+    if (/^無\s*$/.test(trimmed) || trimmed === "") return [];
+    return trimmed
+      .split("\n")
+      .filter(line => /^\s*[-*•]\s/.test(line))
+      .map(line => line.replace(/^\s*[-*•]\s+/, "").trim())
+      .filter(Boolean);
+  };
+
+  return {
+    activeTask: sections["Active Task"]?.trim() || undefined,
+    resolved: parseList(sections["Resolved Questions"]),
+    pending: parseList(sections["Pending Questions"]),
+    remaining: parseList(sections["Remaining Work"]),
+  };
 }
 
 export interface OriginalMessageDigest {
@@ -646,6 +698,10 @@ export class CompactionStrategy implements ContextStrategy {
   name = "compaction";
   enabled: boolean;
   private cfg: CompactionConfig;
+  /** 最後一次 compaction 解析出的結構化摘要（項目 7，dashboard / trace 用） */
+  public lastSummaryStructure: SummaryStructure | null = null;
+  /** 最後一次 compaction 的模式：first-time = 從零生成；iterative = 基於舊摘要 diff */
+  public lastSummaryMode: "first-time" | "iterative" | null = null;
 
   constructor(cfg: Partial<CompactionConfig> & { triggerTurns?: number } = {}) {
     this.cfg = {
@@ -681,7 +737,19 @@ export class CompactionStrategy implements ContextStrategy {
 
     if (convMessages.length === 0) return ctx;
 
-    // 過濾標記類訊息（stub/索引/外部化），不進摘要輸入，避免雙重失真
+    // 找上輪 [對話摘要] 訊息（決定 first-time vs iterative 模式，項目 7）
+    const prevSummaryMsg = convMessages
+      .slice()
+      .reverse()
+      .find(m => {
+        const text = typeof m.content === "string" ? m.content : getMessageText(m);
+        return text.startsWith("[對話摘要");
+      });
+    const prevSummaryText = prevSummaryMsg
+      ? (typeof prevSummaryMsg.content === "string" ? prevSummaryMsg.content : getMessageText(prevSummaryMsg))
+      : null;
+
+    // 過濾標記類訊息（stub/索引/外部化/上輪摘要），不進摘要輸入，避免雙重失真
     const semanticMessages = convMessages.filter(m => {
       const text = typeof m.content === "string" ? m.content : getMessageText(m);
       return !text.startsWith("[工具索引")
@@ -689,7 +757,8 @@ export class CompactionStrategy implements ContextStrategy {
           && !text.startsWith("[已壓縮")
           && !text.startsWith("[📄 外部化]")
           && !text.startsWith("[user stub]")
-          && !text.startsWith("[assistant stub]");
+          && !text.startsWith("[assistant stub]")
+          && !text.startsWith("[對話摘要");  // 項目 7：上輪摘要由 iterative prompt 顯式傳，不再混入語意 messages
     });
 
     if (semanticMessages.length === 0) {
@@ -731,41 +800,89 @@ export class CompactionStrategy implements ContextStrategy {
         return `[${role}]: ${content.slice(0, limit)}`;
       };
 
-      const summaryPrompt = `以下是我（agent）與使用者過去的對話歷史。請用繁體中文以「我（接續工作的 agent）的視角」寫一份結構化筆記，幫助我接回後續對話時不偏離使用者意圖。
+      const formattedConvo = semanticMessages.map(formatMsg).join("\n");
+      const summaryMode: "first-time" | "iterative" = prevSummaryText ? "iterative" : "first-time";
 
-# 必填章節（缺項以「無」表示，不要省略章節）
+      // 項目 7：4-section 結構化摘要 + iterative diff
+      const firstTimePrompt = `你要把以下對話歷史壓縮為「結構化筆記」，必須遵守 4 個固定章節，缺項以「無」表示。
 
-## 使用者意圖
-使用者真正想完成的事是什麼？（用使用者的話描述目標，而非我做了什麼）
+# 必填章節（按順序輸出，不要省略章節）
 
-## 已決策事項
-雙方明確同意要採用的方案 / 拒絕的方案 / 使用者明確的偏好
+## Active Task
+唯一一句話描述「我（接續工作的 agent）現在正在做什麼」。必須是「當前進行中」的任務，過去完成的不算。
+（用使用者的話描述目標，而非我做了什麼步驟）
 
-## 待辦／進行中
-我答應要做但還沒完成的事；目前正在進行的步驟
+## Resolved Questions
+- Q: <已解決的問題> → A: <結論>
+- Q: <已解決的問題> → A: <結論>
+（已得到答案 / 雙方同意採用的方案。每條必須 Q→A 配對。沒有就寫「無」）
 
-## 未解決問題
-使用者問了但還沒得到滿意答案的事；卡住的點；待釐清的歧義
+## Pending Questions
+- Q: <尚未解決的問題>
+- Q: <使用者問了但還沒得到滿意答案的事>
+（只列問題，不自行回答。沒有就寫「無」）
 
-## 工具產出重點
-工具呼叫的「結論」（不要列工具名稱清單；要寫從工具拿到了什麼有用資訊）
+## Remaining Work
+- <名詞描述的待辦項，例如「A 機制實作」而非「實作 A 機制」>
+- <名詞描述的待辦項>
+（用名詞，避免祈使句。沒有就寫「無」）
 
-## 重要事實 / 限制
-不寫下會讓我接續對話時搞錯的關鍵事實（檔案路徑、決策原因、規格限制等）
+# 規則
+1. Active Task 只能有一個（單一句子）
+2. Resolved Questions 每條必須 Q→A 配對
+3. Pending Questions 只列問題，不自行回答（要回答的歸 Resolved）
+4. Remaining Work 用名詞描述
+5. 省略無關閒聊，但保留決策、結論、規格限制、檔案路徑等關鍵事實
+6. 用第一人稱（我）寫，繁體中文，不加開場白或結語
 
 # 對話內容
-${semanticMessages.map(formatMsg).join("\n")}`;
+${formattedConvo}`;
+
+      const iterativePrompt = `你會收到：
+1. 上次 compaction 產出的結構化筆記（標記為「## 舊筆記」）
+2. 從那之後的新訊息（標記為「## 新訊息」）
+
+任務：用「diff」方式更新舊筆記的 4 個 section（保留固定格式），不要重寫：
+- Active Task：若改變 → 更新單一句子（仍只能一句）；未變 → 保留原文
+- Resolved Questions：新解決 → 從 Pending 搬過來補 A 答案 / 雙方新同意的方案 → 加入
+- Pending Questions：新出現的問題 → 加入；已答的 → 移除（搬到 Resolved）
+- Remaining Work：已完成的 → 移除；新出現的 → 加入
+
+輸出仍為 4 個固定章節（## Active Task / ## Resolved Questions / ## Pending Questions / ## Remaining Work），保留固定格式，缺項以「無」表示。
+
+# 規則
+1. 每個 section 只列一次（不要重複）
+2. Q→A 配對嚴格
+3. 用第一人稱（我），繁體中文，不加開場白或結語
+
+## 舊筆記
+${prevSummaryText}
+
+## 新訊息
+${formattedConvo}`;
+
+      const summaryPrompt = summaryMode === "iterative" ? iterativePrompt : firstTimePrompt;
 
       const result = await ceProvider.stream(
         [{ role: "user", content: summaryPrompt }],
         {
-          systemPrompt: "你是負責濃縮對話、讓同一個 agent 能無縫接續工作的紀錄員。寫摘要時用第一人稱（我），優先保留「使用者意圖」與「未解決問題」。不要寫成第三人稱旁觀報告，不要列工具流水帳，不要加開場白或結語。",
+          systemPrompt: "你是負責濃縮對話、讓同一個 agent 能無縫接續工作的紀錄員。寫摘要時用第一人稱（我），嚴格遵守使用者指定的 4 section 固定格式。不要寫成第三人稱旁觀報告，不要列工具流水帳，不要加開場白或結語。",
         },
       );
 
       let summaryText = "";
       for await (const evt of result.events as AsyncIterable<{ type: string; text?: string }>) {
         if (evt.type === "text_delta" && evt.text) summaryText += evt.text;
+      }
+
+      // 項目 7：解析 4 section 結構化（失敗 fallback 不影響 compaction 本身）
+      const parsed = parseSummaryStructure(summaryText);
+      this.lastSummaryStructure = parsed;
+      this.lastSummaryMode = summaryMode;
+      if (!parsed) {
+        log.debug(`[context-engine:compaction] mode=${summaryMode} 摘要 parse 失敗，仍使用原文（dashboard 結構化顯示降級）`);
+      } else {
+        log.debug(`[context-engine:compaction] mode=${summaryMode} parsed: active=${parsed.activeTask ? 1 : 0} resolved=${parsed.resolved.length} pending=${parsed.pending.length} remaining=${parsed.remaining.length}`);
       }
 
       // C′ 輕量版：把使用者最近一則完整指令的原文當「意圖錨點」附在摘要後
@@ -996,6 +1113,12 @@ export class ContextEngine {
             detail.levelChanges = decayStrategy.lastLevelChanges;
             detail.messagesDecayed = decayStrategy.lastLevelChanges.filter(c => c.toLevel < 4).length;
           }
+        }
+        // compaction 專屬：附加結構化摘要 + 模式（項目 7）
+        if (name === "compaction") {
+          const compStrategy = strategy as CompactionStrategy;
+          if (compStrategy.lastSummaryStructure) detail.summaryStructure = compStrategy.lastSummaryStructure;
+          if (compStrategy.lastSummaryMode) detail.summaryMode = compStrategy.lastSummaryMode;
         }
         details.push(detail);
         log.debug(`[context-engine] strategy=${name} applied, tokens ${tokensBefore}→${ctx.estimatedTokens}`);
