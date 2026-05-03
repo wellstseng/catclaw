@@ -238,6 +238,14 @@ export interface MessageTraceEntry {
   /** Workflow 事件（wisdom/rut/oscillation/sync 等） */
   workflowEvents?: TraceWorkflowEvent[];
 
+  /** Inline Context References（項目 8）：使用者訊息中 @-ref 展開結果 */
+  referencesExpanded?: Array<{
+    kind: string;
+    target: string;
+    ok: boolean;
+    sizeBytes?: number;
+  }>;
+
   /** Tool schema LRU eviction 紀錄（agent-loop 在 mid-turn 踢掉 tools 時） */
   toolEvictions?: Array<{
     iteration: number;
@@ -557,6 +565,17 @@ export class MessageTrace {
   recordToolEviction(iteration: number, evicted: string[], tokensBefore: number, tokensAfter: number): void {
     if (!this.entry.toolEvictions) this.entry.toolEvictions = [];
     this.entry.toolEvictions.push({ iteration, evicted, tokensBefore, tokensAfter });
+  }
+
+  /** Inline Context References（項目 8）：記錄使用者訊息中 @-ref 展開結果 */
+  recordReferencesExpanded(refs: Array<{ kind: string; target: string; ok: boolean; sizeBytes?: number }>): void {
+    if (!refs.length) return;
+    this.entry.referencesExpanded = refs.map(r => ({
+      kind: r.kind,
+      target: r.target,
+      ok: r.ok,
+      sizeBytes: r.sizeBytes,
+    }));
   }
 
   // ── Phase 4: Context Engineering ──────────────────────────────────────────

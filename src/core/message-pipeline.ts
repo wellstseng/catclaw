@@ -181,7 +181,23 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
 
   // Memory Fence：使用者訊息進入 pipeline 時砍假冒 <memory-context> 標籤
   // 防止下游組裝後 LLM 把假 fence 內容當系統檢索結果處理
-  const prompt = sanitizeMemoryText(rawPrompt);
+  const sanitized = sanitizeMemoryText(rawPrompt);
+
+  // 項目 8：Inline Context References — 解析並展開 @file:/@folder:/@git:/@url:/@diff/@staged
+  let prompt = sanitized;
+  let _refExpansionResults: Array<{ kind: string; target: string; ok: boolean; sizeBytes?: number }> = [];
+  {
+    const { hasReferences, expandReferences } = await import("./context-references.js");
+    if (hasReferences(sanitized)) {
+      try {
+        const { expanded, results } = await expandReferences(sanitized);
+        prompt = expanded;
+        _refExpansionResults = results.map(r => ({ kind: r.kind, target: r.target, ok: r.ok, sizeBytes: r.sizeBytes }));
+      } catch (err) {
+        log.warn(`[${platform}] Inline references 展開失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
 
   const traceCategory = input.traceCategory ?? PLATFORM_TRACE_CATEGORY[platform] ?? "api";
   const logPrefix = `[${platform}]`;
@@ -189,6 +205,9 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
   // ── 1. Trace（沿用或建立） ───────────────────────────────────────────────
   const trace = input.trace ?? MessageTrace.create(randomUUID(), channelId, accountId, traceCategory);
   trace.recordContextStart();
+  if (_refExpansionResults.length > 0) {
+    trace.recordReferencesExpanded(_refExpansionResults);
+  }
 
   // ── 2. Memory Recall ───────────────────────────────────────────────────────
   // 先看 session-level frozen snapshot（preparedAt session 開場時）。命中即用，保 prompt cache。
