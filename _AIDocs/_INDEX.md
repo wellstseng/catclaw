@@ -1,6 +1,6 @@
 # CatClaw _AIDocs 知識庫索引
 
-> 建立日期：2026-03-18 | 最近更新：2026-04-27 | 專案：catclaw
+> 建立日期：2026-03-18 | 最近更新：2026-05-04 | 專案：catclaw
 
 ## 專案簡介
 
@@ -107,6 +107,10 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點 | 2026-03-22 |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log 系統 | 2026-03-22 |
 | [modules/pm2.md](modules/pm2.md) | `catclaw.js` | PM2 進程管理 | 2026-03-22 |
+| [modules/tool-output-store.md](modules/tool-output-store.md) | `src/core/tool-output-store.ts` | Tool result 外部化 store（CatClaw 整合 Hermes 項目 6） | 2026-05-04 |
+| [modules/context-references.md](modules/context-references.md) | `src/core/context-references.ts` | Inline `@file/@folder/@git/@url/@diff/@staged` 展開（項目 8） | 2026-05-04 |
+| [modules/message-index-store.md](modules/message-index-store.md) | `src/memory/message-index-store.ts` | 跨 session 訊息全文索引 NDJSON（項目 9 Phase 1） | 2026-05-04 |
+| [modules/skill-improvement-store.md](modules/skill-improvement-store.md) | `src/memory/skill-improvement-store.ts` + `src/skills/registry.ts runSkill` | Skill 自動提案產生機制（項目 10 Week 1） | 2026-05-04 |
 
 ## 重啟機制
 
