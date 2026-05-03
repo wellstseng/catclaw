@@ -63,6 +63,11 @@ export interface TraceToolCall {
   resultPreview?: string;
   /** 工具參數摘要（依工具類型提取關鍵欄位） */
   paramsPreview?: string;
+  /** Tool result 外部化（≥ 閾值時 stub 取代原文，完整內容寫入 path） */
+  externalized?: {
+    path: string;
+    originalTokens: number;
+  };
 }
 
 /** 單次 LLM 呼叫追蹤 */
@@ -516,6 +521,21 @@ export class MessageTrace {
       this.entry.llmCalls[this.entry.llmCalls.length - 1].toolCalls.push(tc);
     }
     this.entry.totalToolCalls++;
+  }
+
+  /** 將 externalized 資訊 attach 到最近一次 recordToolCall 寫入的 tool entry（caller 在 truncate 後呼叫） */
+  recordToolExternalized(externalized: { path: string; originalTokens: number }): void {
+    const fromCurrent = this._currentLLMCall?.toolCalls;
+    if (fromCurrent && fromCurrent.length > 0) {
+      fromCurrent[fromCurrent.length - 1].externalized = externalized;
+      return;
+    }
+    if (this.entry.llmCalls.length > 0) {
+      const lastLlm = this.entry.llmCalls[this.entry.llmCalls.length - 1];
+      if (lastLlm.toolCalls.length > 0) {
+        lastLlm.toolCalls[lastLlm.toolCalls.length - 1].externalized = externalized;
+      }
+    }
   }
 
   // ── Workflow Events ────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ import { config } from "./config.js";
 import type { MessageTrace } from "./message-trace.js";
 import { getTraceStore } from "./message-trace.js";
 import { isPlanMode, PLAN_MODE_BLOCKED_TOOLS } from "../skills/builtin/plan.js";
+import { externalizeToolOutput, shouldExternalizeToolOutput, type ExternalizedToolOutput } from "./tool-output-store.js";
 
 // ── Tool trace helpers ──────────────────────────────────────────────────────
 
@@ -131,10 +132,34 @@ const DEFAULT_RESULT_TOKEN_CAP = 0;   // 0 = 不截斷（讓上游/per-tool 自�
 // ── Tool result 智慧截斷 ──────────────────────────────────────────────────────
 
 /** 依 tool 類型套用不同截斷策略 */
-function truncateToolResult(text: string, tokenCap: number, toolName?: string): string {
-  if (tokenCap === 0) return text;                       // 0 = 無限制
+function truncateToolResult(
+  text: string,
+  tokenCap: number,
+  toolName?: string,
+  opts?: { sessionKey: string; turnIndex: number; args?: unknown },
+): { text: string; externalized?: ExternalizedToolOutput } {
+  // ── 外部化優先（項目 6）：≥ 閾值且非 mcp_* tool → 寫檔 + stub ──
+  if (toolName && opts && shouldExternalizeToolOutput(toolName, text)) {
+    try {
+      const ext = externalizeToolOutput({
+        toolName,
+        text,
+        sessionKey: opts.sessionKey,
+        turnIndex: opts.turnIndex,
+        args: opts.args,
+      });
+      return { text: ext.stub, externalized: ext };
+    } catch (err) {
+      log.warn(
+        `[agent-loop] tool 外部化失敗 ${toolName}：${err instanceof Error ? err.message : String(err)}，fallback 既有 truncation`,
+      );
+      // fallthrough 到原 truncation
+    }
+  }
+
+  if (tokenCap === 0) return { text };                   // 0 = 無限制
   const charCap = tokenCap * 4;
-  if (text.length <= charCap) return text;
+  if (text.length <= charCap) return { text };
 
   const lines = text.split("\n");
   const totalLines = lines.length;
@@ -142,11 +167,11 @@ function truncateToolResult(text: string, tokenCap: number, toolName?: string): 
   // ── 策略分派 ──
   const strategy = toolName ? TRUNCATION_STRATEGIES[toolName] : undefined;
   if (strategy) {
-    return strategy(text, lines, totalLines, charCap);
+    return { text: strategy(text, lines, totalLines, charCap) };
   }
 
   // ── 預設策略：head + tail ──
-  return defaultTruncation(lines, totalLines, text.length, charCap);
+  return { text: defaultTruncation(lines, totalLines, text.length, charCap) };
 }
 
 function defaultTruncation(lines: string[], totalLines: number, totalChars: number, charCap: number): string {
@@ -1668,6 +1693,7 @@ export async function* agentLoop(
           toolResult: { tool_use_id: string; content: string; is_error: boolean };
           events: SpawnEvent[];
           toolRecord: { name: string; params: unknown; result: unknown; error?: string; durationMs: number };
+          externalized?: ExternalizedToolOutput;
         };
 
         const batchResults = await Promise.all(spawnCalls.map(async (call): Promise<SpawnBatchResult> => {
@@ -1704,18 +1730,22 @@ export async function* agentLoop(
           }
           // Error 訊息不過 truncate（避免錯誤被截斷後 agent 看不到完整原因）
           let resultText: string;
+          let externalized: ExternalizedToolOutput | undefined;
           if (toolResult.error) {
             resultText = `錯誤：${toolResult.error}`;
           } else {
             const rawText = JSON.stringify(toolResult.result ?? null);
             const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
-            resultText = truncateToolResult(rawText, tokenCap, call.name);
+            const trunc = truncateToolResult(rawText, tokenCap, call.name, { sessionKey, turnIndex: loopCount, args: hookResult.params });
+            resultText = trunc.text;
+            externalized = trunc.externalized;
           }
           events.push({ type: "tool_result", name: call.name, id: call.id, result: toolResult.result, error: toolResult.error });
           return {
             toolResult: { tool_use_id: call.id, content: resultText, is_error: Boolean(toolResult.error) },
             events,
             toolRecord: { name: call.name, params: hookResult.params, result: toolResult.result, error: toolResult.error, durationMs },
+            externalized,
           };
         }));
 
@@ -1731,6 +1761,9 @@ export async function* agentLoop(
             error: batch.toolRecord.error,
             resultPreview: toolResultPreview(batch.toolRecord.result, batch.toolRecord.error),
             paramsPreview: toolParamsPreview(batch.toolRecord.name, batch.toolRecord.params),
+            externalized: batch.externalized
+              ? { path: batch.externalized.filePath, originalTokens: batch.externalized.originalTokens }
+              : undefined,
           });
         }
       }
@@ -1747,6 +1780,7 @@ export async function* agentLoop(
           events: AgentLoopEvent[];
           toolRecord: { name: string; params: unknown; result: unknown; error?: string; durationMs: number };
           fileModified?: { path: string; tool: string };
+          externalized?: ExternalizedToolOutput;
         };
         const batchResults = await Promise.all(concurrentCalls.map(async (call): Promise<BatchResult> => {
           const params = call.params as Record<string, unknown>;
@@ -1777,12 +1811,15 @@ export async function* agentLoop(
           }
           // Error 訊息不過 truncate（避免錯誤被截斷後 agent 看不到完整原因）
           let resultText: string;
+          let externalized: ExternalizedToolOutput | undefined;
           if (toolResult.error) {
             resultText = `錯誤：${toolResult.error}`;
           } else {
             const rawText = JSON.stringify(toolResult.result ?? null);
             const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
-            resultText = truncateToolResult(rawText, tokenCap, call.name);
+            const trunc = truncateToolResult(rawText, tokenCap, call.name, { sessionKey, turnIndex: loopCount, args: hookResult.params });
+            resultText = trunc.text;
+            externalized = trunc.externalized;
           }
           events.push({ type: "tool_result", name: call.name, id: call.id, result: toolResult.result, error: toolResult.error });
           return {
@@ -1790,6 +1827,7 @@ export async function* agentLoop(
             events,
             toolRecord: { name: call.name, params: hookResult.params, result: toolResult.result, error: toolResult.error, durationMs },
             fileModified: toolResult.fileModified && toolResult.modifiedPath ? { path: toolResult.modifiedPath, tool: call.name } : undefined,
+            externalized,
           };
         }));
 
@@ -1803,7 +1841,7 @@ export async function* agentLoop(
             const rp = String((batch.toolRecord.params as Record<string, unknown>)["path"] ?? (batch.toolRecord.params as Record<string, unknown>)["file_path"] ?? "");
             if (rp) readFiles.add(rp);
           }
-          trace?.recordToolCall({ name: batch.toolRecord.name, durationMs: batch.toolRecord.durationMs, error: batch.toolRecord.error, resultPreview: toolResultPreview(batch.toolRecord.result, batch.toolRecord.error), paramsPreview: toolParamsPreview(batch.toolRecord.name, batch.toolRecord.params) });
+          trace?.recordToolCall({ name: batch.toolRecord.name, durationMs: batch.toolRecord.durationMs, error: batch.toolRecord.error, resultPreview: toolResultPreview(batch.toolRecord.result, batch.toolRecord.error), paramsPreview: toolParamsPreview(batch.toolRecord.name, batch.toolRecord.params), externalized: batch.externalized ? { path: batch.externalized.filePath, originalTokens: batch.externalized.originalTokens } : undefined });
           if (batch.fileModified) eventBus.emit("file:modified", batch.fileModified.path, batch.fileModified.tool, accountId);
         }
         log.debug(`[agent-loop] batch-partition: ${concurrentCalls.length} 個 concurrencySafe tool 已並行完成`);
@@ -2000,8 +2038,12 @@ export async function* agentLoop(
             ? `錯誤：${toolResult.error}`
             : JSON.stringify(toolResult.result ?? null);
           const cap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
-          const resultText = truncateToolResult(rawResultText, cap, call.name);
-          if (resultText.length < rawResultText.length) {
+          const trunc = truncateToolResult(rawResultText, cap, call.name, { sessionKey, turnIndex: loopCount, args: effectiveParams });
+          const resultText = trunc.text;
+          if (trunc.externalized) {
+            trace?.recordToolExternalized({ path: trunc.externalized.filePath, originalTokens: trunc.externalized.originalTokens });
+            log.debug(`[agent-loop] [使用工具] (${call.name}) :: result externalized ${rawResultText.length} chars → ${trunc.externalized.filePath}`);
+          } else if (resultText.length < rawResultText.length) {
             log.debug(`[agent-loop] [使用工具] (${call.name}) :: result truncated ${rawResultText.length} → ${resultText.length} chars`);
           }
           turnToolResultTokens += Math.ceil(resultText.length / 4);

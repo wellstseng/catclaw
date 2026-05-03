@@ -15,6 +15,7 @@ import { log } from "../logger.js";
 import type { Message, ContentBlock } from "../providers/base.js";
 import type { LLMProvider } from "../providers/base.js";
 import type { DecayStrategyConfig, DecayLevel, ExternalizeConfig } from "./config.js";
+import { isExternalizedStub } from "./tool-output-store.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -271,6 +272,10 @@ function truncateBlocks(blocks: ContentBlock[], maxTokens: number): ContentBlock
       if (typeof b.content !== "string") {
         result.push(b);
         totalChars += JSON.stringify(b.content).length;
+      } else if (isExternalizedStub(b.content)) {
+        // 已外部化 stub：直接保留（原文已寫檔，stub 不該再被壓縮，否則指標路徑會丟）
+        result.push(b);
+        totalChars += b.content.length;
       } else {
         const remaining = Math.max(0, maxChars - totalChars);
         if (remaining <= 0) {

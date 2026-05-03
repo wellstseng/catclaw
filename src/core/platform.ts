@@ -386,6 +386,14 @@ export async function initPlatform(
   _ready = true;
   log.info(`[platform] 初始化完成 providers=${Object.keys(config.providers).join(",")}`);
 
+  // ── 12.6 Tool Output Cleanup（項目 6）：startup 一次性 TTL 清理 ───────────
+  try {
+    const { cleanupToolOutputs } = await import("./tool-output-store.js");
+    cleanupToolOutputs(14);
+  } catch (err) {
+    log.warn(`[platform] Tool output cleanup 失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // ── 13. 工具 + Skill 摘要注入（延遲 2s 等 MCP server 連線完成）────────────
   setTimeout(async () => {
     try {
