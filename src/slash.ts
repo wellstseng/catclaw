@@ -385,7 +385,8 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
   }
 
   const { skill } = match;
-  const result = await skill.execute({
+  const { runSkill } = await import("./skills/registry.js");
+  const result = await runSkill(skill, {
     args: "",
     channelId: interaction.channelId,
     authorId: interaction.user.id,

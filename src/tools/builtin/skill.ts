@@ -93,9 +93,10 @@ export const tool: Tool = {
       }
     }
 
-    // 執行
+    // 執行（runSkill 包含 改進提案 hook，項目 10 Week 1）
     try {
-      const result = await skill.execute(skillCtx);
+      const { runSkill } = await import("../../skills/registry.js");
+      const result = await runSkill(skill, skillCtx);
       if (result.isError) {
         return result.validation ? { error: result.text, validation: true } : { error: result.text };
       }

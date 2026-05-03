@@ -676,7 +676,8 @@ async function handleMessage(
             return;
           }
         }
-        const result = await skill.execute(skillCtx);
+        const { runSkill } = await import("./skills/registry.js");
+        const result = await runSkill(skill, skillCtx);
         await firstMessage.reply(result.text).catch((e) => log.warn(`[discord] skill ${skill.name} reply 失敗：${e instanceof Error ? e.message : String(e)}`));
       } catch (err) {
         trace.recordError(err instanceof Error ? err.message : String(err));

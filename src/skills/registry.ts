@@ -16,7 +16,7 @@
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Skill } from "./types.js";
+import type { Skill, SkillContext, SkillResult } from "./types.js";
 import { log } from "../logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -82,6 +82,61 @@ export function loadExternalPromptSkills(dir: string): void {
     log.info(`[skills] 外部 Prompt-type 載入：${name}`);
   }
   if (found.length > 0) log.info(`[skills] 外部 prompt skill 目錄 ${dir}：載入 ${found.length} 個`);
+}
+
+/**
+ * Skill 執行 wrapper（項目 10 Week 1）：包裝 skill.execute 加自動提案產生 hook。
+ * 真錯誤（isError && !validation）或拋例外時自動寫提案到 _staging/skill-improvements/。
+ * 包裝 transparent — 例外仍會 re-throw，caller 端 try/catch 行為不變。
+ *
+ * 3 個 caller 改用此 wrapper：discord.ts / slash.ts / tools/builtin/skill.ts。
+ */
+export async function runSkill(skill: Skill, ctx: SkillContext): Promise<SkillResult> {
+  const startMs = Date.now();
+  try {
+    const result = await skill.execute(ctx);
+    if (result.isError === true && result.validation !== true) {
+      _proposeImprovement(skill, ctx, "isError", result.text, Date.now() - startMs);
+    }
+    return result;
+  } catch (err) {
+    _proposeImprovement(
+      skill,
+      ctx,
+      "exception",
+      err instanceof Error ? err.message : String(err),
+      Date.now() - startMs,
+    );
+    throw err;
+  }
+}
+
+function _proposeImprovement(
+  skill: Skill,
+  ctx: SkillContext,
+  triggeredBy: "isError" | "exception",
+  detail: string,
+  durationMs: number,
+): void {
+  void (async () => {
+    try {
+      const { proposeSkillImprovement } = await import("../memory/skill-improvement-store.js");
+      proposeSkillImprovement({
+        skillName: skill.name,
+        triggeredBy,
+        ctx: { args: ctx.args, channelId: ctx.channelId, authorId: ctx.authorId },
+        durationMs,
+        situationText:
+          triggeredBy === "exception"
+            ? `skill \`${skill.name}\` 拋出例外：${detail}`
+            : `skill \`${skill.name}\` 回傳 isError：${detail.slice(0, 200)}`,
+      });
+    } catch (err) {
+      log.warn(
+        `[skills:${skill.name}] 提案產生失敗：${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  })();
 }
 
 /**
