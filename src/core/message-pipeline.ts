@@ -209,6 +209,20 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
     trace.recordReferencesExpanded(_refExpansionResults);
   }
 
+  // 項目 9 Phase 1：跨 session 訊息索引（fire-and-forget，user 訊息）
+  {
+    const { indexMessage } = await import("../memory/message-index-store.js");
+    indexMessage({
+      ts: Date.now(),
+      messageId: trace.traceId,
+      sessionKey: `${platform}:ch:${channelId}`,
+      channelId,
+      accountId,
+      role: "user",
+      content: prompt,
+    });
+  }
+
   // ── 2. Memory Recall ───────────────────────────────────────────────────────
   // 先看 session-level frozen snapshot（preparedAt session 開場時）。命中即用，保 prompt cache。
   // session 開場第一個 turn 在 SessionStart hook 內已先建立 snapshot；後續 turn 直接讀。

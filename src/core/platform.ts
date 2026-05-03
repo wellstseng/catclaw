@@ -394,6 +394,14 @@ export async function initPlatform(
     log.warn(`[platform] Tool output cleanup 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // ── 12.7 Message Index 初始化（項目 9 Phase 1）：跨 session 訊息全文索引 ──
+  try {
+    const { initMessageIndex } = await import("../memory/message-index-store.js");
+    initMessageIndex();
+  } catch (err) {
+    log.warn(`[platform] Message index init 失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // ── 13. 工具 + Skill 摘要注入（延遲 2s 等 MCP server 連線完成）────────────
   setTimeout(async () => {
     try {

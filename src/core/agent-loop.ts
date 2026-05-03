@@ -2290,6 +2290,24 @@ export async function* agentLoop(
     });
     trace.recordResponse(fullResponse, Date.now() - turnStartMs);
 
+    // 項目 9 Phase 1：跨 session 訊息索引（fire-and-forget，assistant 訊息）
+    if (fullResponse.length > 0) {
+      try {
+        const { indexMessage } = await import("../memory/message-index-store.js");
+        indexMessage({
+          ts: Date.now(),
+          messageId: trace.traceId,
+          sessionKey,
+          channelId,
+          accountId,
+          agentId: opts.agentId,
+          role: "assistant",
+          turnIndex: savedTurnIndex,
+          content: fullResponse,
+        });
+      } catch { /* fire-and-forget */ }
+    }
+
     // TurnAuditLog 遷移欄位：turnIndex, phase, contextBreakdown, toolDurations
     // 原本用 post-increment 的 turnCount，導致 trace.turnIndex 與 tool-log 檔名（pre-increment）差 1
     trace.setTurnIndex(savedTurnIndex);
