@@ -1319,13 +1319,19 @@ export async function* agentLoop(
   const _wfListeners: Array<() => void> = [];
   if (trace) {
     const onRut = (warnings: { pattern: string; count: number }[]) => {
-      trace.recordWorkflowEvent("rut", warnings.map(w => `${w.pattern}(×${w.count})`).join(", "));
+      const detail = warnings.map(w => `${w.pattern}(×${w.count})`).join(", ");
+      trace.recordWorkflowEvent("rut", detail);
+      // 項目 12 階段 1：結構化 Guardian Hit 標註（趨勢分析 / fingerprint 訓練資料）
+      trace.recordGuardianHit({ rule: "rut", detail });
     };
     const onOsc = (atom: string, count: number) => {
-      trace.recordWorkflowEvent("oscillation", `${atom} ×${count}`);
+      const detail = `${atom} ×${count}`;
+      trace.recordWorkflowEvent("oscillation", detail);
+      trace.recordGuardianHit({ rule: "oscillation", detail });
     };
     const onSync = (files: string[]) => {
       trace.recordWorkflowEvent("sync_needed", `${files.length} files`);
+      // sync_needed 不算「失敗」，不標 guardianHit；如要納入後續再加
     };
     const onFileModified = (path: string, tool: string) => {
       trace.recordWorkflowEvent("file_modified", `${tool}: ${path}`);

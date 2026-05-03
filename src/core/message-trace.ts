@@ -246,6 +246,19 @@ export interface MessageTraceEntry {
     sizeBytes?: number;
   }>;
 
+  /**
+   * Guardian Hit（項目 12 階段 1）：Workflow Guardian 規則命中標註。
+   * confidence 預設 1.0（rule-based 確定）；falsePositive 由 dashboard 事後標註。
+   * 將累積成 trajectory fingerprint 訓練資料源（階段 2/3 用）。
+   */
+  guardianHits?: Array<{
+    ts: number;
+    rule: string;
+    confidence?: number;
+    falsePositive?: boolean;
+    detail?: string;
+  }>;
+
   /** Tool schema LRU eviction 紀錄（agent-loop 在 mid-turn 踢掉 tools 時） */
   toolEvictions?: Array<{
     iteration: number;
@@ -576,6 +589,25 @@ export class MessageTrace {
       ok: r.ok,
       sizeBytes: r.sizeBytes,
     }));
+  }
+
+  /**
+   * Guardian Hit 標註（項目 12 階段 1）：rule-based 觸發時記錄。
+   * confidence 預設 1.0；後續階段 2 fingerprint 比對 / 階段 3 LLM 判斷可降值。
+   * dashboard 可後置 mutate falsePositive 欄位（標註正確 / 誤報）。
+   */
+  recordGuardianHit(opts: {
+    rule: string;
+    confidence?: number;
+    detail?: string;
+  }): void {
+    if (!this.entry.guardianHits) this.entry.guardianHits = [];
+    this.entry.guardianHits.push({
+      ts: Date.now(),
+      rule: opts.rule,
+      confidence: opts.confidence ?? 1.0,
+      detail: opts.detail,
+    });
   }
 
   // ── Phase 4: Context Engineering ──────────────────────────────────────────
