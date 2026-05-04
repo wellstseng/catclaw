@@ -452,6 +452,7 @@ label.cfg-toggle { min-width: 36px; }
   <div class="tab" onclick="switchTab('ops',this)">操作</div>
   <div class="tab" onclick="switchTab('cron',this)">排程</div>
   <div class="tab" onclick="switchTab('traces',this)">追蹤</div>
+  <div class="tab" onclick="switchTab('guardian',this)">Guardian</div>
   <div class="tab" onclick="switchTab('tasks',this)">任務</div>
   <div class="tab" onclick="switchTab('auth',this)">憑證</div>
   <div class="tab" onclick="switchTab('config',this)">設定</div>
@@ -626,6 +627,18 @@ label.cfg-toggle { min-width: 36px; }
     <a id="trace-export-link" class="btn btn-sm" style="float:right;margin-right:6px;text-decoration:none" target="_blank">📥 匯出</a>
   </h2>
   <div id="trace-detail"></div>
+</div>
+
+<!-- Guardian Hits（項目 12 階段 1）-->
+<div id="pane-guardian" class="pane">
+  <div class="card">
+    <h2>Guardian Hits
+      <button class="btn btn-sm" style="float:right" onclick="loadGuardianHits()">↻ 重新載入</button>
+      <span style="font-size:0.78rem;color:var(--fg2);margin-left:8px">最近 500 筆 trace 中所有 Guardian 規則命中。標註後將成為階段 2 trajectory-fingerprint 訓練資料。</span>
+    </h2>
+    <div id="guardian-summary" style="font-size:0.82rem;color:#ccc;margin-bottom:8px"></div>
+    <div id="guardian-list" style="font-size:0.82rem;color:#ccc">載入中...</div>
+  </div>
 </div>
 
 <!-- Tasks -->
@@ -979,6 +992,7 @@ function switchTab(id, el) {
   if (id !== 'logs') disconnectLogStream();
   if (id === 'ops') { loadSubagents(); loadRestartHistory(); }
   if (id === 'tasks') { loadTasks(); }
+  if (id === 'guardian') { loadGuardianHits(); }
   if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
   if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 5000); }
   if (id === 'cron') loadCron();
@@ -2763,6 +2777,66 @@ async function loadTasks() {
     }
     el.innerHTML = html;
   } catch (err) { document.getElementById('tasks-list').innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>'; }
+}
+
+// ── Guardian Hits（項目 12 階段 1，2026-05-04）──────────────────────────────
+async function loadGuardianHits() {
+  const list = document.getElementById('guardian-list');
+  const sum = document.getElementById('guardian-summary');
+  list.innerHTML = '載入中...';
+  try {
+    const d = await authFetch('/api/guardian-hits?limit=500').then(r => r.json());
+    if (!d.hits || d.hits.length === 0) {
+      list.innerHTML = '<p style="color:#888">最近 500 筆 trace 中無 Guardian 命中（catclaw 仍須累積使用）</p>';
+      sum.innerHTML = '';
+      return;
+    }
+    const labeled = d.hits.filter(h => h.falsePositive != null).length;
+    const unlabeled = d.hits.length - labeled;
+    sum.innerHTML = '總計 <b>' + d.total + '</b> 命中｜已標註 <b>' + labeled + '</b>（' + d.hits.filter(h => h.falsePositive === false).length + ' 正確 / ' + d.hits.filter(h => h.falsePositive === true).length + ' 誤報）｜未標 <b>' + unlabeled + '</b>。階段 2 啟動條件：≥100 標註樣本';
+    let html = '<table class="tbl"><thead><tr><th>時間</th><th>規則</th><th>Conf</th><th>Detail</th><th>Session</th><th>Trace</th><th>標註</th></tr></thead><tbody>';
+    for (const h of d.hits) {
+      const ts = new Date(h.ts).toLocaleString();
+      const labelBadge = h.falsePositive === true ? '<span style="color:#f88">❌ 誤報</span>'
+        : h.falsePositive === false ? '<span style="color:#8f8">✅ 正確</span>'
+        : '<button class="btn btn-sm" onclick="labelGuardianHit(\'' + h.traceId + '\',' + h.hitIndex + ',false,this)">正確</button> <button class="btn btn-sm" onclick="labelGuardianHit(\'' + h.traceId + '\',' + h.hitIndex + ',true,this)">誤報</button>';
+      html += '<tr>'
+        + '<td style="font-size:0.78rem">' + ts + '</td>'
+        + '<td><b>' + h.rule + '</b></td>'
+        + '<td>' + (h.confidence != null ? h.confidence.toFixed(2) : '-') + '</td>'
+        + '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis">' + (h.detail || '-').replace(/</g, '&lt;') + '</td>'
+        + '<td style="font-size:0.72rem;color:#aaa">' + (h.sessionKey || '-').slice(0, 24) + '</td>'
+        + '<td><a href="javascript:void(0)" onclick="showTraceDetail(\'' + h.traceId + '\')" style="color:#4fc3f7">' + h.traceId.slice(0, 8) + '</a></td>'
+        + '<td>' + labelBadge + '</td>'
+        + '</tr>';
+    }
+    html += '</tbody></table>';
+    list.innerHTML = html;
+  } catch (err) {
+    list.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
+  }
+}
+
+async function labelGuardianHit(traceId, hitIndex, falsePositive, btn) {
+  try {
+    const r = await authFetch('/api/guardian-hits/label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ traceId, hitIndex, falsePositive }),
+    });
+    if (r.ok) {
+      btn.parentElement.innerHTML = falsePositive
+        ? '<span style="color:#f88">❌ 誤報</span>'
+        : '<span style="color:#8f8">✅ 正確</span>';
+      // refresh summary
+      setTimeout(loadGuardianHits, 100);
+    } else {
+      const j = await r.json().catch(() => ({}));
+      alert('標註失敗：' + (j.error || r.statusText));
+    }
+  } catch (err) {
+    alert('標註失敗：' + err);
+  }
 }
 
 // ── Auth Profiles ────────────────────────────────────────────────────────────
