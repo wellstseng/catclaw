@@ -186,6 +186,7 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
   // 項目 8：Inline Context References — 解析並展開 @file:/@folder:/@git:/@url:/@diff/@staged
   let prompt = sanitized;
   let _refExpansionResults: Array<{ kind: string; target: string; ok: boolean; sizeBytes?: number }> = [];
+  let _pathHintCandidates: string[] = [];
   {
     const { hasReferences, expandReferences } = await import("./context-references.js");
     if (hasReferences(sanitized)) {
@@ -195,6 +196,18 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
         _refExpansionResults = results.map(r => ({ kind: r.kind, target: r.target, ok: r.ok, sizeBytes: r.sizeBytes }));
       } catch (err) {
         log.warn(`[${platform}] Inline references 展開失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      // 啟發式提示（plan §設計決策第 3 條，項目 8 補洞）：
+      // 偵測訊息含 `src/...\.ext` 路徑樣式 → trace 記錄候選，dashboard 提示使用者可改寫成 @file:
+      // 不修改 prompt（避免干擾 LLM 主任務 / 維持 cache）
+      const pathRegex = /\b(?:src\/[\w./-]+\.\w+|[\w./-]+\.(?:ts|tsx|js|jsx|py|md|json|toml|yaml|yml|sh|cs))\b/g;
+      const matches = sanitized.match(pathRegex);
+      if (matches && matches.length > 0) {
+        _pathHintCandidates = [...new Set(matches)].slice(0, 5);
+        log.debug(
+          `[${platform}] 偵測到 ${_pathHintCandidates.length} 個檔案路徑候選（可改用 @file: 語法）：${_pathHintCandidates.join(", ")}`,
+        );
       }
     }
   }
@@ -207,6 +220,9 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
   trace.recordContextStart();
   if (_refExpansionResults.length > 0) {
     trace.recordReferencesExpanded(_refExpansionResults);
+  }
+  if (_pathHintCandidates.length > 0) {
+    trace.recordPathHintCandidates(_pathHintCandidates);
   }
 
   // 項目 9 Phase 1：跨 session 訊息索引（fire-and-forget，user 訊息）

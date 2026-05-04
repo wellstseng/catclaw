@@ -247,6 +247,13 @@ export interface MessageTraceEntry {
   }>;
 
   /**
+   * Inline Reference 路徑候選提示（項目 8 plan §設計決策第 3 條補洞）。
+   * 訊息內偵測到 `src/...\.ext` 但使用者未用 @file: 語法時記錄。
+   * Dashboard 可顯示「下次可改用 @file:"..." 自動展開」。
+   */
+  pathHintCandidates?: string[];
+
+  /**
    * Guardian Hit（項目 12 階段 1）：Workflow Guardian 規則命中標註。
    * confidence 預設 1.0（rule-based 確定）；falsePositive 由 dashboard 事後標註。
    * 將累積成 trajectory fingerprint 訓練資料源（階段 2/3 用）。
@@ -589,6 +596,12 @@ export class MessageTrace {
       ok: r.ok,
       sizeBytes: r.sizeBytes,
     }));
+  }
+
+  /** 記錄訊息內偵測到但未用 @file: 語法的路徑候選（項目 8 補洞） */
+  recordPathHintCandidates(candidates: string[]): void {
+    if (!candidates.length) return;
+    this.entry.pathHintCandidates = [...candidates];
   }
 
   /**
