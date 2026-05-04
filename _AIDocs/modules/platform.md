@@ -114,3 +114,25 @@ buildProviderRegistry(providerId, providers, routing)
 - 啟動 `fs.watch` 熱重載（新增/刪除/修改 → 自動 re-scan + reload）
 
 詳見 `modules/hooks.md`。
+
+## v3 改動（2026-05-04 — CatClaw 整合 Hermes 計畫項目 6/9）
+
+對應 commits：`c3623b9` / `0f98164`（含 v3-followup `82c3912`）。
+
+### `initPlatform()` 末尾新增
+1. **12.6 Tool Output Cleanup**（項目 6）：呼 `cleanupToolOutputs(14)` 一次性 TTL 清理（14 天）
+2. **12.7 Message Index 初始化**（項目 9 Phase 1）：呼 `initMessageIndex()` 確保 `data/` 目錄存在
+
+### `session.delete` 接入（項目 6/7 補洞）
+session 刪除時自動清理（fire-and-forget lazy import）：
+- `cleanupToolOutputsForSession(sessionKey)` — 整個 session 目錄底下 tool-outputs 全清（plan §「session end 觸發」對齊）
+- `clearPendingState(sessionKey)` — 清 Pending Rut detector 的 in-memory state
+- 既有：`clearFrozenMaterials(sessionKey)` — frozen prompt materials
+
+### 新整合 module
+- `modules/tool-output-store.md`（項目 6）
+- `modules/context-references.md`（項目 8）
+- `modules/message-index-store.md`（項目 9 Phase 1）
+- `modules/skill-improvement-store.md`（項目 10 Week 1）
+
+詳見：`~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`

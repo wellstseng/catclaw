@@ -135,3 +135,31 @@ initTraceStore(dataDir: string): TraceStore         // 同時初始化 TraceCont
 getTraceStore(): TraceStore | null
 getTraceContextStore(): TraceContextStore | null
 ```
+
+## v3 改動（2026-05-04 — CatClaw 整合 Hermes 計畫項目 6/7/8/12）
+
+對應 commits：`c3623b9` / `c8213ea` / `9bf1e86` / `2247d0b`（含 v3-followup `a42ea53` / `fe3caaf` / `68b84ec`）。
+
+### 新增 schema 欄位
+| 欄位 | 來源項目 | 用途 |
+|------|---------|------|
+| `TraceToolCall.externalized` | 6 | tool result 寫檔路徑 + originalTokens |
+| `MessageTraceEntry.referencesExpanded` | 8 | `@file:/@folder:/...` 展開結果（kind/target/ok/sizeBytes） |
+| `MessageTraceEntry.pathHintCandidates` | 8 補洞 | 未用 @ref 但偵測到的檔案路徑候選 |
+| `MessageTraceEntry.guardianHits` | 12 階段 1 | rule-based Guardian 命中標註（rule/confidence/falsePositive?/detail?）|
+| `StrategyDetail.summaryStructure / summaryMode` | 7 | Compaction 4 section 解析結果 + 模式（first-time/iterative） |
+
+兩處 strategyDetails inline type（contextEngineering schema + recordCE input）同步加 `summaryStructure` / `summaryMode`。
+
+### 新增 method
+- `recordToolExternalized({ path, originalTokens })` — sequential caller 在 `recordToolCall` 後 attach 外部化資訊
+- `recordReferencesExpanded(refs)` — 訊息進入時記錄 ref 展開結果
+- `recordPathHintCandidates(candidates)` — 訊息進入時記錄路徑候選
+- `recordGuardianHit({ rule, confidence?, detail? })` — Guardian 規則命中時呼，`falsePositive` 由 dashboard 後置 mutate
+- `TraceStore.updateGuardianHit(traceId, hitIndex, falsePositive)` — read-mutate-rewrite jsonl 整檔，標 正確/誤報
+
+### Dashboard API（項目 12 補洞）
+- `GET /api/guardian-hits?limit=N` — 列攤平 hits
+- `POST /api/guardian-hits/label` body `{ traceId, hitIndex, falsePositive }`
+
+詳見：`~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`

@@ -213,3 +213,19 @@ Per-turn 工具結果 token 累計追蹤（`turnToolResultTokens`），接近 bu
 ## Turn Cap Warning
 
 `turnCount >= turnCapWarning`（預設 100）且 `turnCount % 20 === 0` 時發 `log.warn`，提醒建議執行 `/clear-session`。設定 `contextEngineering.turnCapWarning = 0` 可關閉。
+
+## v3 改動（2026-05-04 — CatClaw 整合 Hermes 計畫項目 6/9/12）
+
+對應 commits：`c3623b9` / `2247d0b` / `0f98164`（含 v3-followup `82c3912` / `fe3caaf`）。
+
+### 改動
+- **`truncateToolResult` 簽名**：加 `opts?: { sessionKey, turnIndex, args }`，回傳改為 `{ text: string; externalized?: ExternalizedToolOutput }` 物件
+- **3 個 caller** (L1737/1810/2028 spawn / concurrent / sequential) destructure + 補 opts；`SpawnBatchResult` / `BatchResult` type 加 `externalized` 欄位
+- **外部化優先**（≥ per-tool threshold 且非 `mcp_*`）→ 寫檔 + stub；失敗 fallthrough 到既有 `TRUNCATION_STRATEGIES`
+- **既有 workflow event listener** (rut / oscillation) 補呼 `trace.recordGuardianHit` 結構化標註
+
+### 接入
+- `trace.recordResponse(fullResponse, ...)` 後呼 `indexMessage(role="assistant")`（項目 9 Phase 1，跨 session 訊息索引）
+- 新 import：`externalizeToolOutput / shouldExternalizeToolOutput / ExternalizedToolOutput` from `./tool-output-store.js`
+
+詳見：`~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`

@@ -177,3 +177,27 @@ tier: standard | trigger: `/session`
 | `/session compact` | 強制觸發當前頻道 session 的 CE 壓縮 |
 | `/session purge` | 批次清除所有過期 session |
 | `/session delete <key>` | 刪除指定 session |
+
+## v3 改動（2026-05-04 — CatClaw 整合 Hermes 計畫項目 10/12）
+
+對應 commits：`79cd967` / `a42ea53`（含 v3-followup `fe3caaf`）。
+
+### 新增 wrapper
+**`runSkill(skill, ctx)`** — 包裝 `skill.execute(ctx)` 加自動提案產生 hook（項目 10 Week 1）：
+- 真錯誤（`isError && !validation`）→ 觸發 `proposeSkillImprovement(triggeredBy="isError")`
+- 例外 throw → 觸發 `proposeSkillImprovement(triggeredBy="exception")` + re-throw
+- transparent re-throw，caller 端 try/catch 行為不變
+- **3 個 caller 改用 runSkill**：`src/discord.ts` / `src/slash.ts` / `src/tools/builtin/skill.ts`
+
+**核心原則：不修改 skill 本體**（人格保護：Wendy 由 Wells 手工調教）。提案寫到 `~/.catclaw/workspace/_staging/skill-improvements/<skill>-<trigger>-<ts>.md`，待 `/memory-review`（Week 2 落地）審核。
+
+### 新增 builtin skill
+- **`/file <path>[:lineStart-lineEnd]`**（項目 8）：產出 `@file:"..."` 字串給使用者複製到下則訊息夾帶檔案
+- **`/guardian-export [limit]`**（項目 12 階段 1 補洞）：匯出 trace 中所有 `guardianHits` 為 jsonl 給階段 2 訓練資料源使用
+
+### 已知未做（catclaw 端無對應 emit source，Week 1 範圍外）
+- retry 觸發：catclaw skill 同步執行無 retry 概念，`fix-escalation` 模組未 wire up
+- 干預觸發：skill 同步執行不能被打斷
+- 自省觸發：要每 skill 跑 LLM judge，超 Week 1 minimum 範圍
+
+詳見 `modules/skill-improvement-store.md` 與 `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`

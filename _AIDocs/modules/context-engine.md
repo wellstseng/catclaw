@@ -323,3 +323,24 @@ CE 設定統一在 `catclaw.json` 的 `contextEngineering` 區塊：
 - **ContextOverflow**：overflow-hard-stop 觸發時（currentTokens + budgetTokens）
 
 `BuildOpts` 新增 `agentId` / `accountId` 欄位，供 hook 分派使用。
+
+## v3 改動（2026-05-04 — CatClaw 整合 Hermes 計畫項目 6/7）
+
+對應 commits：`c3623b9` / `c8213ea`（含 v3-followup `fe3caaf`）。
+
+### 新增
+- **`SummaryStructure` interface**：`{ activeTask?, resolved[], pending[], remaining[] }` — 4 section 結構化摘要
+- **`parseSummaryStructure(text)` parser**：解析 4 個固定 `## ` section，失敗回 `null`（容錯，compaction 仍以原文進行）
+- **`StrategyDetail.summaryStructure?` / `summaryMode?`** 欄位（first-time / iterative）
+
+### 改動
+- **`truncateBlocks` 內 tool_result 判斷**加 `isExternalizedStub` 短路（防 stub 被 CE 二次壓縮丟失指標路徑，項目 6）
+- **`CompactionStrategy.apply` 重構**：
+  - 找上輪 `[對話摘要` 訊息決定 first-time / iterative mode
+  - 兩種 prompt：first-time 從零生成；iterative diff 舊摘要
+  - 過濾 `[對話摘要` 開頭訊息防雙重摘要（由 iterative prompt 顯式注入）
+  - 解析後寫 `lastSummaryStructure / lastSummaryMode` public（學 `DecayStrategy.lastLevelChanges` 風格）
+  - `parsed.pending` 解析成功 → 呼 `pending-rut-detector.recordPendingQuestions(sessionKey, pending)`（項目 7 plan §範圍擴充：拖延型 rut 偵測）
+- **`ContextEngine.build` 主迴圈**：`name === "compaction"` 時 attach `detail.summaryStructure` / `summaryMode`
+
+詳見：`~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`
