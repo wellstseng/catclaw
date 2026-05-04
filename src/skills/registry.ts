@@ -283,17 +283,44 @@ function extractDescription(content: string): string {
  *
  * 仿 OpenClaw 兩段式：只注入清單（name + description + path）
  * Claude 需要時自己用 Read tool 讀取 SKILL.md 完整內容
+ *
+ * 項目 10 Week 3 整合（commit pending）：每個 skill 若有 promoted improvement-atoms，
+ * 在 <skill> block 內附加 <improvements> 子標籤列出該 skill 的經驗補充摘要 +
+ * 完整路徑（讓 LLM 需要時用 Read tool 讀取詳細內容）。
+ * Promote 流程：dashboard 「提案」 tab → Accept → 從 _staging 搬到
+ * ~/.catclaw/workspace/skills/{skillName}/improvement-atoms/ → 下次載 skills prompt 時自動帶。
  */
 export function buildSkillsPrompt(): string {
   if (promptSkills.length === 0) return "";
 
-  const items = promptSkills.map((s) =>
-    `  <skill>\n    <name>${s.name}</name>\n    <description>${s.description}</description>\n    <location>${s.filePath}</location>\n  </skill>`
-  ).join("\n");
+  const items = promptSkills.map((s) => {
+    let atomsBlock = "";
+    try {
+      // sync require — 避免 buildSkillsPrompt() 變成 async
+      const mod = require("../memory/skill-improvement-store.js") as {
+        listImprovementAtoms?: (skillName: string) => Array<{ fileName: string; filePath: string; rawText: string }>;
+      };
+      const atoms = mod.listImprovementAtoms?.(s.name) ?? [];
+      if (atoms.length > 0) {
+        const previews = atoms.map(a => {
+          // 抽 description 欄位作為 preview
+          const m = a.rawText.match(/^description:\s*(.+)$/m);
+          return m ? m[1]!.trim().slice(0, 100) : a.fileName;
+        }).slice(0, 5);
+        atomsBlock =
+          `\n    <improvements count="${atoms.length}" dir="${atoms[0]!.filePath.replace(/\/[^/]+$/, "")}">\n` +
+          previews.map(p => `      <atom>${p}</atom>`).join("\n") +
+          `\n    </improvements>`;
+      }
+    } catch { /* 模組未就緒 / 讀取失敗 → 略 */ }
+
+    return `  <skill>\n    <name>${s.name}</name>\n    <description>${s.description}</description>\n    <location>${s.filePath}</location>${atomsBlock}\n  </skill>`;
+  }).join("\n");
 
   return `\n\n## Skills
 Scan <available_skills> before replying.
 - If a skill clearly applies: use Read tool to load the SKILL.md at <location>, then follow it.
+- If <improvements> is non-empty: also Read the atoms in that dir for accumulated experience.
 - If none apply: do not load any SKILL.md.
 
 <available_skills>

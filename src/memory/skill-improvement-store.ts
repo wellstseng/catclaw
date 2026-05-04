@@ -17,7 +17,16 @@
  *   - dashboard 統計 / TTL 衰減 / 品質晉升
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
@@ -40,6 +49,165 @@ function getStagingDir(): string {
     "_staging",
     "skill-improvements",
   );
+}
+
+function getCatclawHome(): string {
+  return process.env["CATCLAW_HOME"] ?? join(homedir(), ".catclaw");
+}
+
+function getImprovementAtomsDir(skillName: string): string {
+  return join(getCatclawHome(), "workspace", "skills", skillName, "improvement-atoms");
+}
+
+// ── Week 2 review API：list / accept / discard（項目 10 Week 2）────────────
+
+export interface SkillImprovementEntry {
+  fileName: string;
+  filePath: string;
+  skillName?: string;
+  triggeredBy?: string;
+  createdAt?: string;
+  channelId?: string;
+  authorId?: string;
+  /** body 全文（含 frontmatter）— UI 渲染用 */
+  rawText: string;
+  /** 檔案大小 bytes */
+  size: number;
+  /** 檔案 mtime（unix ms） */
+  mtimeMs: number;
+}
+
+function parseFrontmatter(text: string): Record<string, string> {
+  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return {};
+  const fm: Record<string, string> = {};
+  for (const line of m[1]!.split("\n")) {
+    const kv = line.match(/^(\w+):\s*(.*)$/);
+    if (kv) fm[kv[1]!] = kv[2]!.trim();
+  }
+  return fm;
+}
+
+/** 列 _staging 內所有提案（newest first） */
+export function listSkillImprovements(): SkillImprovementEntry[] {
+  const dir = getStagingDir();
+  if (!existsSync(dir)) return [];
+  const entries: SkillImprovementEntry[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".md")) continue;
+    const filePath = join(dir, f);
+    try {
+      const stat = statSync(filePath);
+      const rawText = readFileSync(filePath, "utf-8");
+      const fm = parseFrontmatter(rawText);
+      entries.push({
+        fileName: f,
+        filePath,
+        skillName: fm["source"]?.replace(/^skill:/, "") ?? undefined,
+        triggeredBy: fm["triggered_by"],
+        createdAt: fm["created_at"],
+        channelId: fm["channel_id"],
+        authorId: fm["author_id"],
+        rawText,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+      });
+    } catch (err) {
+      log.warn(`[skill-improvement] 列舉跳過 ${f}：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/**
+ * Accept：搬提案到 ~/.catclaw/workspace/skills/{skillName}/improvement-atoms/{fileName}
+ * 從 frontmatter `source: skill:<name>` 推 skillName，找不到時用 caller 傳入的 skillName。
+ * 回傳目標路徑或 null。
+ */
+export function acceptSkillImprovement(fileName: string, fallbackSkillName?: string): string | null {
+  const stagingDir = getStagingDir();
+  const src = join(stagingDir, fileName);
+  if (!existsSync(src)) {
+    log.warn(`[skill-improvement] accept 失敗：${src} 不存在`);
+    return null;
+  }
+  let skillName: string | undefined = fallbackSkillName;
+  try {
+    const fm = parseFrontmatter(readFileSync(src, "utf-8"));
+    if (fm["source"]) skillName = fm["source"].replace(/^skill:/, "");
+  } catch {
+    /* 用 fallback */
+  }
+  if (!skillName) {
+    log.warn(`[skill-improvement] accept 失敗：無法推 skillName ${fileName}`);
+    return null;
+  }
+  const targetDir = getImprovementAtomsDir(skillName);
+  if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
+  const target = join(targetDir, fileName);
+  try {
+    renameSync(src, target);
+    log.info(`[skill-improvement] accept ${fileName} → ${target}`);
+    return target;
+  } catch (err) {
+    log.warn(`[skill-improvement] accept 失敗 ${fileName}：${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/** Discard：unlink _staging 內檔 */
+export function discardSkillImprovement(fileName: string): boolean {
+  const src = join(getStagingDir(), fileName);
+  if (!existsSync(src)) return false;
+  try {
+    unlinkSync(src);
+    log.info(`[skill-improvement] discard ${fileName}`);
+    return true;
+  } catch (err) {
+    log.warn(`[skill-improvement] discard 失敗 ${fileName}：${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
+/**
+ * Week 4 補洞 — TTL 衰減：超過 ttlDays 仍在 _staging 的提案 auto-discard。
+ * 預設 30 天。回傳清掉的數量。
+ */
+export function purgeStaleSkillImprovements(ttlDays = 30): number {
+  const dir = getStagingDir();
+  if (!existsSync(dir)) return 0;
+  const cutoff = Date.now() - ttlDays * 86_400_000;
+  let cleaned = 0;
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".md")) continue;
+    const filePath = join(dir, f);
+    try {
+      const stat = statSync(filePath);
+      if (stat.mtimeMs < cutoff) {
+        unlinkSync(filePath);
+        cleaned++;
+      }
+    } catch { /* 靜默 */ }
+  }
+  if (cleaned > 0) {
+    log.info(`[skill-improvement] purge: ${cleaned} 個過期提案清掉（TTL ${ttlDays} 天）`);
+  }
+  return cleaned;
+}
+
+/** Week 3：列 skill 已 promoted 的 improvement-atoms（讓 skill-loader 整合） */
+export function listImprovementAtoms(skillName: string): Array<{ fileName: string; filePath: string; rawText: string }> {
+  const dir = getImprovementAtomsDir(skillName);
+  if (!existsSync(dir)) return [];
+  const out: Array<{ fileName: string; filePath: string; rawText: string }> = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".md")) continue;
+    const filePath = join(dir, f);
+    try {
+      out.push({ fileName: f, filePath, rawText: readFileSync(filePath, "utf-8") });
+    } catch { /* skip */ }
+  }
+  return out;
 }
 
 /** 產生 skill 改進提案，寫入 _staging。失敗只 warn，不拋出。回傳 path 或 null。 */

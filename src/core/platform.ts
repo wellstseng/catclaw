@@ -402,6 +402,14 @@ export async function initPlatform(
     log.warn(`[platform] Message index init 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // ── 12.8 Skill Improvement 提案 TTL 清理（項目 10 Week 4）：30 天 auto-discard ──
+  try {
+    const { purgeStaleSkillImprovements } = await import("../memory/skill-improvement-store.js");
+    purgeStaleSkillImprovements(30);
+  } catch (err) {
+    log.warn(`[platform] Skill improvement TTL purge 失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // ── 13. 工具 + Skill 摘要注入（延遲 2s 等 MCP server 連線完成）────────────
   setTimeout(async () => {
     try {

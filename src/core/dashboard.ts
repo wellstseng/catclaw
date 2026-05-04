@@ -454,6 +454,7 @@ label.cfg-toggle { min-width: 36px; }
   <div class="tab" onclick="switchTab('traces',this)">追蹤</div>
   <div class="tab" onclick="switchTab('guardian',this)">Guardian</div>
   <div class="tab" onclick="switchTab('insights',this)">洞察</div>
+  <div class="tab" onclick="switchTab('improvements',this)">提案</div>
   <div class="tab" onclick="switchTab('tasks',this)">任務</div>
   <div class="tab" onclick="switchTab('auth',this)">憑證</div>
   <div class="tab" onclick="switchTab('config',this)">設定</div>
@@ -656,6 +657,18 @@ label.cfg-toggle { min-width: 36px; }
       <button class="btn btn-sm" style="float:right" onclick="loadInsights()">↻ 重新載入</button>
     </h2>
     <div id="insights-content" style="font-size:0.82rem;color:#ccc">載入中...</div>
+  </div>
+</div>
+
+<!-- Skill Improvements（項目 10 Week 2）-->
+<div id="pane-improvements" class="pane">
+  <div class="card">
+    <h2>Skill 改進提案
+      <span style="font-size:0.78rem;color:var(--fg2);margin-left:8px">_staging/skill-improvements/ 待審核 — Accept 後搬到 improvement-atoms/，loader 自動讀入 skill context</span>
+      <button class="btn btn-sm" style="float:right" onclick="loadSkillImprovements()">↻ 重新載入</button>
+    </h2>
+    <div id="improvements-summary" style="font-size:0.82rem;color:#ccc;margin-bottom:8px"></div>
+    <div id="improvements-list" style="font-size:0.82rem;color:#ccc">載入中...</div>
   </div>
 </div>
 
@@ -1012,6 +1025,7 @@ function switchTab(id, el) {
   if (id === 'tasks') { loadTasks(); }
   if (id === 'guardian') { loadGuardianHits(); }
   if (id === 'insights') { loadInsights(); }
+  if (id === 'improvements') { loadSkillImprovements(); }
   if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
   if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 5000); }
   if (id === 'cron') loadCron();
@@ -2880,6 +2894,79 @@ async function loadInsights() {
   } catch (err) {
     el.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
   }
+}
+
+// ── Skill Improvements（項目 10 Week 2）─────────────────────────────────────
+async function loadSkillImprovements() {
+  const list = document.getElementById('improvements-list');
+  const sum = document.getElementById('improvements-summary');
+  list.innerHTML = '載入中...';
+  try {
+    const d = await authFetch('/api/skill-improvements').then(r => r.json());
+    const entries = d.entries || [];
+    if (entries.length === 0) {
+      list.innerHTML = '<p style="color:#888">_staging/ 目前無待審核提案</p>';
+      sum.innerHTML = '';
+      return;
+    }
+    sum.innerHTML = '待審核 <b>' + entries.length + '</b> 筆';
+    let html = '';
+    for (const e of entries) {
+      const ts = e.createdAt ? new Date(e.createdAt).toLocaleString() : '?';
+      const escaped = (e.rawText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      html += '<div style="border:1px solid #333;border-radius:4px;padding:8px;margin-bottom:8px">';
+      html += '<div><b>' + (e.skillName || '?') + '</b> <span style="color:#888;font-size:0.78rem">[' + (e.triggeredBy || '?') + ']</span> <span style="color:#888;font-size:0.78rem;margin-left:6px">' + ts + '</span></div>';
+      html += '<div style="font-size:0.78rem;color:#888;margin:2px 0">channel: ' + (e.channelId || '-') + ' | author: ' + (e.authorId || '-') + ' | size: ' + e.size + ' B</div>';
+      html += '<details style="margin:4px 0"><summary style="cursor:pointer;color:#4fc3f7">展開內容</summary><pre style="background:#0e0e0e;padding:6px;font-size:0.72rem;overflow-x:auto;max-height:400px">' + escaped + '</pre></details>';
+      html += '<div style="margin-top:6px">';
+      html += '<button class="btn btn-sm" onclick="acceptSkillImprovement(\'' + e.fileName + '\',this)">✅ Accept</button> ';
+      html += '<button class="btn btn-sm" style="background:#444" onclick="navigator.clipboard.writeText(\'' + e.filePath.replace(/'/g, "\\'") + '\').then(()=>alert(\'路徑已複製，請用編輯器開啟修改\'))">✏️ Modify (複製路徑)</button> ';
+      html += '<button class="btn btn-sm" style="background:#a44" onclick="discardSkillImprovement(\'' + e.fileName + '\',this)">🗑 Discard</button>';
+      html += '</div></div>';
+    }
+    list.innerHTML = html;
+  } catch (err) {
+    list.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
+  }
+}
+
+async function acceptSkillImprovement(fileName, btn) {
+  if (!confirm('Accept 後將搬到 improvement-atoms/，下次 skill 載入時整合進 context。確定？')) return;
+  try {
+    const r = await authFetch('/api/skill-improvements/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName }),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      btn.parentElement.parentElement.style.opacity = '0.4';
+      btn.parentElement.innerHTML = '<span style="color:#8f8">✅ Accepted → ' + (j.target || '') + '</span>';
+      setTimeout(loadSkillImprovements, 500);
+    } else {
+      const j = await r.json().catch(() => ({}));
+      alert('Accept 失敗：' + (j.error || r.statusText));
+    }
+  } catch (err) { alert('Accept 失敗：' + err); }
+}
+
+async function discardSkillImprovement(fileName, btn) {
+  if (!confirm('確定刪除此提案？')) return;
+  try {
+    const r = await authFetch('/api/skill-improvements/discard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName }),
+    });
+    if (r.ok) {
+      btn.parentElement.parentElement.style.opacity = '0.4';
+      btn.parentElement.innerHTML = '<span style="color:#f88">🗑 Discarded</span>';
+      setTimeout(loadSkillImprovements, 500);
+    } else {
+      const j = await r.json().catch(() => ({}));
+      alert('Discard 失敗：' + (j.error || r.statusText));
+    }
+  } catch (err) { alert('Discard 失敗：' + err); }
 }
 
 async function labelGuardianHit(traceId, hitIndex, falsePositive, btn) {
@@ -6091,6 +6178,69 @@ export class DashboardServer {
         getTraceContextStore()?.deleteById(id);
         res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
         res.end(JSON.stringify(ok ? { deleted: 1 } : { error: "Trace not found" }));
+        return;
+      }
+
+      // GET /api/skill-improvements — 列 _staging 內提案（項目 10 Week 2）
+      if (url === "/api/skill-improvements" && method === "GET") {
+        void (async () => {
+          const { listSkillImprovements } = await import("../memory/skill-improvement-store.js");
+          const entries = listSkillImprovements();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ entries }));
+        })().catch(err => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        });
+        return;
+      }
+
+      // POST /api/skill-improvements/accept body { fileName } — 搬到 improvement-atoms/（項目 10 Week 2）
+      if (url === "/api/skill-improvements/accept" && method === "POST") {
+        let body = "";
+        req.on("data", (c: Buffer) => { body += c.toString(); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { fileName } = JSON.parse(body) as { fileName: string };
+              if (typeof fileName !== "string" || !fileName) {
+                res.writeHead(400); res.end(JSON.stringify({ error: "fileName 不能為空" })); return;
+              }
+              const { acceptSkillImprovement } = await import("../memory/skill-improvement-store.js");
+              const target = acceptSkillImprovement(fileName);
+              if (target) {
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ target }));
+              } else {
+                res.writeHead(404); res.end(JSON.stringify({ error: "找不到 fileName 或無法推 skillName" }));
+              }
+            } catch (err) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: String(err) }));
+            }
+          })();
+        });
+        return;
+      }
+
+      // POST /api/skill-improvements/discard body { fileName }（項目 10 Week 2）
+      if (url === "/api/skill-improvements/discard" && method === "POST") {
+        let body = "";
+        req.on("data", (c: Buffer) => { body += c.toString(); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { fileName } = JSON.parse(body) as { fileName: string };
+              const { discardSkillImprovement } = await import("../memory/skill-improvement-store.js");
+              const ok = discardSkillImprovement(fileName);
+              res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(ok ? { discarded: 1 } : { error: "找不到 fileName" }));
+            } catch (err) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: String(err) }));
+            }
+          })();
+        });
         return;
       }
 
