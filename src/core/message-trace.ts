@@ -874,9 +874,15 @@ export class TraceStore {
   /**
    * 標註 trace 中第 hitIndex 個 guardianHit 為正確/誤報（項目 12 階段 1 補洞）。
    * trace.jsonl 是 append-only，update 會 read-mutate-rewrite 整檔。回傳是否成功。
+   *
+   * 項目 12 階段 2 hook（commit pending）：標 falsePositive=false（即真失敗）時
+   * fire-and-forget 寫該 trace 的 trajectory fingerprint 到 failure-fingerprints.jsonl，
+   * 給未來 agent-loop 比對時 recall 用。
    */
   updateGuardianHit(traceId: string, hitIndex: number, falsePositive: boolean): boolean {
     let updated = false;
+    let recordedEntry: MessageTraceEntry | null = null;
+    let recordedRule: string | null = null;
     try {
       const files = readdirSync(this.logDir).filter(f => f.endsWith(".jsonl"));
       for (const f of files) {
@@ -892,6 +898,10 @@ export class TraceStore {
               kept.push(JSON.stringify(entry));
               updated = true;
               dirty = true;
+              if (!falsePositive) {
+                recordedEntry = entry;
+                recordedRule = entry.guardianHits[hitIndex].rule;
+              }
             } else {
               kept.push(line);
             }
@@ -905,6 +915,18 @@ export class TraceStore {
         }
       }
     } catch { /* ignore */ }
+
+    // 階段 2 hook：真失敗 → record fingerprint（fire-and-forget）
+    if (recordedEntry && recordedRule) {
+      const entry = recordedEntry;
+      const rule = recordedRule;
+      void (async () => {
+        try {
+          const { recordFailureFingerprint } = await import("../workflow/trajectory-fingerprint.js");
+          recordFailureFingerprint(entry, rule);
+        } catch { /* 靜默 */ }
+      })();
+    }
     return updated;
   }
 
