@@ -95,8 +95,22 @@ export async function runSkill(skill: Skill, ctx: SkillContext): Promise<SkillRe
   const startMs = Date.now();
   try {
     const result = await skill.execute(ctx);
+    const durationMs = Date.now() - startMs;
     if (result.isError === true && result.validation !== true) {
-      _proposeImprovement(skill, ctx, "isError", result.text, Date.now() - startMs);
+      _proposeImprovement(skill, ctx, "isError", result.text, durationMs);
+    } else {
+      // 成功 case → fire-and-forget LLM 自省（項目 10 完整版，hermes self-improving 核心）
+      // env CATCLAW_SKILL_SELF_REFLECT=false 可整段關閉
+      void (async () => {
+        try {
+          const { selfReflectSkill } = await import("./self-reflect.js");
+          await selfReflectSkill(skill, ctx, result, durationMs);
+        } catch (err) {
+          log.debug(
+            `[skills:${skill.name}] self-reflect 失敗（靜默）：${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
     }
     return result;
   } catch (err) {

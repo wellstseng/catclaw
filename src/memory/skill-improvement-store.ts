@@ -24,7 +24,7 @@ import { log } from "../logger.js";
 
 export interface ProposeSkillOpts {
   skillName: string;
-  triggeredBy: "exception" | "isError" | "retry" | "interruption";
+  triggeredBy: "exception" | "isError" | "retry" | "interruption" | "self-reflection";
   /** 簡化的 ctx（避免依賴 SkillContext type，store 不依賴 skill module） */
   ctx: { args: string; channelId: string; authorId: string };
   durationMs?: number;
