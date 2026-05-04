@@ -453,6 +453,7 @@ label.cfg-toggle { min-width: 36px; }
   <div class="tab" onclick="switchTab('cron',this)">排程</div>
   <div class="tab" onclick="switchTab('traces',this)">追蹤</div>
   <div class="tab" onclick="switchTab('guardian',this)">Guardian</div>
+  <div class="tab" onclick="switchTab('insights',this)">洞察</div>
   <div class="tab" onclick="switchTab('tasks',this)">任務</div>
   <div class="tab" onclick="switchTab('auth',this)">憑證</div>
   <div class="tab" onclick="switchTab('config',this)">設定</div>
@@ -638,6 +639,23 @@ label.cfg-toggle { min-width: 36px; }
     </h2>
     <div id="guardian-summary" style="font-size:0.82rem;color:#ccc;margin-bottom:8px"></div>
     <div id="guardian-list" style="font-size:0.82rem;color:#ccc">載入中...</div>
+  </div>
+</div>
+
+<!-- Insights（項目 9 Phase 3）-->
+<div id="pane-insights" class="pane">
+  <div class="card">
+    <h2>使用洞察
+      <span style="font-size:0.78rem;color:var(--fg2);margin-left:8px">最近</span>
+      <select id="insights-days" onchange="loadInsights()" style="margin-left:4px">
+        <option value="1">1 天</option>
+        <option value="7" selected>7 天</option>
+        <option value="30">30 天</option>
+        <option value="90">90 天</option>
+      </select>
+      <button class="btn btn-sm" style="float:right" onclick="loadInsights()">↻ 重新載入</button>
+    </h2>
+    <div id="insights-content" style="font-size:0.82rem;color:#ccc">載入中...</div>
   </div>
 </div>
 
@@ -993,6 +1011,7 @@ function switchTab(id, el) {
   if (id === 'ops') { loadSubagents(); loadRestartHistory(); }
   if (id === 'tasks') { loadTasks(); }
   if (id === 'guardian') { loadGuardianHits(); }
+  if (id === 'insights') { loadInsights(); }
   if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
   if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 5000); }
   if (id === 'cron') loadCron();
@@ -2814,6 +2833,52 @@ async function loadGuardianHits() {
     list.innerHTML = html;
   } catch (err) {
     list.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
+  }
+}
+
+// ── Insights（項目 9 Phase 3）─────────────────────────────────────────────
+async function loadInsights() {
+  const days = parseInt(document.getElementById('insights-days').value, 10) || 7;
+  const el = document.getElementById('insights-content');
+  el.innerHTML = '載入中...';
+  try {
+    const d = await authFetch('/api/insights?days=' + days).then(r => r.json());
+    const fmt = n => (n || 0).toLocaleString();
+    let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+    html += '<div><h3 style="color:#4fc3f7">Token 消耗</h3>';
+    html += '<div>輸入：<b>' + fmt(d.totalInput) + '</b>（cache hit: <b>' + d.cacheHitRate + '%</b>）</div>';
+    html += '<div>輸出：<b>' + fmt(d.totalOutput) + '</b></div>';
+    html += '<div>Cache R/W：' + fmt(d.totalCacheRead) + ' / ' + fmt(d.totalCacheWrite) + '</div>';
+    html += '<div>估算成本：<b>$' + (d.totalCost || 0).toFixed(4) + '</b></div>';
+    html += '</div>';
+    html += '<div><h3 style="color:#4fc3f7">活動</h3>';
+    html += '<div>Trace 數：<b>' + d.traceCount + '</b></div>';
+    html += '<div>Session 數：<b>' + d.sessionCount + '</b></div>';
+    html += '<div>平均 trace/session：<b>' + d.avgTurn + '</b></div>';
+    html += '<div>Compaction 觸發：<b>' + d.compactionCount + '</b>（' + d.compactionRate + '%）</div>';
+    html += d.peakHour >= 0 ? '<div>最活躍時段：<b>' + String(d.peakHour).padStart(2,'0') + ':00</b>（' + d.peakRatio + '%）</div>' : '';
+    html += '</div></div>';
+    if (d.topTools?.length) {
+      html += '<h3 style="color:#4fc3f7;margin-top:16px">Tool 使用 Top ' + d.topTools.length + '</h3>';
+      html += '<table class="tbl"><thead><tr><th>#</th><th>Tool</th><th>呼叫次數</th><th>佔比</th></tr></thead><tbody>';
+      for (let i = 0; i < d.topTools.length; i++) {
+        const t = d.topTools[i];
+        html += '<tr><td>' + (i+1) + '</td><td><code>' + t.name + '</code></td><td>' + t.count + '</td><td>' + t.pct + '%</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    if (d.topChannels?.length) {
+      html += '<h3 style="color:#4fc3f7;margin-top:16px">熱門 Channel Top ' + d.topChannels.length + '</h3>';
+      html += '<table class="tbl"><thead><tr><th>#</th><th>Channel</th><th>訊息數</th></tr></thead><tbody>';
+      for (let i = 0; i < d.topChannels.length; i++) {
+        const c = d.topChannels[i];
+        html += '<tr><td>' + (i+1) + '</td><td style="font-size:0.78rem;color:#aaa">…' + c.channelId.slice(-20) + '</td><td>' + c.count + '</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    el.innerHTML = html;
+  } catch (err) {
+    el.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
   }
 }
 
@@ -6026,6 +6091,63 @@ export class DashboardServer {
         getTraceContextStore()?.deleteById(id);
         res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
         res.end(JSON.stringify(ok ? { deleted: 1 } : { error: "Trace not found" }));
+        return;
+      }
+
+      // GET /api/insights?days=N — 使用統計（項目 9 Phase 3）
+      if (url.startsWith("/api/insights") && method === "GET") {
+        void (async () => {
+        const traceStore = getTraceStore();
+        const daysMatch = url.match(/[?&]days=(\d+)/);
+        const days = daysMatch ? parseInt(daysMatch[1]!, 10) : 7;
+        const since = Date.now() - days * 86_400_000;
+        const traces = traceStore?.recent(5000, e => new Date(e.ts).getTime() >= since) ?? [];
+        const { aggregateMessages } = await import("../memory/fts-query.js");
+        const agg = aggregateMessages({ days });
+        let totalInput = 0, totalOutput = 0, totalCacheRead = 0, totalCacheWrite = 0, totalCost = 0, totalToolCalls = 0, compactionCount = 0;
+        const sessionTurns: Record<string, number> = {};
+        const toolCount: Record<string, number> = {};
+        for (const t of traces) {
+          totalInput += t.totalInputTokens ?? 0;
+          totalOutput += t.totalOutputTokens ?? 0;
+          totalCacheRead += t.totalCacheRead ?? 0;
+          totalCacheWrite += t.totalCacheWrite ?? 0;
+          totalCost += t.estimatedCostUsd ?? 0;
+          totalToolCalls += t.totalToolCalls ?? 0;
+          if (t.sessionKey) sessionTurns[t.sessionKey] = (sessionTurns[t.sessionKey] ?? 0) + 1;
+          for (const llm of t.llmCalls ?? []) {
+            for (const tc of llm.toolCalls ?? []) toolCount[tc.name] = (toolCount[tc.name] ?? 0) + 1;
+          }
+          if (t.contextEngineering?.strategiesApplied?.includes("compaction")) compactionCount++;
+        }
+        const cacheTotal = totalInput + totalCacheRead;
+        const cacheHitRate = cacheTotal > 0 ? ((totalCacheRead / cacheTotal) * 100).toFixed(1) : "0.0";
+        const sessionCount = Object.keys(sessionTurns).length;
+        const avgTurn = sessionCount > 0 ? (Object.values(sessionTurns).reduce((a, b) => a + b, 0) / sessionCount).toFixed(1) : "0";
+        const topTools = Object.entries(toolCount)
+          .map(([name, count]) => ({ name, count, pct: totalToolCalls > 0 ? Math.round((count / totalToolCalls) * 100) : 0 }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+        let peakHour = -1, peakCount = 0, totalMsgs = 0;
+        for (let h = 0; h < 24; h++) {
+          totalMsgs += agg.hourHistogram[h];
+          if (agg.hourHistogram[h] > peakCount) { peakCount = agg.hourHistogram[h]; peakHour = h; }
+        }
+        const peakRatio = totalMsgs > 0 ? Math.round((peakCount / totalMsgs) * 100) : 0;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          days, traceCount: traces.length, sessionCount, avgTurn,
+          totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCost,
+          cacheHitRate, compactionCount,
+          compactionRate: traces.length > 0 ? Math.round((compactionCount / traces.length) * 100) : 0,
+          peakHour, peakRatio,
+          topTools,
+          topChannels: agg.topChannels.slice(0, 5),
+        }));
+        })().catch(err => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        });
         return;
       }
 
