@@ -154,6 +154,40 @@ export function isExternalizedStub(text: string): boolean {
   return typeof text === "string" && text.startsWith(TOOL_OUTPUT_STUB_PREFIX);
 }
 
+/**
+ * 清理特定 session 的 tool-outputs（session.delete 觸發，項目 6 補洞）。
+ * 不管 TTL，整個 session 目錄底下的檔全刪。
+ */
+export function cleanupToolOutputsForSession(sessionKey: string): { cleaned: number; freedBytes: number } {
+  const dataDir = getToolOutputsDir();
+  const sk = safeKey(sessionKey);
+  const sessionPath = join(dataDir, sk);
+  if (!existsSync(sessionPath)) return { cleaned: 0, freedBytes: 0 };
+  let cleaned = 0;
+  let freedBytes = 0;
+  try {
+    for (const file of readdirSync(sessionPath)) {
+      const filePath = join(sessionPath, file);
+      try {
+        const stat = statSync(filePath);
+        freedBytes += stat.size;
+        unlinkSync(filePath);
+        cleaned++;
+      } catch {
+        /* 靜默 */
+      }
+    }
+  } catch (err) {
+    log.warn(`[tool-output-store] session cleanup 失敗 ${sessionKey}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (cleaned > 0) {
+    log.debug(
+      `[tool-output-store] session ${sessionKey} 清 ${cleaned} 個 tool-output，釋放 ${(freedBytes / 1024).toFixed(1)} KB`,
+    );
+  }
+  return { cleaned, freedBytes };
+}
+
 /** 清理過期 tool-output 檔。預設 14 天。回傳清理數量與釋放位元組。 */
 export function cleanupToolOutputs(ttlDays = 14): { cleaned: number; freedBytes: number } {
   const dataDir = getToolOutputsDir();

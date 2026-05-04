@@ -20,7 +20,7 @@
  *   - 升級時 schema 已對齊（fields 對應 messages_meta + messages_fts）
  */
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
@@ -75,16 +75,49 @@ export function initMessageIndex(): void {
   }
 }
 
-/** Fire-and-forget 寫入。失敗只 warn，不阻塞。 */
+/**
+ * Fire-and-forget 寫入。失敗只 warn，不阻塞。
+ * 用 setImmediate 把 fs append 推到 next tick，主 pipeline 完全不等。
+ */
 export function indexMessage(msg: IndexedMessage): void {
   if (!_initialized) return;
+  setImmediate(() => {
+    try {
+      const line = JSON.stringify(msg) + "\n";
+      appendFileSync(getStorePath(), line, "utf-8");
+      _maybeRotate();
+    } catch (err) {
+      log.warn(
+        `[message-index] 寫入失敗 sessionKey=${msg.sessionKey} role=${msg.role}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  });
+}
+
+// ── Rotation（項目 9 補洞）──────────────────────────────────────────────────
+// 簡單 size-based rotation：超過 MAX_BYTES 改名為 .{ts}.ndjson 後重開新檔。
+// 預設 100MB，可由 env CATCLAW_MSG_INDEX_MAX_BYTES 覆寫。
+// 不做時間 / 行數 rotation（Phase 1 minimum，Phase 2 評估升級）。
+
+let _rotateCheckCounter = 0;
+const ROTATE_CHECK_EVERY_N_WRITES = 500;
+
+function _maybeRotate(): void {
+  _rotateCheckCounter++;
+  if (_rotateCheckCounter < ROTATE_CHECK_EVERY_N_WRITES) return;
+  _rotateCheckCounter = 0;
   try {
-    const line = JSON.stringify(msg) + "\n";
-    appendFileSync(getStorePath(), line, "utf-8");
+    const maxBytes = Number(process.env["CATCLAW_MSG_INDEX_MAX_BYTES"] ?? 100 * 1024 * 1024);
+    const path = getStorePath();
+    if (!existsSync(path)) return;
+    const stat = statSync(path);
+    if (stat.size < maxBytes) return;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const archived = path.replace(/\.ndjson$/, `.${ts}.ndjson`);
+    renameSync(path, archived);
+    log.info(`[message-index] rotate: ${stat.size} bytes → ${archived}`);
   } catch (err) {
-    log.warn(
-      `[message-index] 寫入失敗 sessionKey=${msg.sessionKey} role=${msg.role}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    log.warn(`[message-index] rotation 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

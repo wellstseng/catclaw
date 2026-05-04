@@ -168,6 +168,8 @@ export class SessionManager {
     try { if (existsSync(filePath)) unlinkSync(filePath); } catch { /* 靜默 */ }
     // 清理 frozen prompt materials（in-memory map，避免 leak）
     void import("./session-snapshot.js").then(m => m.clearFrozenMaterials(sessionKey)).catch(() => { /* 靜默 */ });
+    // 清理該 session 的 tool-outputs（項目 6 補洞，session end 觸發）
+    void import("./tool-output-store.js").then(m => m.cleanupToolOutputsForSession(sessionKey)).catch(() => { /* 靜默 */ });
     log.debug(`[session] 刪除 ${sessionKey}`);
     this.eventBus?.emit("session:end", sessionKey);
   }
