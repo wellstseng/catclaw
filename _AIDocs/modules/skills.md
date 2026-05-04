@@ -205,8 +205,20 @@ tier: standard | trigger: `/session`
   - `cron:` / `api:` channel 跳過（非使用者觸發）
   - LLM parse 失敗 / `needPropose=false` 不寫提案
 
-### 仍未做（catclaw 端無對應 emit source）
-- **retry 觸發**：catclaw skill 同步執行無 retry 概念，`fix-escalation` 模組未 wire up 進 agent-loop
-- **干預觸發**：skill 同步執行不能被打斷；catclaw 的 interrupt queue 機制針對 LLM turn 不針對 skill
+### retry 觸發（commit `78b7988`，項目 10 補洞 Phase A）
+- `src/tools/builtin/skill.ts` skill tool error 路徑呼 `fix-escalation.recordRetry(sessionId)`
+- 超 threshold（預設 3）→ emit `workflow:retry_escalation` event + propose with `triggeredBy="retry"`
+- 成功 → reset retry counter
+- agent-loop listener 補 `onRetryEsc` → `trace.recordWorkflowEvent` + `recordGuardianHit(rule="retry_escalation")`
+
+### 干預觸發（commit `4f456b7`，項目 10 補洞 Phase B）
+- 新檔 `src/skills/recent-skill-tracker.ts`：per-channel in-memory Map（30s TTL）
+- `runSkill` 進入時 `recordSkillStart(channelId, skillName, ctx)`
+- agent-loop interrupt 注入點（pendingInterrupts 注入時）偵測 `getRecentSkill(channelId)`：
+  - 30s 內有 skill → emit `skill:interrupted` + propose with `triggeredBy="interruption"`
+  - 含插話內容預覽
+
+### 已完整覆蓋 plan §「改進提案的觸發條件」3 條
+意外（error/exception/retry/interruption）/ 技巧（self-reflection）/ description 缺漏（self-reflection）。
 
 詳見 `modules/skill-improvement-store.md` 與 `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`

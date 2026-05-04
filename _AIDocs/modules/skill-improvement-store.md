@@ -56,10 +56,11 @@ export async function runSkill(skill: Skill, ctx: SkillContext): Promise<SkillRe
 |------|----------|------|
 | `result.isError === true && result.validation !== true` | ✅ 真錯誤 | runSkill wrapper |
 | `execute` 拋例外 | ✅ exception | runSkill wrapper |
-| 成功 result + LLM 判斷需提案 | ✅ self-reflection（commit fc5dccb） | self-reflect.ts |
+| 成功 result + LLM 判斷需提案 | ✅ self-reflection（fc5dccb） | self-reflect.ts |
+| LLM 用 skill tool 連續失敗 ≥ retry threshold | ✅ retry（78b7988） | tools/builtin/skill.ts |
+| Skill 執行後 30s 內 user 在 turn 進行中插話 | ✅ interruption（4f456b7） | agent-loop interrupt 注入點 |
 | `result.isError && validation === true`（語法/usage 提示） | ❌ 不算錯誤 | — |
 | 成功 result + LLM 判斷不需提案 | ❌ | — |
-| retry / interruption | ❌（catclaw 端無 emit source） | — |
 
 設計理由：避免噪音淹沒 `_staging/`，先聚焦真錯誤。
 
