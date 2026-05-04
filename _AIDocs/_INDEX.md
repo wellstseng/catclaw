@@ -111,6 +111,8 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/context-references.md](modules/context-references.md) | `src/core/context-references.ts` | Inline `@file/@folder/@git/@url/@diff/@staged` 展開（項目 8） | 2026-05-04 |
 | [modules/message-index-store.md](modules/message-index-store.md) | `src/memory/message-index-store.ts` | 跨 session 訊息全文索引 NDJSON（項目 9 Phase 1） | 2026-05-04 |
 | [modules/skill-improvement-store.md](modules/skill-improvement-store.md) | `src/memory/skill-improvement-store.ts` + `src/skills/registry.ts runSkill` | Skill 自動提案產生機制（項目 10 Week 1） | 2026-05-04 |
+| [modules/fts-query.md](modules/fts-query.md) | `src/memory/fts-query.ts` | NDJSON 訊息查詢 + 統計聚合（項目 9 Phase 2/3） | 2026-05-04 |
+| [modules/trajectory-fingerprint.md](modules/trajectory-fingerprint.md) | `src/workflow/trajectory-fingerprint.ts` | 失敗 pattern 壓縮 / record / match（項目 12 階段 2 plumbing） | 2026-05-04 |
 
 ## 重啟機制
 
