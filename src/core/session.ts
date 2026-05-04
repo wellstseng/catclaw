@@ -170,6 +170,8 @@ export class SessionManager {
     void import("./session-snapshot.js").then(m => m.clearFrozenMaterials(sessionKey)).catch(() => { /* 靜默 */ });
     // 清理該 session 的 tool-outputs（項目 6 補洞，session end 觸發）
     void import("./tool-output-store.js").then(m => m.cleanupToolOutputsForSession(sessionKey)).catch(() => { /* 靜默 */ });
+    // 清理 Pending Rut detector state（項目 7 補洞）
+    void import("../workflow/pending-rut-detector.js").then(m => m.clearPendingState(sessionKey)).catch(() => { /* 靜默 */ });
     log.debug(`[session] 刪除 ${sessionKey}`);
     this.eventBus?.emit("session:end", sessionKey);
   }

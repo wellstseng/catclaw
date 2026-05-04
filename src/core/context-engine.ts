@@ -883,6 +883,12 @@ ${formattedConvo}`;
         log.debug(`[context-engine:compaction] mode=${summaryMode} 摘要 parse 失敗，仍使用原文（dashboard 結構化顯示降級）`);
       } else {
         log.debug(`[context-engine:compaction] mode=${summaryMode} parsed: active=${parsed.activeTask ? 1 : 0} resolved=${parsed.resolved.length} pending=${parsed.pending.length} remaining=${parsed.remaining.length}`);
+        // 項目 7 補洞：Pending Questions 拖延型 rut 偵測（plan §範圍擴充）
+        if (ctx.sessionKey) {
+          void import("../workflow/pending-rut-detector.js")
+            .then(m => m.recordPendingQuestions(ctx.sessionKey, parsed.pending))
+            .catch(() => { /* 靜默 */ });
+        }
       }
 
       // C′ 輕量版：把使用者最近一則完整指令的原文當「意圖錨點」附在摘要後

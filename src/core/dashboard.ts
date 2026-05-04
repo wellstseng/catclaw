@@ -4756,6 +4756,21 @@ function formatTraceMarkdown(entry: MessageTraceEntry, ctx: TraceContextSnapshot
       md += `- Token breakdown: messages=${(ce.messageTokens ?? 0).toLocaleString()} | sys=${(ce.systemPromptTokens ?? 0).toLocaleString()} | tools=${(ce.toolsTokens ?? 0).toLocaleString()}\n`;
     }
     md += `\n`;
+    // 項目 7 補洞：結構化摘要 4 section render（plan §範圍擴充）
+    for (const sd of ce.strategyDetails ?? []) {
+      if (sd.name === "compaction" && sd.summaryStructure) {
+        const ss = sd.summaryStructure;
+        const mode = sd.summaryMode ?? "?";
+        md += `### Structured Summary (mode: ${mode})\n\n`;
+        md += `**Active Task**: ${ss.activeTask ?? "(無)"}\n\n`;
+        md += `**Resolved Questions** (${ss.resolved.length}):\n`;
+        md += ss.resolved.length ? ss.resolved.map((r: string) => `- ${r}`).join("\n") + "\n\n" : "（無）\n\n";
+        md += `**Pending Questions** (${ss.pending.length}):\n`;
+        md += ss.pending.length ? ss.pending.map((p: string) => `- ${p}`).join("\n") + "\n\n" : "（無）\n\n";
+        md += `**Remaining Work** (${ss.remaining.length}):\n`;
+        md += ss.remaining.length ? ss.remaining.map((r: string) => `- ${r}`).join("\n") + "\n\n" : "（無）\n\n";
+      }
+    }
   }
   if (entry.toolEvictions?.length) {
     md += `## ④b Tool Schema Eviction (LRU)\n\n`;
