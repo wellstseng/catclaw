@@ -5940,6 +5940,47 @@ export class DashboardServer {
         return;
       }
 
+      // GET /api/guardian-hits?limit=N — 列最近 N 筆 trace 的 guardianHits 攤平（項目 12 階段 1）
+      if (url.startsWith("/api/guardian-hits") && method === "GET") {
+        const traceStore = getTraceStore();
+        if (!traceStore) { res.writeHead(500); res.end(JSON.stringify({ error: "TraceStore not initialized" })); return; }
+        const limitMatch = url.match(/[?&]limit=(\d+)/);
+        const limit = limitMatch ? parseInt(limitMatch[1]!, 10) : 500;
+        const traces = traceStore.recent(limit, e => Array.isArray(e.guardianHits) && e.guardianHits.length > 0);
+        const flat: Array<{ traceId: string; sessionKey?: string; channelId?: string; accountId?: string; hitIndex: number; ts: number; rule: string; confidence?: number; falsePositive?: boolean; detail?: string }> = [];
+        for (const t of traces) {
+          (t.guardianHits ?? []).forEach((h, i) => {
+            flat.push({ traceId: t.traceId, sessionKey: t.sessionKey, channelId: t.channelId, accountId: t.accountId, hitIndex: i, ts: h.ts, rule: h.rule, confidence: h.confidence, falsePositive: h.falsePositive, detail: h.detail });
+          });
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ hits: flat, total: flat.length }));
+        return;
+      }
+
+      // POST /api/guardian-hits/label — body: { traceId, hitIndex, falsePositive }（項目 12 階段 1）
+      if (url === "/api/guardian-hits/label" && method === "POST") {
+        const traceStore = getTraceStore();
+        if (!traceStore) { res.writeHead(500); res.end(JSON.stringify({ error: "TraceStore not initialized" })); return; }
+        let body = "";
+        req.on("data", (c: Buffer) => { body += c.toString(); });
+        req.on("end", () => {
+          try {
+            const { traceId, hitIndex, falsePositive } = JSON.parse(body) as { traceId: string; hitIndex: number; falsePositive: boolean };
+            if (typeof traceId !== "string" || typeof hitIndex !== "number" || typeof falsePositive !== "boolean") {
+              res.writeHead(400); res.end(JSON.stringify({ error: "invalid body" })); return;
+            }
+            const ok = traceStore.updateGuardianHit(traceId, hitIndex, falsePositive);
+            res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(ok ? { updated: 1 } : { error: "trace or hit not found" }));
+          } catch (err) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: String(err) }));
+          }
+        });
+        return;
+      }
+
       // POST /api/traces/bulk-delete — body: { ids: string[] }
       if (url === "/api/traces/bulk-delete" && method === "POST") {
         const traceStore = getTraceStore();

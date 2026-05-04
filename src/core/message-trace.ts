@@ -858,6 +858,43 @@ export class TraceStore {
     return removed;
   }
 
+  /**
+   * 標註 trace 中第 hitIndex 個 guardianHit 為正確/誤報（項目 12 階段 1 補洞）。
+   * trace.jsonl 是 append-only，update 會 read-mutate-rewrite 整檔。回傳是否成功。
+   */
+  updateGuardianHit(traceId: string, hitIndex: number, falsePositive: boolean): boolean {
+    let updated = false;
+    try {
+      const files = readdirSync(this.logDir).filter(f => f.endsWith(".jsonl"));
+      for (const f of files) {
+        const filePath = join(this.logDir, f);
+        const lines = readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+        const kept: string[] = [];
+        let dirty = false;
+        for (const line of lines) {
+          try {
+            const entry = JSON.parse(line) as MessageTraceEntry;
+            if (entry.traceId === traceId && entry.guardianHits && entry.guardianHits[hitIndex]) {
+              entry.guardianHits[hitIndex].falsePositive = falsePositive;
+              kept.push(JSON.stringify(entry));
+              updated = true;
+              dirty = true;
+            } else {
+              kept.push(line);
+            }
+          } catch {
+            kept.push(line);
+          }
+        }
+        if (dirty) {
+          writeFileSync(filePath, kept.join("\n") + "\n", "utf-8");
+          break;
+        }
+      }
+    } catch { /* ignore */ }
+    return updated;
+  }
+
   /** 刪除指定 sessionKey 的所有 trace 記錄，回傳刪除數量 */
   deleteBySession(sessionKey: string): number {
     let count = 0;
