@@ -195,9 +195,18 @@ tier: standard | trigger: `/session`
 - **`/file <path>[:lineStart-lineEnd]`**（項目 8）：產出 `@file:"..."` 字串給使用者複製到下則訊息夾帶檔案
 - **`/guardian-export [limit]`**（項目 12 階段 1 補洞）：匯出 trace 中所有 `guardianHits` 為 jsonl 給階段 2 訓練資料源使用
 
-### 已知未做（catclaw 端無對應 emit source，Week 1 範圍外）
-- retry 觸發：catclaw skill 同步執行無 retry 概念，`fix-escalation` 模組未 wire up
-- 干預觸發：skill 同步執行不能被打斷
-- 自省觸發：要每 skill 跑 LLM judge，超 Week 1 minimum 範圍
+### 自省觸發（commit `fc5dccb`，hermes self-improving 核心）
+- 新檔 `src/skills/self-reflect.ts`：runSkill 成功 case 後 fire-and-forget LLM judge
+- 對應 plan §「改進提案的觸發條件」3 條：意外 / 技巧 / description 缺漏
+- 任一 yes → propose with `triggeredBy="self-reflection"`
+- 短路（mitigation noise）：
+  - env `CATCLAW_SKILL_SELF_REFLECT=false` 整段關閉
+  - args + result 合計 < 100 chars 跳過（簡單 skill 不值得 judge）
+  - `cron:` / `api:` channel 跳過（非使用者觸發）
+  - LLM parse 失敗 / `needPropose=false` 不寫提案
+
+### 仍未做（catclaw 端無對應 emit source）
+- **retry 觸發**：catclaw skill 同步執行無 retry 概念，`fix-escalation` 模組未 wire up 進 agent-loop
+- **干預觸發**：skill 同步執行不能被打斷；catclaw 的 interrupt queue 機制針對 LLM turn 不針對 skill
 
 詳見 `modules/skill-improvement-store.md` 與 `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`

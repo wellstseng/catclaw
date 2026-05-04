@@ -50,15 +50,16 @@ export async function runSkill(skill: Skill, ctx: SkillContext): Promise<SkillRe
 - `execute` 拋例外 → 觸發 `_proposeImprovement(triggeredBy="exception")` + re-throw
 - transparent re-throw：caller 端 try/catch 行為不變
 
-## 觸發條件保守化
+## 觸發條件
 
-| 情況 | 觸發提案？ |
-|------|----------|
-| `result.isError === true && result.validation !== true` | ✅ 真錯誤 |
-| `execute` 拋例外 | ✅ |
-| `result.isError && validation === true`（語法/usage 提示） | ❌ 不算錯誤 |
-| 成功 result | ❌ |
-| retry / interruption | （待 Week 2 加，本階段不觸發） |
+| 情況 | 觸發提案？ | 來源 |
+|------|----------|------|
+| `result.isError === true && result.validation !== true` | ✅ 真錯誤 | runSkill wrapper |
+| `execute` 拋例外 | ✅ exception | runSkill wrapper |
+| 成功 result + LLM 判斷需提案 | ✅ self-reflection（commit fc5dccb） | self-reflect.ts |
+| `result.isError && validation === true`（語法/usage 提示） | ❌ 不算錯誤 | — |
+| 成功 result + LLM 判斷不需提案 | ❌ | — |
+| retry / interruption | ❌（catclaw 端無 emit source） | — |
 
 設計理由：避免噪音淹沒 `_staging/`，先聚焦真錯誤。
 
