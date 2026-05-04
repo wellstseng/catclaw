@@ -98,7 +98,40 @@ export const tool: Tool = {
       const { runSkill } = await import("../../skills/registry.js");
       const result = await runSkill(skill, skillCtx);
       if (result.isError) {
+        // 真錯誤（非 validation）→ 計入 retry counter，超 threshold emit retry_escalation 事件
+        // （項目 10 完整補洞：plan §改進提案的觸發條件 第 1 條 retry）
+        if (!result.validation && ctx.sessionId) {
+          void (async () => {
+            try {
+              const { recordRetry } = await import("../../workflow/fix-escalation.js");
+              const exceeded = recordRetry(ctx.sessionId!);
+              if (exceeded) {
+                const detail = `skill ${skill.name} 連續失敗達 retry threshold`;
+                const { eventBus } = await import("../../core/event-bus.js");
+                eventBus.emit("workflow:retry_escalation", ctx.sessionId!, 3, detail);
+                // 項目 10 完整補洞：retry 觸發 skill improvement 提案
+                const { proposeSkillImprovement } = await import("../../memory/skill-improvement-store.js");
+                proposeSkillImprovement({
+                  skillName: skill.name,
+                  triggeredBy: "retry",
+                  ctx: { args, channelId: ctx.channelId, authorId: ctx.accountId },
+                  situationText: detail,
+                  observationText: `最後一次回應：${result.text.slice(0, 200)}`,
+                });
+              }
+            } catch { /* 靜默 */ }
+          })();
+        }
         return result.validation ? { error: result.text, validation: true } : { error: result.text };
+      }
+      // 成功 → reset retry counter
+      if (ctx.sessionId) {
+        void (async () => {
+          try {
+            const { resetRetry } = await import("../../workflow/fix-escalation.js");
+            resetRetry(ctx.sessionId!);
+          } catch { /* 靜默 */ }
+        })();
       }
       return { result: result.text };
     } catch (err) {

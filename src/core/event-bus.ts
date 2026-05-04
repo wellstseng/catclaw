@@ -103,6 +103,10 @@ export interface CatClawEvents {
   "workflow:rut":        [warnings: RutWarning[]];
   "workflow:oscillation":[atom: string, count: number];
   "workflow:sync_needed":[files: string[]];
+  /** Tool / skill 連續失敗超過 fix-escalation threshold（項目 10 完整 + 12 補洞） */
+  "workflow:retry_escalation": [sessionKey: string, count: number, detail: string];
+  /** 使用者干預：對最近執行的 skill（項目 10 完整補洞） */
+  "skill:interrupted":   [sessionKey: string, skillName: string, elapsedMs: number];
 
   // ── 排程 / Skill ──
   "cron:executed":       [jobId: string];

@@ -1336,14 +1336,29 @@ export async function* agentLoop(
     const onFileModified = (path: string, tool: string) => {
       trace.recordWorkflowEvent("file_modified", `${tool}: ${path}`);
     };
+    // 項目 10 完整補洞：retry_escalation Guardian 標註
+    const onRetryEsc = (sk: string, count: number, detail: string) => {
+      if (sk !== sessionKey) return;
+      trace.recordWorkflowEvent("retry_escalation", `${detail} (×${count})`);
+      trace.recordGuardianHit({ rule: "retry_escalation", confidence: 1.0, detail: `${detail} ×${count}` });
+    };
+    // 項目 10 完整補洞：skill 干預事件（user 在 skill 執行後短時間內插話）
+    const onSkillInterrupted = (sk: string, skillName: string, elapsedMs: number) => {
+      if (sk !== sessionKey) return;
+      trace.recordWorkflowEvent("skill_interrupted", `${skillName} (${elapsedMs}ms 內被打斷)`);
+    };
     eventBus.on("workflow:rut", onRut);
     eventBus.on("workflow:oscillation", onOsc);
     eventBus.on("workflow:sync_needed", onSync);
+    eventBus.on("workflow:retry_escalation", onRetryEsc);
+    eventBus.on("skill:interrupted", onSkillInterrupted);
     eventBus.on("file:modified", onFileModified);
     _wfListeners.push(
       () => eventBus.off("workflow:rut", onRut),
       () => eventBus.off("workflow:oscillation", onOsc),
       () => eventBus.off("workflow:sync_needed", onSync),
+      () => eventBus.off("workflow:retry_escalation", onRetryEsc),
+      () => eventBus.off("skill:interrupted", onSkillInterrupted),
       () => eventBus.off("file:modified", onFileModified),
     );
   }
