@@ -1419,6 +1419,28 @@ export async function* agentLoop(
         messages.push({ role: "user", content: block });
         log.info(`[agent-loop] [loop=${loopCount}] 注入 ${pendingInterrupts.length} 則插話訊息到當前 turn`);
         // 視覺提示由 discord.ts soft-inject 分支對原訊息加 👀 reaction 提供，這裡不再額外 yield text
+
+        // 項目 10 完整補洞 Phase B：interrupt 注入時若最近 30s 內有 skill → 視為 skill 干預
+        void (async () => {
+          try {
+            const { getRecentSkill, clearRecentSkill } = await import("../skills/recent-skill-tracker.js");
+            const recent = getRecentSkill(channelId);
+            if (recent) {
+              const elapsedMs = Date.now() - recent.startedAtMs;
+              eventBus.emit("skill:interrupted", sessionKey, recent.skillName, elapsedMs);
+              const { proposeSkillImprovement } = await import("../memory/skill-improvement-store.js");
+              proposeSkillImprovement({
+                skillName: recent.skillName,
+                triggeredBy: "interruption",
+                ctx: recent.ctx,
+                durationMs: elapsedMs,
+                situationText: `skill 執行後 ${elapsedMs}ms 內使用者插話 → 視為干預`,
+                observationText: `插話內容：${pendingInterrupts.map(i => i.slice(0, 100)).join(" / ")}`,
+              });
+              clearRecentSkill(channelId);
+            }
+          } catch { /* 靜默 */ }
+        })();
       }
 
       // ── Background Agent 結果注入 ──────────────────────────────────────────

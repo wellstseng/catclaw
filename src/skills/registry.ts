@@ -93,6 +93,17 @@ export function loadExternalPromptSkills(dir: string): void {
  */
 export async function runSkill(skill: Skill, ctx: SkillContext): Promise<SkillResult> {
   const startMs = Date.now();
+  // 項目 10 完整補洞 Phase B：記最近 skill 給干預偵測用
+  void (async () => {
+    try {
+      const { recordSkillStart } = await import("./recent-skill-tracker.js");
+      recordSkillStart(ctx.channelId, skill.name, {
+        args: ctx.args,
+        channelId: ctx.channelId,
+        authorId: ctx.authorId,
+      });
+    } catch { /* 靜默 */ }
+  })();
   try {
     const result = await skill.execute(ctx);
     const durationMs = Date.now() - startMs;
