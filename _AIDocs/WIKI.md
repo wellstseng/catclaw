@@ -22,7 +22,7 @@
 ### CatClaw 是什麼
 
 CatClaw 是一套以 Discord 為前端的多人 AI 開發平台，提供等同 Claude Code 的完整開發能力：
-multi-turn agent loop、25 builtin tools、35 builtin skills、36-event hook 系統、多 provider failover、
+multi-turn agent loop、26 builtin tools、34 builtin skills、36-event hook 系統、多 provider failover、
 四層記憶引擎、Context Engineering、subagent 編排、帳號/角色/權限系統、Web Dashboard。
 
 ### 一鍵安裝
@@ -109,8 +109,8 @@ Discord 訊息
 | **Context Engine** | 3 策略：decay（漸進衰減+外部化）→ compaction（結構化摘要+意圖錨點）→ overflow-hard-stop |
 | **Session** | Per-channel 串行佇列 + 磁碟持久化 + TTL |
 | **Accounts** | 5 級角色（guest → platform-owner）+ Tool Tier 物理移除 |
-| **Tools** | 25 builtin tools + MCP tool 自動整合 |
-| **Skills** | 35 builtin skills（32 command-type + 3 prompt） |
+| **Tools** | 26 builtin tools + MCP tool 自動整合 |
+| **Skills** | 34 builtin skills（31 command-type + 3 prompt） |
 | **Dashboard** | Web 監控面板 + REST API + Web Chat |
 | **Cron** | 排程服務（cron/every/at）+ 4 種動作型別 |
 | **Hooks** | 36 events（10 類）+ folder-convention 掛載 + fs.watch 熱重載 + TS/JS/sh/ps1 多 runtime + defineHook SDK + FileWatcher |
@@ -123,8 +123,8 @@ catclaw/                          <- 程式碼
 ├── src/
 │   ├── core/                     核心模組（agent-loop, session, dashboard...）
 │   ├── providers/                LLM Provider 抽象層
-│   ├── tools/                    25 builtin tools
-│   ├── skills/                   35 builtin skills
+│   ├── tools/                    26 builtin tools
+│   ├── skills/                   34 builtin skills
 │   ├── memory/                   四層記憶引擎
 │   ├── accounts/                 帳號/角色/權限
 │   ├── hooks/                    Hook 系統
@@ -221,7 +221,7 @@ catclaw/                          <- 程式碼
 
 > 詳見：[modules/agent-loop.md](modules/agent-loop.md)
 
-### 4.2 Tool 系統（25 builtin tools）
+### 4.2 Tool 系統（26 builtin tools）
 
 自動掃描載入 + register/execute + hot-reload + MCP tool 整合。
 
@@ -233,7 +233,7 @@ LLM 需先呼叫 `tool_search` 載入完整 schema 才能使用（節省 context
 
 > 詳見：[modules/tool-registry.md](modules/tool-registry.md)
 
-### 4.3 Skill 系統（35 builtin skills）
+### 4.3 Skill 系統（34 builtin skills）
 
 
 
@@ -583,3 +583,45 @@ strip 註解後仍需合法 JSON，否則 hot-reload 持續失敗。
 | [logger.md](modules/logger.md) | `src/logger.ts` | Log 系統 |
 | [pm2.md](modules/pm2.md) | `catclaw.js` | PM2 進程管理 |
 | [index.md](modules/index.md) | `src/index.ts` | 進入點 |
+| [tool-output-store.md](modules/tool-output-store.md) | `src/core/tool-output-store.ts` | Tool result 外部化（項目 6） |
+| [context-references.md](modules/context-references.md) | `src/core/context-references.ts` | Inline `@file/@folder/@git/@url/@diff/@staged`（項目 8） |
+| [message-index-store.md](modules/message-index-store.md) | `src/memory/message-index-store.ts` | 跨 session 訊息 NDJSON 索引（項目 9 Phase 1） |
+| [fts-query.md](modules/fts-query.md) | `src/memory/fts-query.ts` | NDJSON 訊息查詢 + 統計聚合（項目 9 Phase 2/3） |
+| [skill-improvement-store.md](modules/skill-improvement-store.md) | `src/memory/skill-improvement-store.ts` + `runSkill` | Skill 自動提案 + 4 觸發（項目 10） |
+| [trajectory-fingerprint.md](modules/trajectory-fingerprint.md) | `src/workflow/trajectory-fingerprint.ts` | 失敗 pattern 壓縮 + match（項目 12 階段 2） |
+
+---
+
+## 8. 2026-05-04 v3 重大更新（Hermes 整合）
+
+13 項計畫共 24 commits 落地（10/11 = 91%，項目 11/13 暫緩）：
+
+**新增模組**（6 個 module）：
+- 項目 6 Tool Result Externalization：`tool-output-store.ts`
+- 項目 8 Inline Context References：`context-references.ts`（6 種 @-kind 自動展開）
+- 項目 9 訊息索引：`message-index-store.ts`（NDJSON）+ `fts-query.ts`（query / aggregate）
+- 項目 10 Skill Self-Improve：`skill-improvement-store.ts` + `self-reflect.ts` + `recent-skill-tracker.ts`
+- 項目 12 Trajectory：`trajectory-fingerprint.ts` + `pending-rut-detector.ts`
+
+**新增 skills / tools**：
+- Skills：`/file` `/recall` `/insights` `/guardian-export` `/reload`
+- LLM tools：`memory_search_fulltext`
+
+**Dashboard 新 tabs**：
+- 「Guardian」— 列 guardianHits + 標 正確/誤報 + 點 trace
+- 「洞察」— `/insights` 等價 UI（days select）
+- 「提案」— Skill Improvements 審核（Accept/Modify/Discard）
+
+**新增 API endpoints**：
+- `GET /api/insights?days=N`
+- `GET /api/guardian-hits?limit=N` + `POST /api/guardian-hits/label`
+- `GET /api/skill-improvements` + `POST /api/skill-improvements/{accept,discard}`
+
+**核心改動**：
+- 項目 5 Frozen Snapshot：Anthropic prompt cache 命中保證（system prompt session-start 凍結）
+- 項目 6：truncateToolResult 簽名改 `{ text, externalized? }`，3 caller 簿冊；CE Decay 識別 stub 跳過
+- 項目 7：CompactionStrategy 改 4 section + first-time/iterative + Pending 拖延 rut 偵測
+- 項目 10 4 觸發：error / exception / retry / interruption / self-reflection（LLM judge）
+- 項目 12：trace.guardianHits schema + falsePositive 標註 → trajectory-fingerprint plumbing
+
+詳見 `_AIDocs/_CHANGELOG.md` 4 條 v3-followup entries + `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`。

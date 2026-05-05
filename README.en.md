@@ -2,15 +2,15 @@
 
 **English** | [繁體中文](README.md)
 
-Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 25 builtin tools, 35 builtin skills, 36-event hook system, multi-provider failover, four-layer memory engine, and web dashboard.
+Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 26 builtin tools, 34 builtin skills, 36-event hook system, multi-provider failover, four-layer memory engine, and web dashboard.
 
 ## Features
 
 | Category | Capabilities |
 |----------|-------------|
 | **Agent Loop** | Multi-turn reasoning loop, tool execution, output token recovery, auto-compact |
-| **Tools** | 25 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management, skill execution, hook management, filewatch |
-| **Skills** | 35 builtin skills (32 command-type + 3 prompt-type) — config, session, account, status, restart, plan, remind, hook, and more |
+| **Tools** | 26 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management, skill execution, hook management, filewatch |
+| **Skills** | 34 builtin skills (31 command-type + 3 prompt-type) — config, session, account, status, restart, plan, remind, hook, and more |
 | **Hook System** | 36 events (10 categories: Lifecycle / Turn / Memory / Subagent / Context / CLI Bridge / File+Command / File Watcher / Error / Platform) + folder-convention mount + fs.watch hot-reload + TS/JS/sh/ps1 runtimes + defineHook SDK |
 | **Multi-Provider** | claude-api / ollama / openai-compat / codex-oauth / acp-cli / cli-* + circuit-breaker failover |
 | **Memory** | Four-layer engine (Global / Project / Account / Agent) — vector recall + keyword search + auto-extraction + consolidation + **embedding model drift detection + auto dim-mismatch rebuild** |
@@ -272,8 +272,8 @@ src/
                   Prompt Assembler, Reply Handler, Event Bus, Message Pipeline
   memory/         Four-layer memory engine (engine, recall, extract, consolidate)
   providers/      LLM Provider abstraction (claude-api, ollama, openai-compat, cli-*)
-  tools/          Tool Registry + 25 builtin tools
-  skills/         Skill Registry + 35 builtin skills (32 command-type + 3 prompt)
+  tools/          Tool Registry + 26 builtin tools
+  skills/         Skill Registry + 34 builtin skills (32 command-type + 3 prompt)
   hooks/          Hook system — 36 events + folder-convention + fs.watch + defineHook SDK + FileWatcher
   safety/         Safety interception (guard, collab-conflict)
   workflow/       Workflow engine (rut, oscillation, fix-escalation, sync)
@@ -298,6 +298,36 @@ templates/
 - **[_AIDocs/02-CONFIG-REFERENCE.md](_AIDocs/02-CONFIG-REFERENCE.md)** — Full configuration reference
 - **[_AIDocs/01-ARCHITECTURE.md](_AIDocs/01-ARCHITECTURE.md)** — Architecture deep dive
 - **[_AIDocs/_INDEX.md](_AIDocs/_INDEX.md)** — Knowledge base index
+
+## 2026-05-04 v3 Major Update (Hermes Integration)
+
+Landed 10/11 items (91%) of Hermes integration plan (items 11/13 deferred).
+
+**New features** (5 builtin skills / 1 LLM tool):
+- `/file <path>[:lines]` — Inline file reference helper
+- `/recall <query> [--days N]` — Cross-session message full-text search
+- `/insights [--days N]` — Usage statistics report (token / cost / tool top / compaction / channels)
+- `/guardian-export` — Guardian Hits jsonl export (trajectory-fingerprint training data)
+- `/reload` — Force rebuild frozen prompt snapshot
+- `memory_search_fulltext` — LLM cross-session message search tool
+
+**Inline Context References** — `@file:"src/foo.ts:10-20"` / `@folder:` / `@git:HEAD~3` / `@url:` / `@diff` / `@staged` auto-expand into messages, no extra tool round-trip.
+
+**Tool Result Externalization** — Large tool results auto-written to `~/.catclaw/workspace/data/tool-outputs/` with stub-in-prompt; LLM `read_file` full content on demand.
+
+**Frozen Prompt Snapshot** — System prompt frozen at session start to maximize Anthropic prompt cache hit.
+
+**Structured Compaction** — 4 fixed sections (Active Task / Resolved / Pending / Remaining) with first-time / iterative dual-prompt mode + Pending-question rut detector.
+
+**Skill Self-Improving** — `runSkill` wrapper with 4 triggers (error / exception / retry / interruption / self-reflection LLM judge) → proposals to `_staging/skill-improvements/` → Dashboard "Improvements" tab (Accept / Modify / Discard) → promoted atoms auto-merged into skill context. **Skill body never modified** (persona protection).
+
+**Workflow Guardian Structured Annotations** — `guardianHits` schema + Dashboard "Guardian" tab for labeling ✅ correct / ❌ false-positive + Trajectory Fingerprint plumbing (hash + match failure DB; enables agent-loop matching once samples accumulate).
+
+**Cross-Session Message Index** — NDJSON append-only (fire-and-forget + setImmediate + size rotation), supports `/recall` and future SQLite FTS5 upgrade.
+
+**Dashboard new tabs**: "Guardian" / "Insights" / "Improvements" + 7 new API endpoints.
+
+See `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md` + `_AIDocs/_CHANGELOG.md`.
 
 ## License
 

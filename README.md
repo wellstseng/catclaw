@@ -2,15 +2,15 @@
 
 [English](README.en.md) | **繁體中文**
 
-以 Discord 為介面的 AI Agent 運行平台 — multi-turn agent loop、25 builtin tools、35 builtin skills、36-event hook 系統、多 provider failover、四層記憶引擎、Web Dashboard。
+以 Discord 為介面的 AI Agent 運行平台 — multi-turn agent loop、26 builtin tools、34 builtin skills、36-event hook 系統、多 provider failover、四層記憶引擎、Web Dashboard。
 
 ## 功能總覽
 
 | 類別 | 能力 |
 |------|------|
 | **Agent Loop** | Multi-turn 推理迴圈、tool 執行、output token recovery、auto-compact |
-| **Tools** | 25 builtin tools — 檔案讀寫編輯、glob、grep、bash 執行、web 抓取/搜尋、記憶、subagent、任務管理、skill 執行、hook 管理、filewatch |
-| **Skills** | 35 builtin skills（32 command-type + 3 prompt-type）— config、session、account、status、restart、plan、remind、hook 等 |
+| **Tools** | 26 builtin tools — 檔案讀寫編輯、glob、grep、bash 執行、web 抓取/搜尋、記憶、subagent、任務管理、skill 執行、hook 管理、filewatch |
+| **Skills** | 34 builtin skills（31 command-type + 3 prompt-type）— config、session、account、status、restart、plan、remind、hook 等 |
 | **Hook 系統** | 36 events（10 類，Lifecycle/Turn/Memory/Subagent/Context/CLIBridge/FileCmd/FileWatcher/Error/Platform）+ folder-convention 掛載 + fs.watch 熱重載 + TS/JS/sh/ps1 多 runtime + defineHook SDK |
 | **Multi-Provider** | claude-api / ollama / openai-compat / codex-oauth / acp-cli / cli-* + circuit-breaker failover |
 | **記憶引擎** | 四層記憶（Global / Project / Account / Agent）— 向量 recall + 關鍵字搜尋 + 自動萃取 + 晉升/衰減 + **embedding 模型漂移偵測 + 自動 dim mismatch 重建** |
@@ -273,8 +273,8 @@ src/
                   Prompt Assembler、Reply Handler、Event Bus、Message Pipeline
   memory/         四層記憶引擎（engine、recall、extract、consolidate）
   providers/      LLM Provider 抽象（claude-api、ollama、openai-compat、cli-*）
-  tools/          Tool Registry + 25 builtin tools
-  skills/         Skill Registry + 35 builtin skills（32 command-type + 3 prompt）
+  tools/          Tool Registry + 26 builtin tools
+  skills/         Skill Registry + 34 builtin skills（32 command-type + 3 prompt）
   hooks/          Hook 系統 — 36 events + folder-convention + fs.watch + defineHook SDK + FileWatcher
   safety/         安全攔截（guard、collab-conflict）
   workflow/       工作流引擎（rut、oscillation、fix-escalation、sync）
@@ -299,6 +299,36 @@ templates/
 - **[_AIDocs/02-CONFIG-REFERENCE.md](_AIDocs/02-CONFIG-REFERENCE.md)** — 完整設定參考
 - **[_AIDocs/01-ARCHITECTURE.md](_AIDocs/01-ARCHITECTURE.md)** — 架構深入說明
 - **[_AIDocs/_INDEX.md](_AIDocs/_INDEX.md)** — 知識庫索引
+
+## 2026-05-04 v3 重大更新（Hermes 整合計畫）
+
+整合 Nous Research Hermes 平台值得參考的功能，落地 10/11 項（91%，項目 11/13 暫緩除外）。
+
+**新功能**（5 個 builtin skill / 1 個 LLM tool）：
+- `/file <path>[:lines]` — Inline file reference 助手
+- `/recall <query> [--days N]` — 跨 session 訊息全文搜尋
+- `/insights [--days N]` — 使用統計報告（token / cost / tool top / Compaction / 熱門 channel）
+- `/guardian-export` — Guardian Hits 匯出 jsonl（trajectory-fingerprint 訓練資料）
+- `/reload` — 強制重建 frozen prompt snapshot
+- `memory_search_fulltext` — LLM 跨 session 訊息搜尋 tool
+
+**Inline Context References** — 訊息中 `@file:"src/foo.ts:10-20"` / `@folder:` / `@git:HEAD~3` / `@url:` / `@diff` / `@staged` 自動展開到訊息末尾，免額外 tool round-trip。
+
+**Tool Result Externalization** — ≥ 閾值的 tool result 自動寫到 `~/.catclaw/workspace/data/tool-outputs/` 並在 prompt 中以 stub 取代（含絕對路徑），LLM 想看完整可 `read_file`。
+
+**Frozen Prompt Snapshot** — system prompt session-start 凍結，保 Anthropic prompt cache 命中（v2 落地）。
+
+**Compaction 結構化摘要** — 4 個固定 section（Active Task / Resolved Questions / Pending Questions / Remaining Work）+ first-time / iterative 雙 prompt 模式 + Pending 拖延型 rut 偵測。
+
+**Skill Self-Improving** — `runSkill` wrapper 4 種觸發（error / exception / retry / interruption / self-reflection LLM judge）→ 提案寫入 `_staging/skill-improvements/` → Dashboard 「提案」tab 審核（Accept / Modify / Discard）→ Accept 後 promoted atoms 自動整合進 skill context。**不修改 skill 本體**（人格保護）。
+
+**Workflow Guardian 結構化標註** — `guardianHits` schema + Dashboard「Guardian」tab 標 ✅ 正確 / ❌ 誤報 + Trajectory Fingerprint plumbing（hash + match failure DB，等樣本累積後啟用 agent-loop 比對）。
+
+**Cross-Session 訊息索引** — NDJSON append-only 寫入（fire-and-forget + setImmediate + size rotation），支援 `/recall` 與未來升級 SQLite FTS5。
+
+**Dashboard 新增 3 tabs**：「Guardian」「洞察」「提案」+ 7 個新 API endpoints。
+
+詳見 `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md` + `_AIDocs/_CHANGELOG.md`。
 
 ## License
 
