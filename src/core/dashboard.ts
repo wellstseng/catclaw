@@ -2832,14 +2832,14 @@ async function loadGuardianHits() {
       const ts = new Date(h.ts).toLocaleString();
       const labelBadge = h.falsePositive === true ? '<span style="color:#f88">❌ 誤報</span>'
         : h.falsePositive === false ? '<span style="color:#8f8">✅ 正確</span>'
-        : '<button class="btn btn-sm" onclick="labelGuardianHit(\'' + h.traceId + '\',' + h.hitIndex + ',false,this)">正確</button> <button class="btn btn-sm" onclick="labelGuardianHit(\'' + h.traceId + '\',' + h.hitIndex + ',true,this)">誤報</button>';
+        : '<button class="btn btn-sm" onclick="labelGuardianHit(\\'' + h.traceId + '\\',' + h.hitIndex + ',false,this)">正確</button> <button class="btn btn-sm" onclick="labelGuardianHit(\\'' + h.traceId + '\\',' + h.hitIndex + ',true,this)">誤報</button>';
       html += '<tr>'
         + '<td style="font-size:0.78rem">' + ts + '</td>'
         + '<td><b>' + h.rule + '</b></td>'
         + '<td>' + (h.confidence != null ? h.confidence.toFixed(2) : '-') + '</td>'
         + '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis">' + (h.detail || '-').replace(/</g, '&lt;') + '</td>'
         + '<td style="font-size:0.72rem;color:#aaa">' + (h.sessionKey || '-').slice(0, 24) + '</td>'
-        + '<td><a href="javascript:void(0)" onclick="showTraceDetail(\'' + h.traceId + '\')" style="color:#4fc3f7">' + h.traceId.slice(0, 8) + '</a></td>'
+        + '<td><a href="javascript:void(0)" onclick="showTraceDetail(\\'' + h.traceId + '\\')" style="color:#4fc3f7">' + h.traceId.slice(0, 8) + '</a></td>'
         + '<td>' + labelBadge + '</td>'
         + '</tr>';
     }
@@ -2919,15 +2919,26 @@ async function loadSkillImprovements() {
       html += '<div style="font-size:0.78rem;color:#888;margin:2px 0">channel: ' + (e.channelId || '-') + ' | author: ' + (e.authorId || '-') + ' | size: ' + e.size + ' B</div>';
       html += '<details style="margin:4px 0"><summary style="cursor:pointer;color:#4fc3f7">展開內容</summary><pre style="background:#0e0e0e;padding:6px;font-size:0.72rem;overflow-x:auto;max-height:400px">' + escaped + '</pre></details>';
       html += '<div style="margin-top:6px">';
-      html += '<button class="btn btn-sm" onclick="acceptSkillImprovement(\'' + e.fileName + '\',this)">✅ Accept</button> ';
-      html += '<button class="btn btn-sm" style="background:#444" onclick="navigator.clipboard.writeText(\'' + e.filePath.replace(/'/g, "\\'") + '\').then(()=>alert(\'路徑已複製，請用編輯器開啟修改\'))">✏️ Modify (複製路徑)</button> ';
-      html += '<button class="btn btn-sm" style="background:#a44" onclick="discardSkillImprovement(\'' + e.fileName + '\',this)">🗑 Discard</button>';
+      html += '<button class="btn btn-sm" onclick="acceptSkillImprovement(\\'' + e.fileName + '\\',this)">✅ Accept</button> ';
+      html += '<button class="btn btn-sm" style="background:#444" onclick="copySkillImprovementPath(\\'' + e.fileName + '\\')">✏️ Modify (複製路徑)</button> ';
+      html += '<button class="btn btn-sm" style="background:#a44" onclick="discardSkillImprovement(\\'' + e.fileName + '\\',this)">🗑 Discard</button>';
       html += '</div></div>';
     }
     list.innerHTML = html;
   } catch (err) {
     list.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
   }
+}
+
+async function copySkillImprovementPath(fileName) {
+  // 從 list 取對應 entry 的 filePath（避免 onclick attribute 內 escape 路徑特殊字符）
+  try {
+    const d = await authFetch('/api/skill-improvements').then(r => r.json());
+    const e = (d.entries || []).find(x => x.fileName === fileName);
+    if (!e) { alert('找不到 ' + fileName); return; }
+    await navigator.clipboard.writeText(e.filePath);
+    alert('路徑已複製：' + e.filePath + '\\n請用編輯器開啟修改');
+  } catch (err) { alert('複製失敗：' + err); }
 }
 
 async function acceptSkillImprovement(fileName, btn) {
