@@ -2296,17 +2296,19 @@ function renderDynamic(section, data) {
     const ev = entryVal || {};
     const entryPrefix = path+'.'+entryKey;
     let fieldsHtml = (section.entryFields||[]).map(f => renderField(f, ev[f.k], entryPrefix, entryPrefix+'.'+f.k)).join('');
-    // Guilds 有 channels 子區塊（即使尚未有 channel 也要顯示，方便使用者得知此區存在）
+    // Guilds 有 channels 子區塊（即使尚未有 channel 也要顯示，方便使用者新增）
     if (section.hasChannels) {
       let chHtml = '';
       for (const [chId, chVal] of Object.entries(ev.channels || {})) {
         const cv = chVal || {};
         const chPrefix = entryPrefix+'.channels.'+chId;
         const chFields = (section.channelFields||[]).map(f => renderField(f, cv[f.k], chPrefix, chPrefix+'.'+f.k)).join('');
-        chHtml += \`<div class="cfg-dynamic-entry" style="background:#0f1117"><div class="entry-header"><span style="color:#60a5fa;font-size:0.75rem">📌 Channel</span><input value="\${esc(chId)}" class="dyn-key" style="font-size:0.75rem" disabled></div>\${chFields}</div>\`;
+        chHtml += \`<div class="cfg-dynamic-entry" style="background:#0f1117"><div class="entry-header"><span style="color:#60a5fa;font-size:0.75rem">📌 Channel</span><input value="\${esc(chId)}" class="dyn-key" style="font-size:0.75rem" disabled><button class="btn btn-red btn-sm" onclick="removeChannelEntry('\${esc(entryKey)}','\${esc(chId)}')" style="margin-left:auto">刪除</button></div>\${chFields}</div>\`;
       }
-      if (!chHtml) chHtml = '<div style="color:#6b7280;font-size:0.72rem;padding:4px 0">（尚無 channel；請編輯 catclaw.json 的 discord.guilds.<id>.channels 新增）</div>';
-      fieldsHtml += \`<div class="cfg-sub"><div style="font-size:0.75rem;color:#60a5fa;margin-bottom:6px">Channels</div>\${chHtml}</div>\`;
+      if (!chHtml) chHtml = '<div style="color:#6b7280;font-size:0.72rem;padding:4px 0">（尚無 channel）</div>';
+      const newChInputId = 'new_ch_' + entryKey.replace(/[^a-zA-Z0-9]/g, '_');
+      const addChannelHtml = \`<div style="margin-top:8px"><input id="\${newChInputId}" placeholder="新 Channel ID" style="background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;padding:4px 8px;font-size:0.78rem;font-family:monospace;width:240px"><button class="cfg-add" style="margin-left:8px" onclick="addChannelEntry('\${esc(entryKey)}','\${newChInputId}')">+ 新增 Channel</button></div>\`;
+      fieldsHtml += \`<div class="cfg-sub"><div style="font-size:0.75rem;color:#60a5fa;margin-bottom:6px">Channels</div>\${chHtml}\${addChannelHtml}</div>\`;
     }
     html += \`<div class="cfg-dynamic-entry" id="dyn_\${secId}_\${esc(entryKey)}"><div class="entry-header"><span style="color:#a78bfa;font-size:0.75rem">🔑</span><input value="\${esc(entryKey)}" class="dyn-key" disabled style="color:#a78bfa;background:transparent;border:none;font-size:0.82rem;flex:1"><button class="btn btn-red btn-sm" onclick="removeDynEntry('\${secId}','\${esc(entryKey)}',this)">刪除</button></div>\${fieldsHtml}</div>\`;
   }
@@ -2379,6 +2381,25 @@ function removeDynEntry(secId, key, btn) {
   const path = secId.replace(/_/g, '.');
   const obj = getPath(_cfgData, path);
   if (obj) delete obj[key];
+}
+
+function addChannelEntry(guildId, inputId) {
+  const input = document.getElementById(inputId);
+  const id = input.value.trim();
+  if (!id) return;
+  const path = 'discord.guilds.' + guildId + '.channels';
+  const obj = getPath(_cfgData, path);
+  if (obj && obj[id]) { alert('此 channel 已存在: ' + id); return; }
+  setPath(_cfgData, path + '.' + id, {});
+  input.value = '';
+  document.getElementById('cfg-gui').innerHTML = renderConfigGUI(_cfgData);
+}
+
+function removeChannelEntry(guildId, chId) {
+  if (!confirm('確定刪除 channel ' + chId + '？')) return;
+  const obj = getPath(_cfgData, 'discord.guilds.' + guildId + '.channels');
+  if (obj) delete obj[chId];
+  document.getElementById('cfg-gui').innerHTML = renderConfigGUI(_cfgData);
 }
 
 // ── Array Dynamic entries (fileWatcher.watches 等 array-of-objects) ──
