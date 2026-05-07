@@ -2296,15 +2296,16 @@ function renderDynamic(section, data) {
     const ev = entryVal || {};
     const entryPrefix = path+'.'+entryKey;
     let fieldsHtml = (section.entryFields||[]).map(f => renderField(f, ev[f.k], entryPrefix, entryPrefix+'.'+f.k)).join('');
-    // Guilds 有 channels 子區塊
-    if (section.hasChannels && ev.channels) {
+    // Guilds 有 channels 子區塊（即使尚未有 channel 也要顯示，方便使用者得知此區存在）
+    if (section.hasChannels) {
       let chHtml = '';
-      for (const [chId, chVal] of Object.entries(ev.channels)) {
+      for (const [chId, chVal] of Object.entries(ev.channels || {})) {
         const cv = chVal || {};
         const chPrefix = entryPrefix+'.channels.'+chId;
         const chFields = (section.channelFields||[]).map(f => renderField(f, cv[f.k], chPrefix, chPrefix+'.'+f.k)).join('');
         chHtml += \`<div class="cfg-dynamic-entry" style="background:#0f1117"><div class="entry-header"><span style="color:#60a5fa;font-size:0.75rem">📌 Channel</span><input value="\${esc(chId)}" class="dyn-key" style="font-size:0.75rem" disabled></div>\${chFields}</div>\`;
       }
+      if (!chHtml) chHtml = '<div style="color:#6b7280;font-size:0.72rem;padding:4px 0">（尚無 channel；請編輯 catclaw.json 的 discord.guilds.<id>.channels 新增）</div>';
       fieldsHtml += \`<div class="cfg-sub"><div style="font-size:0.75rem;color:#60a5fa;margin-bottom:6px">Channels</div>\${chHtml}</div>\`;
     }
     html += \`<div class="cfg-dynamic-entry" id="dyn_\${secId}_\${esc(entryKey)}"><div class="entry-header"><span style="color:#a78bfa;font-size:0.75rem">🔑</span><input value="\${esc(entryKey)}" class="dyn-key" disabled style="color:#a78bfa;background:transparent;border:none;font-size:0.82rem;flex:1"><button class="btn btn-red btn-sm" onclick="removeDynEntry('\${secId}','\${esc(entryKey)}',this)">刪除</button></div>\${fieldsHtml}</div>\`;
