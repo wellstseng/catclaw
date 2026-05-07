@@ -163,12 +163,34 @@ export async function buildProviderRegistryV2(
 ): Promise<ProviderRegistry> {
   const aliases = agentDefaults.models;
 
-  // 解析 primary model
+  // 解析 primary model（解析失敗 → 漸進降級：fallbacks → aliases 第一個 → 最後才 throw）
   const primaryRaw = agentDefaults.model?.primary;
   if (!primaryRaw) {
     throw new Error("[provider-registry-v2] agentDefaults.model.primary 未設定");
   }
-  const primaryRef = parseModelRef(primaryRaw, aliases);
+  let primaryRef = parseModelRef(primaryRaw, aliases);
+  if (!primaryRef) {
+    // 第一級降級：從 fallbacks 找第一個能 parse 的
+    for (const fb of agentDefaults.model?.fallbacks ?? []) {
+      const ref = parseModelRef(fb, aliases);
+      if (ref) {
+        primaryRef = ref;
+        log.warn(`[provider-registry-v2] primary "${primaryRaw}" 解析失敗，降級為 fallback "${fb}"`);
+        break;
+      }
+    }
+  }
+  if (!primaryRef && aliases) {
+    // 第二級降級：從 aliases 取第一個能 parse 的（環境別名跟 primary 完全不對盤時）
+    for (const key of Object.keys(aliases)) {
+      const ref = parseModelRef(key, aliases);
+      if (ref) {
+        primaryRef = ref;
+        log.warn(`[provider-registry-v2] primary "${primaryRaw}" 與 fallbacks 皆無法解析，降級為 alias "${key}"`);
+        break;
+      }
+    }
+  }
   if (!primaryRef) {
     const available = aliases ? Object.values(aliases).map(e => e.alias).filter(Boolean).join(", ") : "(none)";
     throw new Error(`[provider-registry-v2] 無法解析 primary model: ${primaryRaw}（可用別名：${available}）`);
