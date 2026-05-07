@@ -329,7 +329,13 @@ export async function initPlatform(
   if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
     const { McpClient } = await import("../mcp/client.js");
     for (const [name, srvCfg] of Object.entries(config.mcpServers)) {
-      const client = new McpClient(name, srvCfg, _toolRegistry!);
+      // catclaw-discord 特例：env.DISCORD_TOKEN 未設時自動 fallback 到 config.discord.token，
+      // 避免使用者透過 dashboard preset 新增後忘記填 token 撞 401
+      let effectiveCfg = srvCfg;
+      if (name === "catclaw-discord" && !srvCfg.env?.DISCORD_TOKEN && config.discord?.token) {
+        effectiveCfg = { ...srvCfg, env: { ...(srvCfg.env || {}), DISCORD_TOKEN: config.discord.token } };
+      }
+      const client = new McpClient(name, effectiveCfg, _toolRegistry!);
       client.start().catch(err =>
         log.warn(`[platform] MCP server ${name} 啟動失敗：${err instanceof Error ? err.message : String(err)}`)
       );
