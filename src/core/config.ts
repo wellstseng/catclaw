@@ -675,6 +675,7 @@ export interface BridgeConfig {
   showThinking: boolean;
   debounceMs: number;
   fileUploadThreshold: number;
+  structuredFileThreshold: number;
   streamingReply: boolean;
   logLevel: LogLevel;
   cron: CronConfig;
@@ -837,6 +838,7 @@ interface RawConfig {
   showThinking?: boolean;
   debounceMs?: number;
   fileUploadThreshold?: number;
+  structuredFileThreshold?: number;
   streamingReply?: boolean;
   logLevel?: string;
   cron?: { enabled?: boolean; maxConcurrentRuns?: number; defaultAccountId?: string; defaultProvider?: string; defaultAgentId?: string };
@@ -1336,6 +1338,7 @@ function loadConfig(): BridgeConfig {
     showThinking: raw.showThinking ?? false,
     debounceMs: raw.debounceMs ?? 500,
     fileUploadThreshold: raw.fileUploadThreshold ?? 3000,
+    structuredFileThreshold: raw.structuredFileThreshold ?? 1500,
     streamingReply: raw.streamingReply ?? true,
     logLevel,
     cron: {

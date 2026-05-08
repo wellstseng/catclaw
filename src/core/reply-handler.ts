@@ -29,10 +29,10 @@ function closeFenceIfOpen(text: string): string {
   return countCodeFences(text) % 2 !== 0 ? text + "\n```" : text;
 }
 
-// 結構化內容偵測：報告/計劃/表格類超過 1500 字 → 提早走 fileMode（.md 附件）
-const STRUCTURED_MIN_LENGTH = 1500;
-function isStructuredContent(text: string): boolean {
-  if (text.length < STRUCTURED_MIN_LENGTH) return false;
+// 結構化內容偵測：報告/計劃/表格類超過 minLength → 提早走 fileMode（.md 附件）
+// minLength 由 bridgeConfig.structuredFileThreshold 控制（預設 1500，0 = 停用）
+function isStructuredContent(text: string, minLength: number): boolean {
+  if (minLength <= 0 || text.length < minLength) return false;
   const headers = (text.match(/^#{1,6}\s/gm) ?? []).length;
   const tableRows = (text.match(/^\|.*\|$/gm) ?? []).length;
   const hrLines = (text.match(/^---+$/gm) ?? []).length;
@@ -117,6 +117,7 @@ export async function handleAgentLoopReply(
   let thinkingBuffer = "";
 
   const threshold = bridgeConfig.fileUploadThreshold;
+  const structuredThreshold = bridgeConfig.structuredFileThreshold;
   const toolMode = bridgeConfig.showToolCalls;
   const threadChannel = opts?.threadChannel;
   const useStreamEdit = (bridgeConfig.streamingReply !== false);
@@ -319,7 +320,7 @@ export async function handleAgentLoopReply(
         // 1. 硬上限：totalText > fileUploadThreshold（預設 3000）
         // 2. 結構化偵測：≥1500 字且呈現 headers/tables/hr/多 code block
         const overHardLimit = threshold > 0 && totalText.length > threshold;
-        const isStructured = !overHardLimit && isStructuredContent(totalText);
+        const isStructured = !overHardLimit && isStructuredContent(totalText, structuredThreshold);
         if (overHardLimit || isStructured) {
           fileMode = true;
           if (useStreamEdit) {
