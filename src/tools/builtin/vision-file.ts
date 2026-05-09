@@ -110,10 +110,21 @@ export const tool: Tool = {
     const base64 = buf.toString("base64");
 
     // ── 取 provider ──
+    // LLM 常會亂帶 alias（例 "claude-opus" → 應為 "claude-opus-4-7"），找不到時 fallback 到 default
+    // 而不是直接報錯，否則 LLM 會在 retry 上燒一堆 token
     const registry = getProviderRegistry();
     if (!registry) return { error: "ProviderRegistry 尚未初始化" };
-    const provider = providerId ? registry.get(providerId) : registry.resolve();
-    if (!provider) return { error: `找不到 provider${providerId ? ` (${providerId})` : ""}` };
+    let provider = providerId ? registry.get(providerId) : undefined;
+    if (providerId && !provider) {
+      log.warn(`[vision-file] 指定 provider "${providerId}" 找不到，fallback 到 default`);
+    }
+    if (!provider) {
+      try {
+        provider = registry.resolve();
+      } catch {
+        return { error: `找不到 provider${providerId ? ` (${providerId})` : ""}` };
+      }
+    }
 
     // ── 組 messages ──
     const imageBlock: ImageBlock = { type: "image", data: base64, mimeType };

@@ -336,7 +336,8 @@ export class CodexOAuthProvider implements LLMProvider {
       parallel_tool_calls: true,
     };
 
-    if (opts.systemPrompt) body["instructions"] = opts.systemPrompt;
+    // ChatGPT backend 把 instructions 當必填（`Instructions are required`），所以一律送
+    body["instructions"] = opts.systemPrompt ?? "";
 
     // tool_use 支援
     if (opts.tools?.length) {
@@ -349,7 +350,8 @@ export class CodexOAuthProvider implements LLMProvider {
       }));
     }
 
-    if (opts.maxTokens) body["max_output_tokens"] = opts.maxTokens;
+    // ChatGPT backend (chatgpt.com/backend-api/codex/responses) 不接受 max_output_tokens
+    // (`Unsupported parameter: max_output_tokens`)，由 server 自行限制。opts.maxTokens 在此忽略。
 
     // Codex 端點：{baseUrl}/codex/responses
     const codexUrl = resolveCodexUrl(this.baseUrl);
