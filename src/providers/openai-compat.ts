@@ -177,9 +177,13 @@ export class OpenAICompatProvider implements LLMProvider {
 
 // ── 格式轉換 ──────────────────────────────────────────────────────────────────
 
+type OpenAIContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 interface OpenAIMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | OpenAIContentPart[] | null;
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
 }
@@ -187,6 +191,8 @@ interface OpenAIMessage {
 /**
  * Anthropic Messages 格式 → OpenAI Messages 格式
  * 注意：tool_result 在 OpenAI 格式是 role=tool 訊息
+ * 圖片：user message 內的 ImageBlock 轉為 image_url part（data URL base64），
+ *       與同條 message 的 text 合併成 content array。
  */
 function convertMessages(messages: Message[], systemPrompt?: string): OpenAIMessage[] {
   const result: OpenAIMessage[] = [];
@@ -201,10 +207,37 @@ function convertMessages(messages: Message[], systemPrompt?: string): OpenAIMess
       continue;
     }
 
-    // content blocks
+    if (msg.role === "user") {
+      // 先把 tool_result 轉為獨立 role=tool 訊息
+      for (const block of msg.content) {
+        if (block.type !== "tool_result") continue;
+        result.push({
+          role: "tool",
+          content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
+          tool_call_id: block.tool_use_id,
+        });
+      }
+      // 再把 text + image 合併成單條 user message
+      const parts: OpenAIContentPart[] = [];
+      for (const block of msg.content) {
+        if (block.type === "text") {
+          parts.push({ type: "text", text: block.text });
+        } else if (block.type === "image") {
+          parts.push({ type: "image_url", image_url: { url: `data:${block.mimeType};base64,${block.data}` } });
+        }
+      }
+      if (parts.length === 1 && parts[0]!.type === "text") {
+        result.push({ role: "user", content: parts[0]!.text });
+      } else if (parts.length > 0) {
+        result.push({ role: "user", content: parts });
+      }
+      continue;
+    }
+
+    // assistant：保留每 block 一條訊息的既有行為
     for (const block of msg.content) {
       if (block.type === "text") {
-        result.push({ role: msg.role === "user" ? "user" : "assistant", content: block.text });
+        result.push({ role: "assistant", content: block.text });
       } else if (block.type === "tool_use") {
         result.push({
           role: "assistant",
@@ -214,12 +247,6 @@ function convertMessages(messages: Message[], systemPrompt?: string): OpenAIMess
             type: "function",
             function: { name: block.name, arguments: JSON.stringify(block.input) },
           }],
-        });
-      } else if (block.type === "tool_result") {
-        result.push({
-          role: "tool",
-          content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
-          tool_call_id: block.tool_use_id,
         });
       }
     }
