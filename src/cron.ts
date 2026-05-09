@@ -43,6 +43,13 @@ interface CronJobEntry {
   deleteAfterRun?: boolean;
   /** 重試次數上限，預設 3 */
   maxRetries?: number;
+  /** 結果回流到 channel 的 inbound history（讓主對話下次 turn drain 進 context） */
+  injectResult?: {
+    /** 啟用回流（預設 false 避免洗版） */
+    enabled: boolean;
+    /** 回流目標 channel ID（省略則用 action.channelId 作 fallback） */
+    channelId?: string;
+  };
 
   // ── 狀態（系統追蹤）──
   nextRunAtMs?: number;
@@ -309,7 +316,7 @@ function watchCronJobs(): void {
 /**
  * 執行 message action：直接發訊息到頻道
  */
-async function execMessage(channelId: string, text: string): Promise<void> {
+async function execMessage(channelId: string, text: string): Promise<string> {
   if (!discordClient) throw new Error("Discord client 未初始化");
 
   const channel = await discordClient.channels.fetch(channelId);
@@ -317,13 +324,14 @@ async function execMessage(channelId: string, text: string): Promise<void> {
     throw new Error(`找不到頻道或無法發送：${channelId}`);
   }
   await (channel as SendableChannels).send(text);
+  return text;
 }
 
 /**
  * 執行 claude-acp action：透過 ACP（Claude CLI spawn）執行 turn，收集回覆文字，發送到頻道
  * @param timeoutSec 可選 timeout（秒），覆寫全域 turnTimeoutMs
  */
-async function execClaude(channelId: string, prompt: string, timeoutSec?: number): Promise<void> {
+async function execClaude(channelId: string, prompt: string, timeoutSec?: number): Promise<string> {
   if (!discordClient) throw new Error("Discord client 未初始化");
 
   const channel = await discordClient.channels.fetch(channelId);
@@ -353,14 +361,16 @@ async function execClaude(channelId: string, prompt: string, timeoutSec?: number
     }
 
     // 送出結果
-    if (responseText.trim()) {
+    const trimmed = responseText.trim();
+    if (trimmed) {
       const sendable = channel as SendableChannels;
-      let remaining = responseText.trim();
+      let remaining = trimmed;
       while (remaining.length > 0) {
         await sendable.send(remaining.slice(0, 2000));
         remaining = remaining.slice(2000);
       }
     }
+    return trimmed;
   } finally {
     clearTimeout(timer);
   }
@@ -375,7 +385,7 @@ async function execClaude(channelId: string, prompt: string, timeoutSec?: number
  *
  * 可選將 stdout 結果送到 channelId，失敗時也會回報錯誤
  */
-async function execCommand(command: string, channelId?: string, silent?: boolean, timeoutSec?: number, shellOverride?: string, background?: boolean): Promise<void> {
+async function execCommand(command: string, channelId?: string, silent?: boolean, timeoutSec?: number, shellOverride?: string, background?: boolean): Promise<string> {
   const cwd = resolveWorkspaceDir();
   const timeout = (timeoutSec ?? 120) * 1000;
 
@@ -435,6 +445,7 @@ async function execCommand(command: string, channelId?: string, silent?: boolean
   }
 
   log.info(`[cron/exec] 完成: ${command}${result.stdout ? ` → ${result.stdout.slice(0, 100)}` : ""}`);
+  return result.stdout;
 }
 
 /**
@@ -445,7 +456,7 @@ async function execSubagent(action: {
   provider?: string;
   timeoutMs?: number;
   notify?: string;
-}): Promise<void> {
+}): Promise<string> {
   const {
     isPlatformReady,
     getPlatformSessionManager,
@@ -534,6 +545,7 @@ async function execSubagent(action: {
   }
 
   log.info(`[cron/subagent] 完成（${fullText.length} 字）`);
+  return fullText;
 }
 
 /**
@@ -548,7 +560,7 @@ async function execCliBridge(action: {
   task: string;
   awaitResult?: boolean;
   timeoutMs?: number;
-}): Promise<void> {
+}): Promise<string> {
   const bridge = action.label
     ? getCliBridgeByLabel(action.label)
     : action.channelId
@@ -569,28 +581,78 @@ async function execCliBridge(action: {
 
   log.info(`[cron/cli-bridge] 已注入 task 到 bridge=${action.label ?? action.channelId}, turn=${handle.turnId.slice(0, 8)}`);
 
-  if (!action.awaitResult) return;
+  if (!action.awaitResult) return "";  // fire-and-forget 不收結果
 
-  // 等 turn 完成
+  // 等 turn 完成、累積 text_delta 作為結果
   const timeoutMs = action.timeoutMs ?? 1_800_000;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
 
+  let collected = "";
   try {
     for await (const event of handle.events) {
       if (ac.signal.aborted) {
         handle.abort();
         throw new Error(`cli-bridge turn timeout（${Math.round(timeoutMs / 1000)}s）`);
       }
-      if (event.type === "result") {
+      if (event.type === "text_delta") {
+        collected += event.text;
+      } else if (event.type === "result") {
         if (event.is_error) {
           throw new Error(`cli-bridge turn 失敗：${event.text || "(no error message)"}`);
         }
-        return;
+        return collected;
       }
     }
+    return collected;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * 把 cron job 的執行結果摘要 append 到 channel inbound history
+ *
+ * 只在 entry.injectResult.enabled = true 時觸發。
+ * 主對話下次 turn 開始 → drainInboundHistory 自動帶入結果到 context。
+ *
+ * 議題：~/WellsDB/CatClaw議題追蹤/已處理/2026-04-30_議題_*agent排程執行回覆不注入下一輪對話*
+ */
+async function appendCronResultToInbound(entry: CronJobEntry, result: string): Promise<void> {
+  if (!entry.injectResult?.enabled) return;
+  if (!result || !result.trim()) return;
+
+  // 解析回流目標 channel：injectResult.channelId > action.channelId > 跳過
+  const fallbackChannelId = "channelId" in entry.action ? entry.action.channelId : undefined;
+  const targetChannelId = entry.injectResult.channelId ?? fallbackChannelId;
+  if (!targetChannelId) {
+    log.debug(`[cron] injectResult: 找不到 target channelId（job ${entry.name}），跳過回流`);
+    return;
+  }
+
+  try {
+    const { getInboundHistoryStore } = await import("./discord/inbound-history.js");
+    const store = getInboundHistoryStore();
+    if (!store) return;
+
+    const trimmed = result.trim();
+    const summary = trimmed.length > 500
+      ? trimmed.slice(0, 500) + `…（已截斷，完整 ${trimmed.length} 字）`
+      : trimmed;
+    const ts = new Date().toISOString();
+    const content = `[cron 結果] ${entry.name} 完成於 ${ts}\n\n${summary}`;
+    store.append(targetChannelId, {
+      ts,
+      platform: "discord",
+      channelId: targetChannelId,
+      authorId: "system-cron-result",
+      authorName: `cron:${entry.name}`,
+      content,
+      wasProcessed: false,
+    }, "main");
+    log.info(`[cron] injectResult: ${entry.name} → channel ${targetChannelId} inbound（${summary.length} 字）`);
+  } catch (err) {
+    log.warn(`[cron] appendCronResultToInbound 失敗: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -602,16 +664,17 @@ async function runJob(job: CronJobRuntime): Promise<void> {
   log.info(`[cron] 執行 job: ${entry.name} (${id})`);
 
   try {
+    let result = "";
     if (entry.action.type === "message") {
-      await execMessage(entry.action.channelId, entry.action.text);
+      result = await execMessage(entry.action.channelId, entry.action.text);
     } else if (entry.action.type === "exec") {
-      await execCommand(entry.action.command, entry.action.channelId, entry.action.silent, entry.action.timeoutSec, entry.action.shell, entry.action.background);
+      result = await execCommand(entry.action.command, entry.action.channelId, entry.action.silent, entry.action.timeoutSec, entry.action.shell, entry.action.background);
     } else if (entry.action.type === "subagent") {
-      await execSubagent(entry.action);
+      result = await execSubagent(entry.action);
     } else if (entry.action.type === "claude-acp") {
-      await execClaude(entry.action.channelId, entry.action.prompt, entry.action.timeoutSec);
+      result = await execClaude(entry.action.channelId, entry.action.prompt, entry.action.timeoutSec);
     } else if (entry.action.type === "cli-bridge") {
-      await execCliBridge(entry.action);
+      result = await execCliBridge(entry.action);
     } else {
       log.warn(`[cron] 未知 action type：${(entry.action as { type: string }).type}，跳過`);
     }
@@ -621,6 +684,9 @@ async function runJob(job: CronJobRuntime): Promise<void> {
     entry.lastError = undefined;
     entry.retryCount = 0;
     entry.lastRunAtMs = Date.now();
+
+    // 結果回流到 channel inbound history（由 entry.injectResult.enabled 控制，預設不回流）
+    await appendCronResultToInbound(entry, result);
 
     // 一次性 job → 移除
     if (entry.deleteAfterRun || entry.schedule.kind === "at") {
