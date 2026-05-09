@@ -52,7 +52,6 @@ export const tool: Tool = {
     properties: {
       path:           { type: "string",  description: "本地圖片絕對路徑（PNG / JPEG / WEBP）" },
       prompt:         { type: "string",  description: "給 vision 模型的任務指令" },
-      provider:       { type: "string",  description: "指定 provider ID（預設沿用 agent default）" },
       system:         { type: "string",  description: "額外 system prompt" },
       maxTokens:      { type: "number",  description: `回應上限 token（預設 ${DEFAULT_MAX_TOKENS}）` },
       temperature:    { type: "number",  description: "預設 0" },
@@ -68,7 +67,6 @@ export const tool: Tool = {
     if (!rawPath) return { error: "path 不能為空" };
     if (!prompt)  return { error: "prompt 不能為空" };
 
-    const providerId   = params["provider"] ? String(params["provider"]) : undefined;
     const systemPrompt = params["system"] ? String(params["system"]) : undefined;
     const maxTokens    = typeof params["maxTokens"] === "number"   ? params["maxTokens"]   : DEFAULT_MAX_TOKENS;
     const temperature  = typeof params["temperature"] === "number" ? params["temperature"] : 0;
@@ -109,21 +107,14 @@ export const tool: Tool = {
     }
     const base64 = buf.toString("base64");
 
-    // ── 取 provider ──
-    // LLM 常會亂帶 alias（例 "claude-opus" → 應為 "claude-opus-4-7"），找不到時 fallback 到 default
-    // 而不是直接報錯，否則 LLM 會在 retry 上燒一堆 token
+    // ── 取 provider（一律用 registry default，不開放工具參數指定，避免 LLM 亂帶 alias 燒 token）──
     const registry = getProviderRegistry();
     if (!registry) return { error: "ProviderRegistry 尚未初始化" };
-    let provider = providerId ? registry.get(providerId) : undefined;
-    if (providerId && !provider) {
-      log.warn(`[vision-file] 指定 provider "${providerId}" 找不到，fallback 到 default`);
-    }
-    if (!provider) {
-      try {
-        provider = registry.resolve();
-      } catch {
-        return { error: `找不到 provider${providerId ? ` (${providerId})` : ""}` };
-      }
+    let provider;
+    try {
+      provider = registry.resolve();
+    } catch {
+      return { error: "找不到 provider" };
     }
 
     // ── 組 messages ──
