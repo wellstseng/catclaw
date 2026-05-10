@@ -444,6 +444,9 @@ export interface SafetyConfig {
     /** 觸發警告的分數門檻 0-3（預設 2，>= 此值觸發） */
     threshold: number;
   };
+  /** 同一 tool 連續呼叫上限（中間穿插別 tool 即清零；防卡死在同一工具，預設 5）。
+   *  批次操作（grep 多目錄、處理多檔等）建議拉到 10-20。 */
+  maxSameToolPerTurn?: number;
 }
 
 /** Prompt Assembler 設定 */
@@ -1421,6 +1424,7 @@ function loadConfig(): BridgeConfig {
       execApproval: raw.safety?.execApproval,
       collabConflict: raw.safety?.collabConflict,
       reversibility:  raw.safety?.reversibility,
+      maxSameToolPerTurn: raw.safety?.maxSameToolPerTurn ?? 5,
     },
     workflow: {
       guardian:       raw.workflow?.guardian       ?? { enabled: true, syncReminder: true, fileTracking: true },

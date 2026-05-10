@@ -2080,6 +2080,7 @@ const CFG_SCHEMA = [
     {k:'safety.bash.blacklist',t:'list',l:'Bash Blacklist (硬擋)',d:'Bash 指令黑名單（正則表達式），匹配的指令永遠阻擋，不可授權'},
     {k:'safety.filesystem.protectedPaths',t:'list',l:'Protected Paths (軟擋)',d:'受保護路徑，寫入/bash 操作需 Exec Approval 授權（未啟用 Approval 時為硬擋）',defaults:${JSON.stringify(PROTECTED_WRITE_PATHS_DEFAULT)}},
     {k:'safety.filesystem.credentialPatterns',t:'list',l:'Credential Patterns (硬擋)',d:'憑證檔案模式（正則），匹配的檔案永遠禁止存取，不可授權'},
+    {k:'safety.maxSameToolPerTurn',t:'num',l:'Max Same Tool / Turn',d:'同一 tool 連續呼叫上限（中間穿插別 tool 即清零；預設 5）。批次操作（如漫畫翻譯一次跑多個 vision_file/write_file）建議拉到 10-20，太低會被擋。'},
   ], sub:[
     {k:'safety.execApproval',l:'Exec Approval',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'高風險指令執行前需要 owner DM 核准'},

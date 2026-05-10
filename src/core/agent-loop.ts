@@ -128,7 +128,7 @@ const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最
 const MAX_DEFERRED_NUDGES = 3;  // Deferred tool 活化後空回應 → 注入續接提示的最大次數
 const MAX_EMPTY_TOOL_USE = 3;  // 連續空 tool_use iteration 上限（stopReason=tool_use 但 toolCalls=[]，防模型死循環）
 const ACTIVATE_PER_ITER_LIMIT = 3;  // 每輪最多活化幾個 deferred tool（防 Anthropic 批次活化空回應 quirk）
-const MAX_SAME_TOOL_PER_TURN = 5;  // 同 tool 連續呼叫最多 5 次（中間穿插別 tool 即清零；防散彈式重複，trace a1cfb101）
+const MAX_SAME_TOOL_PER_TURN_DEFAULT = 5;  // 同 tool 連續呼叫上限預設值（中間穿插別 tool 即清零；防散彈式重複，trace a1cfb101）。實際採用 config.safety.maxSameToolPerTurn 覆寫，hot-reload 即時生效。
 const ZERO_PROGRESS_BAIL = 5;  // 連續 N iter「0 tool + 短文本」→ 中止 turn（防 11 輪乾打草稿）
 const ZERO_PROGRESS_TEXT_THRESHOLD = 50;  // 一個 iter 的 output 字元少於此即視為「沒進展」
 const DEFAULT_RESULT_TOKEN_CAP = 0;   // 0 = 不截斷（讓上游/per-tool 自行控制）
@@ -735,8 +735,9 @@ async function runBeforeToolCall(
     if (ctx.recentCalls[i].name === call.name) consecutiveSame++;
     else break;
   }
-  if (consecutiveSame >= MAX_SAME_TOOL_PER_TURN) {
-    return { blocked: true, reason: `${call.name} 已連續呼叫 ${consecutiveSame} 次（上限 ${MAX_SAME_TOOL_PER_TURN}），疑似卡死在同一工具，請改用其他方式或回覆使用者` };
+  const sameToolLimit = config.safety?.maxSameToolPerTurn ?? MAX_SAME_TOOL_PER_TURN_DEFAULT;
+  if (consecutiveSame >= sameToolLimit) {
+    return { blocked: true, reason: `${call.name} 已連續呼叫 ${consecutiveSame} 次（上限 ${sameToolLimit}），疑似卡死在同一工具，請改用其他方式或回覆使用者` };
   }
 
   // 5. Reversibility Assessment
