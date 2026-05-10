@@ -39,7 +39,7 @@ export function hasTurnRunning(sessionKey: string): boolean {
 export function abortRunningTurn(sessionKey: string): boolean {
   const controller = _turnAbortMap.get(sessionKey);
   if (!controller) return false;
-  controller.abort();
+  controller.abort("interrupt");
   _turnAbortMap.delete(sessionKey);
   return true;
 }
@@ -67,7 +67,7 @@ export const stopSkill: Skill = {
     // 中斷 agentLoop
     const controller = _turnAbortMap.get(sessionKey);
     if (controller) {
-      controller.abort();
+      controller.abort("stop");
       _turnAbortMap.delete(sessionKey);
     } else {
       return { text: "⚠️ 目前沒有進行中的 turn，不需要中斷。" };

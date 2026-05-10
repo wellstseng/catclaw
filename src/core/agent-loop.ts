@@ -356,8 +356,10 @@ export interface AgentLoopOpts {
   systemPrompt?: string;
   /** AbortSignal（turn timeout / /cancel） */
   signal?: AbortSignal;
-  /** Turn timeout 毫秒（預設無限） */
+  /** 無 tool call 時的 turn timeout 毫秒（預設無限）。一旦本 turn 出現 tool call，會切換為 turnTimeoutToolCallMs。 */
   turnTimeoutMs?: number;
+  /** 含 tool call 的 turn timeout 毫秒（預設等同 turnTimeoutMs）。出現第一個 tool call 後接管計時，從 turnStart 算起。 */
+  turnTimeoutToolCallMs?: number;
   /** 是否顯示 tool calls（summary / all / none） */
   showToolCalls?: "all" | "summary" | "none";
   /** 當前專案 ID */
@@ -1276,15 +1278,22 @@ export async function* agentLoop(
   }
 
   // ── 5. Turn abort signal ───────────────────────────────────────────────────
+  // abort reason 分四種，post-loop 用 controller.signal.reason 讀並分流訊息：
+  //   "timeout-no-tool" / "timeout-with-tool" — 兩段式 timeout 命中
+  //   "stop"                                  — /stop skill 主動中斷
+  //   "external"                              — 上層 opts.signal forward 進來
   const controller = new AbortController();
   if (opts.signal) {
-    opts.signal.addEventListener("abort", () => controller.abort());
+    opts.signal.addEventListener("abort", () => controller.abort(opts.signal!.reason ?? "external"));
   }
   registerTurnAbort(sessionKey, controller);
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  if (opts.turnTimeoutMs) {
-    timeoutHandle = setTimeout(() => controller.abort(), opts.turnTimeoutMs);
-  }
+  let toolTimeoutSwitched = false;
+  const armTimeout = (ms: number, reason: string): void => {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    timeoutHandle = setTimeout(() => controller.abort(reason), ms);
+  };
+  if (opts.turnTimeoutMs) armTimeout(opts.turnTimeoutMs, "timeout-no-tool");
 
   const tracker = new TurnTracker();
   let loopCount = 0;
@@ -1702,6 +1711,19 @@ export async function* agentLoop(
       }
       // 有實際 tool 呼叫 → 重置空回應計數（避免偶發 1 次空回應後永久卡計數）
       emptyToolUseCount = 0;
+
+      // ── 第一個 tool call 出現 → 切換 timeout 為含工具的長 timeout（從 turnStart 算起的剩餘額度）──
+      if (!toolTimeoutSwitched && opts.turnTimeoutToolCallMs && opts.turnTimeoutToolCallMs > (opts.turnTimeoutMs ?? 0)) {
+        toolTimeoutSwitched = true;
+        const elapsed = Date.now() - turnStartMs;
+        const remaining = opts.turnTimeoutToolCallMs - elapsed;
+        if (remaining > 0) {
+          armTimeout(remaining, "timeout-with-tool");
+          log.info(`[agent-loop] turn timeout 切換到 tool-call mode：剩餘 ${remaining}ms（總上限 ${opts.turnTimeoutToolCallMs}ms）`);
+        } else {
+          controller.abort("timeout-with-tool");
+        }
+      }
 
       // ── 5c. Tool 執行 ──────────────────────────────────────────────────────
       log.debug(`[agent-loop] [loop=${loopCount}] 執行 ${streamResult.toolCalls.length} 個 tool: ${streamResult.toolCalls.map(t => t.name).join(", ")}`);
@@ -2196,14 +2218,26 @@ export async function* agentLoop(
   // 修法：算出 notice 後，yield 一個 text_delta 事件讓 Discord 端收得到
   let bailNotice: string | null = null;
   if (wasAborted) {
+    // abort 來源四種，依 controller.signal.reason 分流訊息（之前一律寫「插話中斷」會誤導 timeout 命中的使用者）
     // 插話/外部 abort：之前是 `return;` 直接跳過 post-loop，導致 user prompt 沒寫 history、
     // 新 turn 缺脈絡 → fallback「暫時無法回覆」。現在改 break 後落到這裡，
     // 1) 補一行 notice 給使用者 2) prompt 仍會被下面的 addMessages 寫入 history
     const toolsRun = tracker.toolCalls.length;
-    bailNotice = toolsRun > 0
-      ? `\n\n⏸️ 本輪被插話中斷（已執行 ${toolsRun} 個工具）。下一輪會接續處理你的新訊息。`
-      : `⏸️ 本輪被插話中斷。下一輪會處理你的新訊息。`;
-    log.info(`[agent-loop] turn 被中斷：sessionKey=${sessionKey} tools=${toolsRun}`);
+    const reason = String(controller.signal.reason ?? "");
+    if (reason === "timeout-no-tool") {
+      bailNotice = `\n\n⏱️ 已達 turn timeout（${opts.turnTimeoutMs}ms 內未產生工具呼叫），自動中止。若仍需處理請補充指示再試。`;
+    } else if (reason === "timeout-with-tool") {
+      bailNotice = `\n\n⏱️ 已達工具 turn timeout（上限 ${opts.turnTimeoutToolCallMs}ms，已執行 ${toolsRun} 個工具），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」。`;
+    } else if (reason === "stop") {
+      bailNotice = toolsRun > 0
+        ? `\n\n🛑 /stop 已強制中斷（已執行 ${toolsRun} 個工具）。`
+        : `🛑 /stop 已強制中斷。`;
+    } else {
+      bailNotice = toolsRun > 0
+        ? `\n\n⏸️ 本輪被插話中斷（已執行 ${toolsRun} 個工具）。下一輪會接續處理你的新訊息。`
+        : `⏸️ 本輪被插話中斷。下一輪會處理你的新訊息。`;
+    }
+    log.info(`[agent-loop] turn 被中斷：sessionKey=${sessionKey} reason=${reason} tools=${toolsRun}`);
   } else if (emptyToolUseExhausted) {
     // 模型連續產出「空 tool_use」（stopReason=tool_use 但 toolCalls=[]）→ 強制中止
     // 先於 maxLoopsReached 判斷：若同時觸頂兩者，emptyToolUseCount 才是真正的根因

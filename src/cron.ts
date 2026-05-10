@@ -507,6 +507,7 @@ async function execSubagent(action: {
     accountId,
     provider,
     turnTimeoutMs: action.timeoutMs ?? 300_000,
+    turnTimeoutToolCallMs: action.timeoutMs ? Math.round(action.timeoutMs * 1.6) : config.turnTimeoutToolCallMs,
     allowSpawn: false,
     _sessionKeyOverride: sessionKey,
     trace: cronTrace,

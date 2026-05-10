@@ -711,6 +711,7 @@ async function handleMessage(
           accountId,
           provider,
           turnTimeoutMs: config.turnTimeoutMs,
+          turnTimeoutToolCallMs: config.turnTimeoutToolCallMs,
           showToolCalls: config.showToolCalls as "all" | "summary" | "none",
           _sessionKeyOverride: boundChildKey,
           allowSpawn: false,
@@ -934,6 +935,7 @@ async function handleMessage(
         systemPrompt: combinedSystemPrompt || undefined,
         inboundContext,
         turnTimeoutMs: config.turnTimeoutMs,
+        turnTimeoutToolCallMs: config.turnTimeoutToolCallMs,
         showToolCalls: config.showToolCalls as "all" | "summary" | "none",
         ...(pipeline.sessionMemoryOpts ? { sessionMemory: pipeline.sessionMemoryOpts } : {}),
         ...(config.safety?.execApproval?.enabled && config.safety.execApproval.dmUserId ? {
