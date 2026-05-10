@@ -1212,26 +1212,32 @@ export function buildExternalizedIndex(messages: Message[]): string {
 // ── 全域單例 ──────────────────────────────────────────────────────────────────
 
 let _contextEngine: ContextEngine | null = null;
+let _lastDataDir: string | undefined;
 
-export function initContextEngine(cfg?: {
+interface CEStrategiesCfg {
   compaction?: Partial<CompactionConfig> & { model?: string };
   decay?: Partial<DecayStrategyConfig>;
   overflowHardStop?: Partial<OverflowHardStopConfig>;
-  dataDir?: string;
-}): ContextEngine {
-  _contextEngine = new ContextEngine();
+}
 
-  if (cfg?.decay) {
+function applyStrategies(ce: ContextEngine, cfg: CEStrategiesCfg, dataDir?: string): void {
+  if (cfg.decay) {
     const decay = new DecayStrategy(cfg.decay);
-    if (cfg.dataDir) decay.setDataDir(cfg.dataDir);
-    _contextEngine.register(decay);
+    if (dataDir) decay.setDataDir(dataDir);
+    ce.register(decay);
   }
-  if (cfg?.compaction) {
-    _contextEngine.register(new CompactionStrategy(cfg.compaction));
+  if (cfg.compaction) {
+    ce.register(new CompactionStrategy(cfg.compaction));
   }
-  if (cfg?.overflowHardStop) {
-    _contextEngine.register(new OverflowHardStopStrategy(cfg.overflowHardStop));
+  if (cfg.overflowHardStop) {
+    ce.register(new OverflowHardStopStrategy(cfg.overflowHardStop));
   }
+}
+
+export function initContextEngine(cfg?: CEStrategiesCfg & { dataDir?: string }): ContextEngine {
+  _contextEngine = new ContextEngine();
+  _lastDataDir = cfg?.dataDir;
+  applyStrategies(_contextEngine, cfg ?? {}, cfg?.dataDir);
 
   // 啟動時清理過期外部化檔案
   if (cfg?.dataDir && cfg.decay?.externalize?.enabled !== false) {
@@ -1240,6 +1246,17 @@ export function initContextEngine(cfg?: {
   }
 
   return _contextEngine;
+}
+
+/**
+ * Hot-reload：把新的 strategies cfg 套到既有 ContextEngine（用 register 覆蓋 strategies map），
+ * 不重建 instance、保留 ceProvider / dataDir 等狀態。
+ * 限制：不重設 ceProvider — 改 compaction.model 仍需 pm2 restart 才會換新 provider。
+ */
+export function reloadCEStrategies(cfg: CEStrategiesCfg): void {
+  if (!_contextEngine) return;
+  applyStrategies(_contextEngine, cfg, _lastDataDir);
+  log.info("[context-engine] strategies 已根據 hot-reload 重新載入");
 }
 
 export function getContextEngine(): ContextEngine | null {

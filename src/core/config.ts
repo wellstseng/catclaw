@@ -1589,6 +1589,17 @@ function reloadConfig(): void {
     }
     config = newConfig;
     setLogLevel(config.logLevel);
+    // ContextEngine strategies hot-reload（dashboard 改 triggerTokens / decay 等不需要 pm2 restart）
+    if (JSON.stringify(oldConfig.contextEngineering) !== JSON.stringify(newConfig.contextEngineering)) {
+      import("./context-engine.js").then(({ reloadCEStrategies }) => {
+        const ceCfg = newConfig.contextEngineering;
+        reloadCEStrategies({
+          decay: ceCfg?.strategies?.decay,
+          compaction: ceCfg?.strategies?.compaction,
+          overflowHardStop: ceCfg?.strategies?.overflowHardStop,
+        });
+      }).catch(() => { /* CE 模組尚未初始化 */ });
+    }
     // Hook Registry hot-reload
     import("../hooks/hook-registry.js").then(({ getHookRegistry }) => {
       const reg = getHookRegistry();
