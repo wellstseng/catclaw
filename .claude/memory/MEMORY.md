@@ -25,3 +25,4 @@
 | feedback-no-self-restart | feedback_no_self_restart.md | pm2 restart, 重啟, 殺自己, catclaw 重啟, bridge 斷線, parent process | [固] |
 | user-terminology-vault | user_terminology_vault.md | vault, obsidian, 傳到 vault, 記到 vault | [固] |
 | feedback-implementation-discipline | feedback_implementation_discipline.md | 大型實作, 架構, 多階段, refactor, 抽象層, plan, provider, 開工, 改檔 | [固] |
+| reference-issue-tracking-channel | reference-issue-tracking-channel.md | 議題追蹤, CatClaw議題追蹤, judy bridge, 階段議題, 議題頻道, 1498730217278148659 | [固] |
