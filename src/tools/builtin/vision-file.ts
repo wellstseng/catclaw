@@ -54,7 +54,6 @@ export const tool: Tool = {
       prompt:         { type: "string",  description: "給 vision 模型的任務指令" },
       system:         { type: "string",  description: "額外 system prompt" },
       maxTokens:      { type: "number",  description: `回應上限 token（預設 ${DEFAULT_MAX_TOKENS}）` },
-      temperature:    { type: "number",  description: "預設 0" },
       responseFormat: { type: "string",  description: "text（預設）或 json，json 時做 best-effort parse", enum: ["text", "json"] },
       timeoutMs:      { type: "number",  description: `逾時毫秒（預設 ${DEFAULT_TIMEOUT_MS}）` },
     },
@@ -69,7 +68,6 @@ export const tool: Tool = {
 
     const systemPrompt = params["system"] ? String(params["system"]) : undefined;
     const maxTokens    = typeof params["maxTokens"] === "number"   ? params["maxTokens"]   : DEFAULT_MAX_TOKENS;
-    const temperature  = typeof params["temperature"] === "number" ? params["temperature"] : 0;
     const responseFmt  = params["responseFormat"] === "json" ? "json" : "text";
     const timeoutMs    = typeof params["timeoutMs"] === "number"   ? params["timeoutMs"]   : DEFAULT_TIMEOUT_MS;
 
@@ -136,7 +134,6 @@ export const tool: Tool = {
         ...(finalSystem ? { systemPrompt: finalSystem } : {}),
         abortSignal: controller.signal,
         maxTokens,
-        temperature,
       });
 
       let text = "";

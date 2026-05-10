@@ -321,12 +321,16 @@ export class ClaudeApiProvider implements LLMProvider {
     let finalStopReason: "end_turn" | "tool_use" | "max_tokens" = "end_turn";
     let finalUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number } | undefined;
 
+    // Claude 4+ 系列（opus-4-*, sonnet-4-*, haiku-4-*）已不接受 `temperature`
+    // (`temperature is deprecated for this model`)，未來新模型也預期維持此行為。
+    // 偵測到 model name 帶 -4-/-5- 等大版本時直接不送，避免呼叫端踩雷。
+    const skipTemperature = /-(4|5)-/.test(this.modelId);
     try {
       const stream = streamSimpleAnthropic(model, context, {
         apiKey: credential,
         maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
         signal: opts.abortSignal,
-        temperature: opts.temperature,
+        ...(skipTemperature ? {} : { temperature: opts.temperature }),
         cacheRetention: "long",
         ...(opts.thinking ? { reasoning: opts.thinking } : {}),
       });
