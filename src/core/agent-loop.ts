@@ -120,6 +120,10 @@ function toolResultPreview(result: unknown, error?: string): string {
 const BASE_LOOPS = 50;
 const LOOP_EXTEND_STEP = 10;
 const LOOP_CAP_CEILING = 80;
+// Tool-call timeout 自適應延長（與 loopCap 同哲學：健康進展才放寬，buggy 案例照砍）
+const TIMEOUT_TOOL_EXTEND_STEP_MS = 4 * 60_000;       // 每次延長 4 min
+const TIMEOUT_TOOL_CEILING_MS = 30 * 60_000;          // 上限 30 min（防無限）
+const TIMEOUT_TOOL_NEAR_THRESHOLD_MS = 60_000;        // 距 deadline ≤60s 才考慮延長
 const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最多自動續接次數
 const MAX_DEFERRED_NUDGES = 3;  // Deferred tool 活化後空回應 → 注入續接提示的最大次數
 const MAX_EMPTY_TOOL_USE = 3;  // 連續空 tool_use iteration 上限（stopReason=tool_use 但 toolCalls=[]，防模型死循環）
@@ -1289,6 +1293,7 @@ export async function* agentLoop(
   registerTurnAbort(sessionKey, controller);
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   let toolTimeoutSwitched = false;
+  let currentToolDeadlineMs = 0;  // 0 = 還沒切到 tool-call mode；> 0 = 當前 deadline 的 epoch ms
   const armTimeout = (ms: number, reason: string): void => {
     if (timeoutHandle) clearTimeout(timeoutHandle);
     timeoutHandle = setTimeout(() => controller.abort(reason), ms);
@@ -1717,6 +1722,7 @@ export async function* agentLoop(
         toolTimeoutSwitched = true;
         const elapsed = Date.now() - turnStartMs;
         const remaining = opts.turnTimeoutToolCallMs - elapsed;
+        currentToolDeadlineMs = turnStartMs + opts.turnTimeoutToolCallMs;
         if (remaining > 0) {
           armTimeout(remaining, "timeout-with-tool");
           log.info(`[agent-loop] turn timeout 切換到 tool-call mode：剩餘 ${remaining}ms（總上限 ${opts.turnTimeoutToolCallMs}ms）`);
@@ -2201,6 +2207,18 @@ export async function* agentLoop(
           log.info(`[agent-loop] [loop=${loopCount}] 自適應延長 cap ${oldCap} → ${loopCap}（近 5 輪健康進展）`);
         }
       }
+
+      // ── 自適應 tool-call timeout：距 deadline ≤60s + 健康 → 延長 4 min（上限 30 min）──
+      // 跟 loopCap 同哲學。漫畫翻譯之類的批次工作 8 min 可能不夠，但 buggy 死循環也要砍。
+      if (toolTimeoutSwitched && currentToolDeadlineMs > 0 && currentToolDeadlineMs < turnStartMs + TIMEOUT_TOOL_CEILING_MS) {
+        const remainingToTimeout = currentToolDeadlineMs - Date.now();
+        if (remainingToTimeout < TIMEOUT_TOOL_NEAR_THRESHOLD_MS && isHealthyProgress(tracker.toolCalls)) {
+          const oldDeadline = currentToolDeadlineMs;
+          currentToolDeadlineMs = Math.min(turnStartMs + TIMEOUT_TOOL_CEILING_MS, currentToolDeadlineMs + TIMEOUT_TOOL_EXTEND_STEP_MS);
+          armTimeout(currentToolDeadlineMs - Date.now(), "timeout-with-tool");
+          log.info(`[agent-loop] [loop=${loopCount}] 自適應延長 tool timeout +${(currentToolDeadlineMs - oldDeadline) / 1000}s → 總上限 ${(currentToolDeadlineMs - turnStartMs) / 1000}s（健康進展）`);
+        }
+      }
     }
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -2227,7 +2245,10 @@ export async function* agentLoop(
     if (reason === "timeout-no-tool") {
       bailNotice = `\n\n⏱️ 已達 turn timeout（${opts.turnTimeoutMs}ms 內未產生工具呼叫），自動中止。若仍需處理請補充指示再試。`;
     } else if (reason === "timeout-with-tool") {
-      bailNotice = `\n\n⏱️ 已達工具 turn timeout（上限 ${opts.turnTimeoutToolCallMs}ms，已執行 ${toolsRun} 個工具），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」。`;
+      const finalLimitMs = currentToolDeadlineMs > 0 ? currentToolDeadlineMs - turnStartMs : (opts.turnTimeoutToolCallMs ?? 0);
+      const baseLimitMs = opts.turnTimeoutToolCallMs ?? 0;
+      const extended = finalLimitMs > baseLimitMs ? `（已自適應延長到 ${finalLimitMs}ms，base=${baseLimitMs}ms）` : `（上限 ${baseLimitMs}ms）`;
+      bailNotice = `\n\n⏱️ 已達工具 turn timeout${extended}，已執行 ${toolsRun} 個工具，自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」。`;
     } else if (reason === "stop") {
       bailNotice = toolsRun > 0
         ? `\n\n🛑 /stop 已強制中斷（已執行 ${toolsRun} 個工具）。`
