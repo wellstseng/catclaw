@@ -325,11 +325,37 @@ export class ClaudeApiProvider implements LLMProvider {
     // (`temperature is deprecated for this model`)，未來新模型也預期維持此行為。
     // 偵測到 model name 帶 -4-/-5- 等大版本時直接不送，避免呼叫端踩雷。
     const skipTemperature = /-(4|5)-/.test(this.modelId);
+
+    // Stream idle watchdog：N 秒沒收到 event 就主動 abort，由 callWithRetry 接手 retry。
+    // 解決「Anthropic API 收下 request 但 stream 從未 yield」造成整個 turn timeout 被吃光的情境。
+    // 用 child AbortController 而非直接砍 opts.abortSignal — 不污染上層 turn-level signal。
+    const STREAM_IDLE_MS = 60_000;
+    const childAc = new AbortController();
+    let idledOut = false;
+    const triggerChildAbort = (): void => {
+      if (!childAc.signal.aborted) childAc.abort("stream-idle");
+    };
+    const onParentAbort = (): void => {
+      if (!childAc.signal.aborted) childAc.abort(opts.abortSignal?.reason ?? "parent-abort");
+    };
+    if (opts.abortSignal) {
+      if (opts.abortSignal.aborted) onParentAbort();
+      else opts.abortSignal.addEventListener("abort", onParentAbort, { once: true });
+    }
+    let lastEventMs = Date.now();
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastEventMs > STREAM_IDLE_MS) {
+        log.warn(`[claude:${this.id}] stream idle ${STREAM_IDLE_MS}ms 無事件，主動 abort 讓上層 retry`);
+        idledOut = true;
+        triggerChildAbort();
+      }
+    }, 5000);
+
     try {
       const stream = streamSimpleAnthropic(model, context, {
         apiKey: credential,
         maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
-        signal: opts.abortSignal,
+        signal: childAc.signal,
         ...(skipTemperature ? {} : { temperature: opts.temperature }),
         cacheRetention: "long",
         ...(opts.thinking ? { reasoning: opts.thinking } : {}),
@@ -338,6 +364,7 @@ export class ClaudeApiProvider implements LLMProvider {
       let rawEventCount = 0;
       const rawEventTypes: string[] = [];
       for await (const event of stream) {
+        lastEventMs = Date.now();
         rawEventCount++;
         rawEventTypes.push(event.type);
         const pev = this._convertEvent(event, toolCalls);
@@ -368,6 +395,17 @@ export class ClaudeApiProvider implements LLMProvider {
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+
+      // Stream idle 觸發的 abort：包成 retriable 錯誤，callWithRetry 會走 network-retry path
+      if (idledOut) {
+        log.warn(`[claude:${this.id}] stream idle 觸發中止 → throw 讓上層 retry（不污染 turn timeout）`);
+        throw new Error(`[claude:${this.id}] stream idle timeout (${STREAM_IDLE_MS}ms 無事件)`);
+      }
+      // Parent abort（turn timeout / /stop / 插話）：不寫 cooldown、不污染 retry
+      if (opts.abortSignal?.aborted) {
+        throw err;
+      }
+
       log.warn(`[claude:${this.id}] 呼叫失敗 profile=${activeProfileId ?? "token"}: ${msg}`);
 
       // Cooldown 判斷
@@ -377,6 +415,9 @@ export class ClaudeApiProvider implements LLMProvider {
       }
 
       throw new Error(`[claude:${this.id}] ${msg}`);
+    } finally {
+      clearInterval(watchdog);
+      if (opts.abortSignal) opts.abortSignal.removeEventListener("abort", onParentAbort);
     }
 
     const est = Math.round(finalText.length / 4);
