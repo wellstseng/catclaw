@@ -109,6 +109,21 @@ function toolResultPreview(result: unknown, error?: string): string {
   try { return JSON.stringify(result).slice(0, 100); } catch { return String(result).slice(0, 100); }
 }
 
+/** 把被攔截（未實際執行）的 tool call 寫入 trace，補追蹤盲區 */
+function recordBlockedToolCall(
+  trace: import("./message-trace.js").MessageTrace | undefined,
+  call: { name: string; params: Record<string, unknown> },
+  reason: string,
+): void {
+  trace?.recordToolCall({
+    name: call.name,
+    durationMs: 0,
+    error: `[BLOCKED] ${reason}`,
+    paramsPreview: toolParamsPreview(call.name, call.params),
+    blocked: true,
+  });
+}
+
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
 // 自適應 loop cap：
@@ -1098,6 +1113,8 @@ export async function* agentLoop(
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${planNotice}` : planNotice;
   }
 
+  const _agentLoopBlocks: string[] = [];
+
   // Agent 專屬 skills（agents/{agentId}/skills/*.md）+ 自建提示
   // 之前只有 spawn_subagent 路徑會載入，主對話 turn 看不到 → wendy 等主 agent
   // 完全不知道自己有 skills 能用、也不知能自建。改成主對話一視同仁。
@@ -1112,6 +1129,15 @@ export async function* agentLoop(
         systemPrompt = systemPrompt ? `${systemPrompt}\n\n${block}` : block;
         if (skills.length > 0) {
           log.debug(`[agent-loop] agent=${opts.agentId} 載入 ${skills.length} 個 skill 注入 system prompt`);
+          _agentLoopBlocks.push("agent-skills");
+        }
+        if (trace) {
+          trace.recordAgentSkills({
+            agentId: opts.agentId,
+            loadedSkills: skills.map(s => s.name),
+            filtered: false,
+            promptTokens: Math.ceil(block.length / 4),
+          });
         }
       }
     } catch (err) {
@@ -1167,7 +1193,6 @@ export async function* agentLoop(
   }
 
   // Trace: agent-loop 追加的 system prompt 區塊
-  const _agentLoopBlocks: string[] = [];
   if (memoryContextBlock) _agentLoopBlocks.push("memory-context");
   if (opts.isGroupChannel) _agentLoopBlocks.push("group-isolation");
   if (planActive) _agentLoopBlocks.push("plan-mode");
@@ -1972,6 +1997,7 @@ export async function* agentLoop(
               log.warn(`[agent-loop] guard-approval 送 DM 失敗，硬擋：${err instanceof Error ? err.message : String(err)}`);
               toolResults.push({ tool_use_id: call.id, content: `錯誤：${hookResult.reason}（授權請求失敗）`, is_error: true });
               yield { type: "tool_blocked", name: call.name, reason: hookResult.reason };
+              recordBlockedToolCall(trace, { name: call.name, params }, `${hookResult.reason}（授權請求失敗）`);
               continue;
             }
             const approved = await approvalPromise;
@@ -1979,6 +2005,7 @@ export async function* agentLoop(
               log.info(`[agent-loop] guard-approval 拒絕 approvalId=${approvalId}`);
               toolResults.push({ tool_use_id: call.id, content: `錯誤：使用者拒絕授權 — ${hookResult.reason}`, is_error: true });
               yield { type: "tool_blocked", name: call.name, reason: `使用者拒絕：${hookResult.reason}` };
+              recordBlockedToolCall(trace, { name: call.name, params }, `使用者拒絕：${hookResult.reason}`);
               continue;
             }
             log.info(`[agent-loop] guard-approval 允許 approvalId=${approvalId}`);
@@ -1986,6 +2013,7 @@ export async function* agentLoop(
           } else {
             yield { type: "tool_blocked", name: call.name, reason: hookResult.reason };
             toolResults.push({ tool_use_id: call.id, content: `錯誤：${hookResult.reason}`, is_error: true });
+            recordBlockedToolCall(trace, { name: call.name, params }, hookResult.reason);
             continue;
           }
         }
@@ -2031,6 +2059,7 @@ export async function* agentLoop(
               log.warn(`[agent-loop] exec-approval 送 DM 失敗，自動拒絕：${err instanceof Error ? err.message : String(err)}`);
               toolResults.push({ tool_use_id: call.id, content: "錯誤：DM 確認失敗，操作未執行", is_error: true });
               yield { type: "tool_blocked", name: call.name, reason: "DM 確認失敗" };
+              recordBlockedToolCall(trace, { name: call.name, params: effectiveParams }, "DM 確認失敗");
               continue;
             }
             const approved = await approvalPromise;
@@ -2038,6 +2067,7 @@ export async function* agentLoop(
               log.info(`[agent-loop] exec-approval 拒絕 approvalId=${approvalId}`);
               toolResults.push({ tool_use_id: call.id, content: "錯誤：使用者拒絕執行（或確認逾時）", is_error: true });
               yield { type: "tool_blocked", name: call.name, reason: "使用者拒絕執行操作" };
+              recordBlockedToolCall(trace, { name: call.name, params: effectiveParams }, "使用者拒絕執行操作");
               continue;
             }
             log.info(`[agent-loop] exec-approval 允許 approvalId=${approvalId}`);

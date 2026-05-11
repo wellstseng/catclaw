@@ -68,6 +68,8 @@ export interface TraceToolCall {
     path: string;
     originalTokens: number;
   };
+  /** 是否被 guard / hook / approval 攔截（未實際執行）；error 欄位攜帶 reason */
+  blocked?: boolean;
 }
 
 /** 單次 LLM 呼叫追蹤 */
@@ -100,6 +102,15 @@ export interface TraceProviderSelection {
   providerId: string;
   providerType: string;
   model?: string;
+}
+
+/** Agent Skills 載入追蹤 */
+export interface TraceAgentSkills {
+  agentId: string;
+  loadedSkills: string[];
+  /** 是否套用了 config.json 的 skills 欄位過濾（false = 全載） */
+  filtered: boolean;
+  promptTokens: number;
 }
 
 /** Workflow 事件追蹤 */
@@ -151,6 +162,7 @@ export interface MessageTraceEntry {
     historyMessageCount: number;
     inboundHistory?: TraceInbound;
     totalContextTokens: number;
+    agentSkills?: TraceAgentSkills;
   };
 
   // Phase 3: LLM Call Loop
@@ -484,6 +496,12 @@ export class MessageTrace {
   recordInboundHistory(inbound: TraceInbound): void {
     if (this.entry.context) {
       this.entry.context.inboundHistory = inbound;
+    }
+  }
+
+  recordAgentSkills(skills: TraceAgentSkills): void {
+    if (this.entry.context) {
+      this.entry.context.agentSkills = skills;
     }
   }
 
