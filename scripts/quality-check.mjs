@@ -142,6 +142,59 @@ function detectEmptyConfident(trace) {
   return findings;
 }
 
+/**
+ * R6 no-tool-confident: subagent / agent 整輪沒呼任何工具，但 response 有具體內容
+ *
+ * 條件：所有 iter 加總 tools=0，stopReason=end_turn，response ≥ 200 字，
+ * 且含「具體輸出語氣」（檔名/路徑/數字 bbox/具體尺寸）。
+ *
+ * 例：trace `7f98893e` / `1fb4be2e`（manga-embedder 凌晨 02:04+）
+ *   inbound 要求 render / 後處理，subagent 沒呼任何工具就編出
+ *   「成品檔 runs/ch55/page_6/05_output.png」、「欄1:[186,836,207,957]」等
+ */
+function detectNoToolConfident(trace) {
+  const findings = [];
+  const calls = trace.llmCalls ?? [];
+  if (calls.length === 0) return findings;
+  const last = calls[calls.length - 1];
+  if (last.stopReason !== "end_turn") return findings;
+
+  const totalTools = calls.reduce((n, c) => n + (c.toolCalls?.length ?? 0), 0);
+  if (totalTools !== 0) return findings;
+
+  const responsePreview = trace.response?.textPreview ?? "";
+  const responseLen = trace.response?.charCount ?? responsePreview.length;
+  if (responseLen < 200) return findings;
+
+  // 過去式 / 完成式宣告（claim of done）— 不能只是「會做、預計、流程：」
+  const pastTenseZh =
+    /(完成回報|完成render|render 完成|成品檔|已完成|已輸出|已寫入|已產出|已 render|✅ 成功|成功 render|匯出完成|產出完成)/.test(
+      responsePreview,
+    );
+  const pastTenseEn = /\b(completed|generated|written to|exported|rendered successfully)\b/i.test(
+    responsePreview,
+  );
+  // 具體數字座標：subagent 編造 bbox 等
+  const fabricatedNumbers = /\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]/.test(responsePreview);
+
+  if (!pastTenseZh && !pastTenseEn && !fabricatedNumbers) return findings;
+
+  // 排除 discord main 純對話 / 規劃回應（subagent 沒有這種模式）
+  if (trace.category !== "subagent") {
+    // main agent：允許短規劃回應，只抓「明確宣稱完成」case
+    if (!pastTenseZh && !pastTenseEn) return findings;
+  }
+
+  findings.push({
+    rule: "no-tool-confident",
+    severity: "high",
+    traceId: trace.traceId,
+    detail: `0 工具呼叫 + end_turn，response ${responseLen} 字含具體輸出（檔名/數字/render 等）`,
+    sample: responsePreview.slice(0, 140),
+  });
+  return findings;
+}
+
 /** R2: 讀 tool-outputs/ 路徑 → 結果裡含過度轉義（`\\\"` 以上） */
 function detectExternalizationRecursion(trace) {
   const findings = [];
@@ -261,6 +314,7 @@ const RULES = [
   detectCrossTurnRepeat,
   detectOutputSizeAnomaly,
   detectToolErrorIgnored,
+  detectNoToolConfident,
 ];
 
 // ── 跑分析 ──────────────────────────────────────────────────────────────────

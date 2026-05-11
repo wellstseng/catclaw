@@ -22,6 +22,7 @@
 | cross-turn-repeat | MED | 同 tool+params hash 在單 trace 內 ≥3 次 |
 | output-size-anomaly | MED | 同 tool 結果 length 偏離 trace 中位數 ≥5×（中位數需 ≥50 字） |
 | tool-error-ignored | MED | exitCode≠0，後續 end_turn 且 response 未含「失敗/錯誤/error/fail」 |
+| no-tool-confident | HIGH | iter=1 + end_turn + 0 工具 + response≥200 字，含過去式宣告（完成回報/成品檔/已輸出/✅ 成功）或捏造 bbox 數字陣列；discord main 需明確完成宣告才算（避免 false positive 規劃回應） |
 
 ## Why
 
@@ -30,6 +31,8 @@
 - `35543a48`：tool-output 外部化 recursion，read_file 讀外部化檔取得多層 `\\\\\"` 轉義內容，最後寫 /tmp 繞開
 
 30 天範圍掃描發現 externalization-recursion 共命中 14 次／6 個 trace —— 是普遍性 bug，不是單一事件。Wells 明確要求 AI 自己能檢視 catclaw 執行品質，所以做成 CLI 自檢工具，不靠手檢。
+
+2026-05-11 第二輪追蹤：發現 subagent 零工具幻覺 — `7f98893e` / `1fb4be2e` manga-embedder 凌晨 02:04+ 在 iter=1 + end_turn + 0 tools 下編造 render log + bbox 數字。根因不是 tools=0 配置 bug（cacheRead 都 11167 相同），而是 LLM 在特定 context shape 下選 verbal-only。新增 R6 no-tool-confident。
 
 ## 行動
 
