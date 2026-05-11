@@ -1806,7 +1806,10 @@ export async function* agentLoop(
           if (toolResult.error) {
             resultText = `錯誤：${toolResult.error}`;
           } else {
-            const rawText = JSON.stringify(toolResult.result ?? null);
+            const rawText =
+              typeof toolResult.result === "string"
+                ? toolResult.result
+                : JSON.stringify(toolResult.result ?? null);
             const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
             const trunc = truncateToolResult(rawText, tokenCap, call.name, { sessionKey, turnIndex: loopCount, args: hookResult.params });
             resultText = trunc.text;
@@ -1887,7 +1890,10 @@ export async function* agentLoop(
           if (toolResult.error) {
             resultText = `錯誤：${toolResult.error}`;
           } else {
-            const rawText = JSON.stringify(toolResult.result ?? null);
+            const rawText =
+              typeof toolResult.result === "string"
+                ? toolResult.result
+                : JSON.stringify(toolResult.result ?? null);
             const tokenCap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
             const trunc = truncateToolResult(rawText, tokenCap, call.name, { sessionKey, turnIndex: loopCount, args: hookResult.params });
             resultText = trunc.text;
@@ -2108,7 +2114,9 @@ export async function* agentLoop(
         } else {
           const rawResultText = toolResult.error
             ? `錯誤：${toolResult.error}`
-            : JSON.stringify(toolResult.result ?? null);
+            : typeof toolResult.result === "string"
+              ? toolResult.result
+              : JSON.stringify(toolResult.result ?? null);
           const cap = resolveResultTokenCap(toolRegistry.get(call.name)?.resultTokenCap, turnToolResultTokens, opts.modePreset?.resultTokenCap);
           const trunc = truncateToolResult(rawResultText, cap, call.name, { sessionKey, turnIndex: loopCount, args: effectiveParams });
           const resultText = trunc.text;
