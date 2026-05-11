@@ -26,3 +26,4 @@
 | user-terminology-vault | user_terminology_vault.md | vault, obsidian, 傳到 vault, 記到 vault | [固] |
 | feedback-implementation-discipline | feedback_implementation_discipline.md | 大型實作, 架構, 多階段, refactor, 抽象層, plan, provider, 開工, 改檔 | [固] |
 | reference-issue-tracking-channel | reference-issue-tracking-channel.md | 議題追蹤, CatClaw議題追蹤, judy bridge, 階段議題, 議題頻道, 1498730217278148659 | [固] |
+| tool-quality-check | tool-quality-check.md | quality-check, 自檢, 品質檢查, 幻覺偵測, hallucination, 套娃, externalization recursion, trace 異常, pnpm quality-check | [固] |

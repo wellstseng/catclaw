@@ -12,7 +12,8 @@
     "pm2:restart": "tsc && pm2 restart catclaw",
     "pm2:stop": "pm2 stop catclaw",
     "pm2:logs": "pm2 logs catclaw",
-    "pm2:status": "pm2 status"
+    "pm2:status": "pm2 status",
+    "quality-check": "node scripts/quality-check.mjs"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
