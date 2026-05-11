@@ -18,7 +18,7 @@
  * 注意：本系統使用原子記憶 V2.18 格式（非 YAML frontmatter `---` 格式）
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, statSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import { log } from "../logger.js";
 import { upsertIndex } from "./index-manager.js";
@@ -127,8 +127,8 @@ export function readAtom(filePath: string): Atom | null {
 }
 
 /**
- * 掃描目錄下所有 .md 檔案並解析為 atom 清單
- * 跳過以 `_` 開頭的目錄（staging/episodic 等）
+ * 遞迴掃描目錄下所有 .md 檔案並解析為 atom 清單
+ * 跳過以 `_` 開頭的目錄（staging/episodic 等）、`failures/`、`MEMORY.md` 索引
  */
 export function readAllAtoms(dir: string): Atom[] {
   if (!existsSync(dir)) return [];
@@ -143,9 +143,17 @@ export function readAllAtoms(dir: string): Atom[] {
     }
 
     for (const entry of entries) {
-      const fullPath = join(currentDir, entry);
       if (entry.startsWith("_") || entry === "failures") continue; // 跳過 _staging / _vectordb / failures 等
       if (entry === "MEMORY.md") continue;       // 索引檔不是 atom
+
+      const fullPath = join(currentDir, entry);
+      let isDir = false;
+      try { isDir = statSync(fullPath).isDirectory(); } catch { continue; }
+
+      if (isDir) {
+        scan(fullPath);   // 遞迴 — 涵蓋 accounts/<id>/、projects/<id>/、agents/<id>/memory/...
+        continue;
+      }
 
       if (entry.endsWith(".md")) {
         const atom = readAtom(fullPath);
