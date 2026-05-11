@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "pm2:start": "pm2 start dist/index.js --name catclaw",
-    "pm2:restart": "tsc && pm2 restart catclaw",
+    "pm2:restart": "tsc && node -e \"require('fs').cpSync('src/skills/builtin-prompt','dist/skills/builtin-prompt',{recursive:true})\" && pm2 restart catclaw",
     "pm2:stop": "pm2 stop catclaw",
     "pm2:logs": "pm2 logs catclaw",
     "pm2:status": "pm2 status",
