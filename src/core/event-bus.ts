@@ -89,7 +89,8 @@ export interface CatClawEvents {
   "provider:rateLimit":  [providerId: string, retryAfterMs: number];
 
   // ── 檔案 ──
-  "file:modified":       [path: string, tool: string, accountId: string];
+  /** sessionKey 為事件來源 session（避免跨 session listener 污染） */
+  "file:modified":       [path: string, tool: string, accountId: string, sessionKey: string];
   "file:read":           [path: string, accountId: string];
 
   // ── 記憶 ──
@@ -100,9 +101,10 @@ export interface CatClawEvents {
   "memory:archived":     [atom: string, score: number];
 
   // ── 工作流 ──
-  "workflow:rut":        [warnings: RutWarning[]];
-  "workflow:oscillation":[atom: string, count: number];
-  "workflow:sync_needed":[files: string[]];
+  /** sessionKey 為事件來源 session；跨 session 掃描（如 platform:startup）傳空字串 */
+  "workflow:rut":        [warnings: RutWarning[], sessionKey: string];
+  "workflow:oscillation":[atom: string, count: number, sessionKey: string];
+  "workflow:sync_needed":[files: string[], sessionKey: string];
   /** Tool / skill 連續失敗超過 fix-escalation threshold（項目 10 完整 + 12 補洞） */
   "workflow:retry_escalation": [sessionKey: string, count: number, detail: string];
   /** 使用者干預：對最近執行的 skill（項目 10 完整補洞） */

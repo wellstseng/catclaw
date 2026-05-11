@@ -69,7 +69,7 @@ export const tool: Tool = {
 
       log.debug(`[write-file] 已寫入：${filePath} (${content.length} chars)`);
 
-      ctx.eventBus.emit("file:modified", filePath, "write_file", ctx.accountId);
+      // file:modified 事件由 agent-loop 統一發送（含 sessionKey），此處不重複 emit
 
       return {
         result: { path: filePath, bytesWritten: Buffer.byteLength(content, "utf-8") },

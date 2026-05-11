@@ -9,11 +9,20 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { log } from "../logger.js";
+
+// ── 持久化 ───────────────────────────────────────────────────────────────────
+
+const PERSIST_PATH = join(homedir(), ".catclaw", "workspace", "data", "subagents", "registry.json");
+const MAX_RETAINED_RECORDS = 500;
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
-export type SubagentStatus = "running" | "completed" | "failed" | "killed" | "timeout";
+/** 重啟前處於 running 的 record 在 reload 時會被標為 interrupted（worker 已死，無法續跑） */
+export type SubagentStatus = "running" | "completed" | "failed" | "killed" | "timeout" | "interrupted";
 export type SubagentMode = "run" | "session";
 export type SubagentRuntime = "default" | "coding" | "acp" | "explore" | "plan" | "build" | "review" | (string & {});
 
@@ -43,7 +52,7 @@ export interface SubagentRunRecord {
 
 export type SpawnResult =
   | { status: "completed";  result: string; sessionKey: string; turns: number }
-  | { status: "spawned";    runId: string; sessionKey: string }   // async mode
+  | { status: "spawned";    runId: string; sessionKey: string; note?: string }   // async mode
   | { status: "timeout";    result: null }
   | { status: "error";      error: string }
   | { status: "forbidden";  reason: "no_spawn_allowed" | "max_concurrent" };
@@ -99,6 +108,7 @@ export class SubagentRegistry {
 
     this.records.set(runId, record);
     log.debug(`[subagent-registry] 建立 runId=${runId} parent=${opts.parentSessionKey}`);
+    this.persist();
     return record;
   }
 
@@ -131,6 +141,7 @@ export class SubagentRegistry {
     record.endedAt = Date.now();
     log.info(`[subagent-registry] killed runId=${runId}`);
     this.cascadeAbortChildren(runId, "killed");
+    this.persist();
     return true;
   }
 
@@ -165,6 +176,7 @@ export class SubagentRegistry {
     record.result = result;
     record.turns = turns;
     record.endedAt = Date.now();
+    this.persist();
   }
 
   fail(runId: string, error: string): void {
@@ -174,6 +186,7 @@ export class SubagentRegistry {
     record.error = error;
     record.endedAt = Date.now();
     this.cascadeAbortChildren(runId, "failed");
+    this.persist();
   }
 
   timeout(runId: string): void {
@@ -182,6 +195,53 @@ export class SubagentRegistry {
     record.abortController.abort();
     record.status = "timeout";
     record.endedAt = Date.now();
+    this.persist();
+  }
+
+  // ── 持久化 ─────────────────────────────────────────────────────────────────
+
+  /** 序列化 record（去掉 abortController；preview task 控長度） */
+  private toPersistable(r: SubagentRunRecord): Omit<SubagentRunRecord, "abortController"> {
+    const { abortController: _ac, ...rest } = r;
+    return rest;
+  }
+
+  /** 同步寫整份 snapshot 到磁碟（記錄量不大，直接重寫；retention 套用） */
+  private persist(): void {
+    try {
+      mkdirSync(dirname(PERSIST_PATH), { recursive: true });
+      const all = Array.from(this.records.values())
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, MAX_RETAINED_RECORDS)
+        .map(r => this.toPersistable(r));
+      writeFileSync(PERSIST_PATH, JSON.stringify({ version: 1, records: all }, null, 2));
+    } catch (err) {
+      log.warn(`[subagent-registry] persist 失敗：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** 啟動時讀取：running → interrupted（worker 已死）；補回 abortController */
+  loadFromDisk(): void {
+    try {
+      if (!existsSync(PERSIST_PATH)) return;
+      const raw = readFileSync(PERSIST_PATH, "utf-8");
+      const parsed = JSON.parse(raw) as { version?: number; records?: Array<Omit<SubagentRunRecord, "abortController">> };
+      const records = parsed.records ?? [];
+      for (const stored of records) {
+        const status: SubagentStatus = stored.status === "running" ? "interrupted" : stored.status;
+        const rebuilt: SubagentRunRecord = {
+          ...stored,
+          status,
+          endedAt: stored.endedAt ?? (status === "interrupted" ? Date.now() : undefined),
+          error: status === "interrupted" ? (stored.error ?? "catclaw 重啟，worker 已中斷") : stored.error,
+          abortController: new AbortController(),
+        };
+        this.records.set(rebuilt.runId, rebuilt);
+      }
+      log.info(`[subagent-registry] 載入 ${records.length} 筆歷史記錄`);
+    } catch (err) {
+      log.warn(`[subagent-registry] loadFromDisk 失敗：${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 
@@ -191,6 +251,7 @@ let _registry: SubagentRegistry | null = null;
 
 export function initSubagentRegistry(maxConcurrent?: number): SubagentRegistry {
   _registry = new SubagentRegistry(maxConcurrent);
+  _registry.loadFromDisk();
   return _registry;
 }
 

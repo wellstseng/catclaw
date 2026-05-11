@@ -39,12 +39,8 @@ let _persistPath: string | null = null;
 export function initOscillationDetector(eventBus: EventBus, dataDir?: string): void {
   if (dataDir) _persistPath = join(dataDir, "oscillation-state.json");
 
-  // 追蹤 turn context 以取得 sessionKey（file:modified 無 sessionKey）
-  let _currentSessionKey = "_global";
-  eventBus.on("turn:before", (ctx) => { _currentSessionKey = ctx.sessionKey; });
-
-  eventBus.on("file:modified", (path, _tool, _accountId) => {
-    const key = _currentSessionKey;
+  eventBus.on("file:modified", (path, _tool, _accountId, sessionKey) => {
+    const key = sessionKey || "_global";
 
     if (!_sessionEditCounts.has(key)) _sessionEditCounts.set(key, new Map());
     const counts = _sessionEditCounts.get(key)!;
@@ -56,7 +52,7 @@ export function initOscillationDetector(eventBus: EventBus, dataDir?: string): v
       if (!_warned.has(warnKey)) {
         _warned.add(warnKey);
         log.warn(`[oscillation] 偵測到振盪：${path}（編輯 ${newCount} 次）`);
-        eventBus.emit("workflow:oscillation", path, newCount);
+        eventBus.emit("workflow:oscillation", path, newCount, key);
         void persistRecord({ atom: path, editCount: newCount, sessionKey: key, lastEditAt: new Date().toISOString() });
       }
     }

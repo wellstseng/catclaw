@@ -91,7 +91,7 @@ export function initMemoryVectorSync(eventBus: EventBus, memRoot: string, agents
     agentsRoot: agentsRoot.endsWith("/") ? agentsRoot.slice(0, -1) : agentsRoot,
   };
 
-  eventBus.on("file:modified", (filePath, tool, _accountId) => {
+  eventBus.on("file:modified", (filePath, tool, _accountId, _sessionKey) => {
     // 只處理非 writeAtom 來源（writeAtom 自己已做 upsert）
     // writeAtom 不經由 write_file tool，所以 tool 一定是 "write_file" 或 "edit_file"
     const ns = resolveNamespace(filePath, paths);

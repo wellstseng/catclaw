@@ -106,7 +106,8 @@ async function scanAndEmitWarnings(eventBus: EventBus): Promise<void> {
     for (const w of warnings) {
       log.warn(`[Guardian:覆轍] ${w.pattern}（${w.count} 次，${w.sessions.length} sessions）`);
     }
-    eventBus.emit("workflow:rut", warnings);
+    // 跨 session 掃描（platform:startup 觸發），sessionKey 傳空字串 — turn-scoped listener 會略過
+    eventBus.emit("workflow:rut", warnings, "");
   } else {
     log.debug("[rut-detector] 無覆轍模式");
   }

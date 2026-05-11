@@ -55,17 +55,15 @@ export function getAllSessionStats(): Map<string, Set<string>> {
 // ── EventBus 訂閱 ─────────────────────────────────────────────────────────────
 
 export function initFileTracker(eventBus: EventBus): void {
-  let _currentSessionKey = "_global";
-
   eventBus.on("turn:before", (ctx) => {
-    _currentSessionKey = ctx.sessionKey;
     if (!_sessionFiles.has(ctx.sessionKey)) _sessionFiles.set(ctx.sessionKey, new Set());
     if (!_editCounts.has(ctx.sessionKey)) _editCounts.set(ctx.sessionKey, new Map());
   });
 
-  eventBus.on("file:modified", (path, _tool, _accountId) => {
-    // 記錄到 _global + 當前 sessionKey（讓 sync-reminder 可用 sessionKey 查詢）
-    for (const key of ["_global", _currentSessionKey]) {
+  eventBus.on("file:modified", (path, _tool, _accountId, sessionKey) => {
+    const sk = sessionKey || "_global";
+    // 記錄到 _global + 事件來源 sessionKey（讓 sync-reminder 可用 sessionKey 查詢）
+    for (const key of ["_global", sk]) {
       if (!_sessionFiles.has(key)) _sessionFiles.set(key, new Set());
       _sessionFiles.get(key)!.add(path);
 
@@ -74,7 +72,7 @@ export function initFileTracker(eventBus: EventBus): void {
       counts.set(path, (counts.get(path) ?? 0) + 1);
     }
     const globalCounts = _editCounts.get("_global")!;
-    log.debug(`[file-tracker] 記錄修改：${path}（總次數：${globalCounts.get(path)}，session=${_currentSessionKey.slice(-16)}）`);
+    log.debug(`[file-tracker] 記錄修改：${path}（總次數：${globalCounts.get(path)}，session=${sk.slice(-16)}）`);
   });
 
   eventBus.on("session:end", (sessionId) => {

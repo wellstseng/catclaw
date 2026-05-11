@@ -715,6 +715,7 @@ export const tool: Tool = {
           status: "spawned",
           runId: record.runId,
           sessionKey: record.childSessionKey,
+          note: "async 模式：subagent 在背景執行，結果會在完成時自動注入你後續的 turn。**不要 end_turn**——可以繼續做其他工作，或呼叫 subagents 工具（action: wait/list/kill/steer）。end_turn 後 turn 結束就接不到結果了。",
         } satisfies SpawnResult,
       };
     }

@@ -26,7 +26,7 @@ export function initSyncReminder(eventBus: EventBus): void {
     const files = getModifiedFiles(ctx.sessionKey);
     if (files.length >= MIN_FILES_TO_REMIND) {
       log.debug(`[sync-reminder] session ${ctx.sessionKey} 本 turn 共修改 ${files.length} 個檔案`);
-      eventBus.emit("workflow:sync_needed", files);
+      eventBus.emit("workflow:sync_needed", files, ctx.sessionKey);
     }
   });
 

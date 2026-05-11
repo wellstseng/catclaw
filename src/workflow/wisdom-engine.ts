@@ -156,15 +156,10 @@ export function initWisdomEngine(eventBus: EventBus): void {
   });
 
   // file:modified → 更新 editsByFile（按 sessionKey 歸類）
-  let _currentSessionKey = "_global";
-  (eventBus as unknown as {
-    on(event: "turn:before", listener: (...args: CatClawEvents["turn:before"]) => void): unknown;
-  }).on("turn:before", (ctx) => { _currentSessionKey = ctx.sessionKey; });
-
   (eventBus as unknown as {
     on(event: "file:modified", listener: (...args: CatClawEvents["file:modified"]) => void): unknown;
-  }).on("file:modified", (path, _tool, _accountId) => {
-    const key = _currentSessionKey;
+  }).on("file:modified", (path, _tool, _accountId, sessionKey) => {
+    const key = sessionKey || "_global";
     if (!_sessionMetrics.has(key)) {
       _sessionMetrics.set(key, { toolCalls: 0, editsByFile: new Map(), totalTurns: 0 });
     }

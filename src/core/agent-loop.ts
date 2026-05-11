@@ -25,6 +25,7 @@ import type { PermissionGate } from "../accounts/permission-gate.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { SafetyGuard } from "../safety/guard.js";
 import { eventBus as _eventBusInstance } from "./event-bus.js";
+import { getSubagentRegistry } from "./subagent-registry.js";
 type EventBus = typeof _eventBusInstance;
 import type { ToolContext } from "../tools/types.js";
 import { getContextEngine, repairToolPairing, estimateTokens, estimateSchemaTokens, selectToolsToEvict } from "./context-engine.js";
@@ -142,6 +143,8 @@ const TIMEOUT_TOOL_NEAR_THRESHOLD_MS = 60_000;        // 距 deadline ≤60s 才
 const MAX_CONTINUATIONS = 3;  // Output Token Recovery：max_tokens 截斷時最多自動續接次數
 const MAX_DEFERRED_NUDGES = 3;  // Deferred tool 活化後空回應 → 注入續接提示的最大次數
 const MAX_EMPTY_TOOL_USE = 3;  // 連續空 tool_use iteration 上限（stopReason=tool_use 但 toolCalls=[]，防模型死循環）
+const MAX_BG_SUBAGENT_WAIT = 6;       // end_turn 但仍有 running async subagent → 最多等待輪數（每輪 60s）
+const BG_SUBAGENT_WAIT_MS = 60_000;   // 每輪等待毫秒（避免 turn 永遠掛著）
 const ACTIVATE_PER_ITER_LIMIT = 3;  // 每輪最多活化幾個 deferred tool（防 Anthropic 批次活化空回應 quirk）
 const MAX_SAME_TOOL_PER_TURN_DEFAULT = 5;  // 同 tool 連續呼叫上限預設值（中間穿插別 tool 即清零；防散彈式重複，trace a1cfb101）。實際採用 config.safety.maxSameToolPerTurn 覆寫，hot-reload 即時生效。
 const ZERO_PROGRESS_BAIL = 5;  // 連續 N iter「0 tool + 短文本」→ 中止 turn（防 11 輪乾打草稿）
@@ -1358,22 +1361,26 @@ export async function* agentLoop(
   // ── Workflow → Trace bridge（turn 期間記錄 workflow 事件到 trace）──────────
   const _wfListeners: Array<() => void> = [];
   if (trace) {
-    const onRut = (warnings: { pattern: string; count: number }[]) => {
+    const onRut = (warnings: { pattern: string; count: number }[], sk: string) => {
+      if (sk !== sessionKey) return;
       const detail = warnings.map(w => `${w.pattern}(×${w.count})`).join(", ");
       trace.recordWorkflowEvent("rut", detail);
       // 項目 12 階段 1：結構化 Guardian Hit 標註（趨勢分析 / fingerprint 訓練資料）
       trace.recordGuardianHit({ rule: "rut", detail });
     };
-    const onOsc = (atom: string, count: number) => {
+    const onOsc = (atom: string, count: number, sk: string) => {
+      if (sk !== sessionKey) return;
       const detail = `${atom} ×${count}`;
       trace.recordWorkflowEvent("oscillation", detail);
       trace.recordGuardianHit({ rule: "oscillation", detail });
     };
-    const onSync = (files: string[]) => {
+    const onSync = (files: string[], sk: string) => {
+      if (sk !== sessionKey) return;
       trace.recordWorkflowEvent("sync_needed", `${files.length} files`);
       // sync_needed 不算「失敗」，不標 guardianHit；如要納入後續再加
     };
-    const onFileModified = (path: string, tool: string) => {
+    const onFileModified = (path: string, tool: string, _accountId: string, sk: string) => {
+      if (sk !== sessionKey) return;
       trace.recordWorkflowEvent("file_modified", `${tool}: ${path}`);
     };
     // 項目 10 完整補洞：retry_escalation Guardian 標註
@@ -1404,7 +1411,8 @@ export async function* agentLoop(
   }
 
   // Post-compact recovery：追蹤檔案修改（獨立於 trace）
-  const _onFileEditForRecovery = (path: string) => {
+  const _onFileEditForRecovery = (path: string, _tool: string, _accountId: string, sk: string) => {
+    if (sk !== sessionKey) return;
     const idx = recentlyEditedFiles.indexOf(path);
     if (idx !== -1) recentlyEditedFiles.splice(idx, 1);
     recentlyEditedFiles.push(path);
@@ -1436,6 +1444,22 @@ export async function* agentLoop(
     () => eventBus.off("subagent:completed", _onBgCompleted),
     () => eventBus.off("subagent:failed", _onBgFailed),
   );
+
+  // end_turn 時若仍有 running async subagent，強制等待結果而非結束 turn
+  // （否則 listener 被 cleanup，subagent 完成事件無人接，分派承諾變空話）
+  let bgWaitCount = 0;
+  const awaitPendingBgOrTimeout = async (maxMs: number): Promise<void> => {
+    const start = Date.now();
+    while (pendingBgResults.length === 0 && Date.now() - start < maxMs) {
+      if (controller.signal.aborted) return;
+      await new Promise(r => setTimeout(r, 200));
+    }
+  };
+  const listRunningAsyncSubagents = () => {
+    const reg = getSubagentRegistry();
+    if (!reg) return [];
+    return reg.listByParent(sessionKey).filter(r => r.status === "running" && r.async);
+  };
 
   log.debug(`[agent-loop] ── turn 開始 ── sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
 
@@ -1707,6 +1731,29 @@ export async function* agentLoop(
           deferredNudgeExhausted = true;
           log.warn(`[agent-loop] [loop=${loopCount}] deferred nudge 用完仍空回應，放棄 turn`);
         }
+
+        // Background Subagent Wait：仍有 running async subagent → 不結束 turn，等待結果注入
+        // 避免 listener 被 cleanup 後事件飛掉、async 分派變空話
+        const runningAsync = listRunningAsyncSubagents();
+        if (runningAsync.length > 0 && bgWaitCount < MAX_BG_SUBAGENT_WAIT) {
+          bgWaitCount++;
+          const labels = runningAsync.map(r => `${r.label ?? r.runId.slice(0, 8)} (${Math.round((Date.now() - r.createdAt) / 1000)}s)`).join(", ");
+          log.info(`[agent-loop] [loop=${loopCount}] end_turn 但仍有 ${runningAsync.length} 個 running async subagent，等待 ${BG_SUBAGENT_WAIT_MS}ms (${bgWaitCount}/${MAX_BG_SUBAGENT_WAIT}): ${labels}`);
+          await awaitPendingBgOrTimeout(BG_SUBAGENT_WAIT_MS);
+          if (pendingBgResults.length > 0) {
+            // 下一 iter 開頭會自然注入 pendingBgResults，繼續 loop
+            continue;
+          }
+          // 等待逾時仍無結果 → 注入「subagent 仍在跑」訊息，讓 LLM 決定 wait/kill/放棄
+          messages.push({
+            role: "user",
+            content: `[系統] 你 spawn 的背景 async subagent 仍在執行（${labels}）。請繼續處理或使用 \`subagents\` 工具 wait/kill；不要 end_turn。`,
+          });
+          continue;
+        }
+        if (runningAsync.length > 0 && bgWaitCount >= MAX_BG_SUBAGENT_WAIT) {
+          log.warn(`[agent-loop] [loop=${loopCount}] BG subagent wait 已達上限 (${MAX_BG_SUBAGENT_WAIT})，放棄等待`);
+        }
         break;
       }
 
@@ -1945,7 +1992,7 @@ export async function* agentLoop(
             if (rp) readFiles.add(rp);
           }
           trace?.recordToolCall({ name: batch.toolRecord.name, durationMs: batch.toolRecord.durationMs, error: batch.toolRecord.error, resultPreview: toolResultPreview(batch.toolRecord.result, batch.toolRecord.error), paramsPreview: toolParamsPreview(batch.toolRecord.name, batch.toolRecord.params), externalized: batch.externalized ? { path: batch.externalized.filePath, originalTokens: batch.externalized.originalTokens } : undefined });
-          if (batch.fileModified) eventBus.emit("file:modified", batch.fileModified.path, batch.fileModified.tool, accountId);
+          if (batch.fileModified) eventBus.emit("file:modified", batch.fileModified.path, batch.fileModified.tool, accountId, sessionKey);
         }
         log.debug(`[agent-loop] batch-partition: ${concurrentCalls.length} 個 concurrencySafe tool 已並行完成`);
       } else {
@@ -2108,7 +2155,7 @@ export async function* agentLoop(
         } else {
           eventBus.emit("tool:after", { id: call.id, name: call.name, params: effectiveParams }, toolResult);
           if (toolResult.fileModified && toolResult.modifiedPath) {
-            eventBus.emit("file:modified", toolResult.modifiedPath, call.name, accountId);
+            eventBus.emit("file:modified", toolResult.modifiedPath, call.name, accountId, sessionKey);
           }
         }
 

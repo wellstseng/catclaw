@@ -112,7 +112,7 @@ export const tool: Tool = {
     }
 
     log.debug(`[edit-file] 已編輯：${filePath}`);
-    ctx.eventBus.emit("file:modified", filePath, "edit_file", ctx.accountId);
+    // file:modified 事件由 agent-loop 統一發送（含 sessionKey），此處不重複 emit
 
     return {
       result: { path: filePath, replaced: replaceAll ? "all" : "first" },

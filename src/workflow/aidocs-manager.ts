@@ -62,7 +62,7 @@ export function initAidocsManager(eventBus: EventBus, projectRoot?: string): voi
   const DOCS_PATTERNS = ["README", "_AIDocs/", "WIKI"];
   const SRC_TRIGGERS = ["/src/", "setup.sh", "setup.ps1", "catclaw.js", "ecosystem.config.cjs"];
 
-  eventBus.on("file:modified", (path, _tool, _accountId) => {
+  eventBus.on("file:modified", (path, _tool, _accountId, _sessionKey) => {
     if (!hasAidocs()) return;
 
     const norm = path.replace(/\\/g, "/");

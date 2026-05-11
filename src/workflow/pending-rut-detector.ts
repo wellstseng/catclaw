@@ -90,7 +90,7 @@ export function recordPendingQuestions(sessionKey: string, pending: string[]): v
       count: s.count,
       sessions: [sessionKey],
     }));
-    eventBus.emit("workflow:rut", warnings);
+    eventBus.emit("workflow:rut", warnings, sessionKey);
     for (const [hash] of stalled) emittedSet!.add(hash);
     log.warn(
       `[pending-rut-detector] ${sessionKey} 偵測到 ${stalled.length} 個拖延 pending（≥ ${PENDING_RUT_THRESHOLD} 次 compaction 仍未解）`,
