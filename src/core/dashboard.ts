@@ -6191,14 +6191,22 @@ export class DashboardServer {
           return;
         }
 
-        // /api/traces?limit=N&sessionKey=xxx — 列表（可選 sessionKey 過濾）
+        // /api/traces?limit=N&sessionKey=xxx&parentTraceId=xxx — 列表
+        // 可選過濾：sessionKey（單一 session）、parentTraceId（取子 subagent traces）
         const limitMatch = url.match(/[?&]limit=(\d+)/);
         const limit = limitMatch ? parseInt(limitMatch[1]!, 10) : 50;
         const skMatch = url.match(/[?&]sessionKey=([^&]+)/);
         const sessionKeyFilter = skMatch ? decodeURIComponent(skMatch[1]!) : undefined;
-        const entries = sessionKeyFilter
-          ? traceStore.bySession(sessionKeyFilter, limit)
-          : traceStore.recent(limit);
+        const parentMatch = url.match(/[?&]parentTraceId=([a-f0-9-]+)/i);
+        const parentFilter = parentMatch ? parentMatch[1]! : undefined;
+        let entries;
+        if (parentFilter) {
+          entries = traceStore.byParent(parentFilter, limit);
+        } else if (sessionKeyFilter) {
+          entries = traceStore.bySession(sessionKeyFilter, limit);
+        } else {
+          entries = traceStore.recent(limit);
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ traces: entries }));
         return;

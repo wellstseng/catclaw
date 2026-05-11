@@ -177,12 +177,24 @@ function detectNoToolConfident(trace) {
   // 具體數字座標：subagent 編造 bbox 等
   const fabricatedNumbers = /\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]/.test(responsePreview);
 
-  if (!pastTenseZh && !pastTenseEn && !fabricatedNumbers) return findings;
+  // 偽造 subagent / 工具執行 narration（被質疑後說謊也屬此類）
+  // 例：「Spawning translator」「等：完成 5 分鐘 17 turns」「subagent id: b16f...」
+  //     「對，是 spawn manga-translator 翻的」「turnCount: 17」「耗時: 5 分鐘」
+  const fakeNarration =
+    /(Spawn(ing)?\s+\w+|spawn\s+紀錄|subagent\s*id|runId|turnCount|耗時.{0,10}分鐘|完成.{0,5}\d+\s*turn|等.{0,3}完成|對[，,]\s*是\s*spawn|status\s*:\s*completed)/i.test(
+      responsePreview,
+    );
+  // UUID-like runId 出現在「證據宣稱」段落（被質疑後說謊常見）
+  const uuidClaim =
+    /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(responsePreview);
+
+  if (!pastTenseZh && !pastTenseEn && !fabricatedNumbers && !fakeNarration && !uuidClaim)
+    return findings;
 
   // 排除 discord main 純對話 / 規劃回應（subagent 沒有這種模式）
   if (trace.category !== "subagent") {
-    // main agent：允許短規劃回應，只抓「明確宣稱完成」case
-    if (!pastTenseZh && !pastTenseEn) return findings;
+    // main agent：允許短規劃回應，只抓「明確宣稱完成」或「narrate 偽造工具執行」
+    if (!pastTenseZh && !pastTenseEn && !fakeNarration && !uuidClaim) return findings;
   }
 
   findings.push({
