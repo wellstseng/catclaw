@@ -62,12 +62,19 @@ export interface PromptContext {
 
 export type PromptIntent = "coding" | "research" | "conversation";
 
-const CODING_KEYWORDS = /\b(git|commit|push|pull|merge|branch|rebase|diff|code|bug|fix|refactor|test|build|compile|deploy|npm|tsc|lint|pr|issue|file|function|class|module|import|error|exception|stack|debug|log)\b/i;
-const RESEARCH_KEYWORDS = /\b(search|find|look up|investigate|research|explain|what is|how does|why|compare|analyze|review|check|inspect|describe|list|show|status)\b/i;
+const CODING_KEYWORDS_EN = /\b(git|commit|push|pull|merge|branch|rebase|diff|code|bug|fix|refactor|test|build|compile|deploy|npm|tsc|lint|pr|issue|file|function|class|module|import|error|exception|stack|debug|log|trace)\b/i;
+// 中文沒有 \b 字邊界，用 alternation 直接列。動詞（執行類）+ 高頻技術名詞
+const CODING_KEYWORDS_ZH = /執行|下載|跑一下|跑個|跑起|修(?:bug|復|正)|改成|寫個|寫一|新增|建立|刪除|移除|刪掉|編譯|提交|推上|拉一|安裝|裝起|重啟|啟動|關閉|關掉|抓一|檢查|確認|測試|更新|備份|還原|建置|部署|trace|錯誤|失敗|報錯|跳錯/;
+const RESEARCH_KEYWORDS_EN = /\b(search|find|look up|investigate|research|explain|what is|how does|why|compare|analyze|review|check|inspect|describe|list|show|status)\b/i;
+const RESEARCH_KEYWORDS_ZH = /查(?:一下|看|找)?|找(?:一下|看|找)?|看一下|看看|列(?:出|一下)?|有沒有|顯示|分析|比較|為什麼|怎麼(?:會|辦|做|樣)?|是什麼|哪個|哪些|是否/;
 
 export function detectIntent(userMessage: string): PromptIntent {
-  const codingScore = (userMessage.match(CODING_KEYWORDS) || []).length;
-  const researchScore = (userMessage.match(RESEARCH_KEYWORDS) || []).length;
+  const codingScore =
+    (userMessage.match(CODING_KEYWORDS_EN) || []).length +
+    (userMessage.match(CODING_KEYWORDS_ZH) || []).length;
+  const researchScore =
+    (userMessage.match(RESEARCH_KEYWORDS_EN) || []).length +
+    (userMessage.match(RESEARCH_KEYWORDS_ZH) || []).length;
 
   if (codingScore >= 2) return "coding";
   if (researchScore >= 2 && codingScore === 0) return "research";
@@ -82,11 +89,11 @@ export function getModulesForIntent(intent: PromptIntent): string[] | undefined 
       // 全部模組
       return undefined;
     case "research":
-      // 省略 coding-rules、git-rules
-      return ["date-time", "identity", "context-integrity", "catclaw-md", "tools-usage", "output-format", "discord-reply", "memory-rules"];
+      // 省略 coding-rules、git-rules，但保留工具/技能清單
+      return ["date-time", "identity", "context-integrity", "catclaw-md", "tools-usage", "tool-summary", "skill-summary", "output-format", "discord-reply", "memory-rules"];
     case "conversation":
-      // 最小 prompt
-      return ["date-time", "identity", "context-integrity", "catclaw-md", "output-format", "discord-reply", "memory-rules"];
+      // 最小 prompt — tools-usage / tool-summary / skill-summary 一律保留，否則 LLM 看不到工具會幻覺執行
+      return ["date-time", "identity", "context-integrity", "catclaw-md", "tools-usage", "tool-summary", "skill-summary", "output-format", "discord-reply", "memory-rules"];
   }
 }
 
