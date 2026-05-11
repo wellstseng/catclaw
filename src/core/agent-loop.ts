@@ -737,10 +737,15 @@ async function runBeforeToolCall(
   }
 
   // 4b. Alternating Tool Cycle Detection（period-2：A→B→A→B→A…）
+  // 白名單：edit→run / write→run 是合理的迭代開發 pattern（改→測→改→測），不擋
+  const ITERATIVE_DEV_TOOLS = new Set(["edit_file", "write_file", "run_command"]);
   if (ctx.recentCalls.length >= 4) {
     const r4 = ctx.recentCalls.slice(-4).map(c => c.name);
     if (r4[0] === r4[2] && r4[1] === r4[3] && r4[0] !== r4[1] && call.name === r4[0]) {
-      return { blocked: true, reason: `偵測到交替工具迴圈：${r4[1]}↔${r4[0]}（已重複 2 輪）` };
+      const isIterativeDev = ITERATIVE_DEV_TOOLS.has(r4[0]) && ITERATIVE_DEV_TOOLS.has(r4[1]);
+      if (!isIterativeDev) {
+        return { blocked: true, reason: `偵測到交替工具迴圈：${r4[1]}↔${r4[0]}（已重複 2 輪）` };
+      }
     }
   }
 
