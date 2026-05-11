@@ -56,13 +56,35 @@ function buildExtractPrompt(
     ? `\n# User Input\n${userInput.slice(0, 5000)}\n`
     : "";
 
-  return `Extract 0-3 reusable knowledge items from this conversation.
+  return `Extract 0-3 LONG-TERM, REUSABLE knowledge items from this conversation.
 Pay attention to BOTH user input and assistant response.
-User input often contains: personal info, preferences, decisions, context, requirements, deadlines, team dynamics.
-Types: fact (what is true), decision (why this choice), preference (user habit/style)
+
+# Types & Tier
+- fact (objective truth: paths, configs, architecture, who-does-what)
+- decision (a CHOSEN approach + WHY, not just a momentary preference)
+- preference (user's enduring habit/style, not one-off mood)
 Tier: company | project | personal
-Output JSON only: [{"type":"fact","tier":"project","content":"...","triggers":["..."]}]
-Empty array [] if nothing worth remembering.${crossCtx}${userCtx}
+
+# What to EXTRACT (good examples)
+- fact:     "Wendy memory lives at ~/.catclaw/workspace/agents/wendy/memory/, sharded by accounts/<id>"
+- decision: "Use LanceDB instead of ChromaDB because i7-3770 lacks AVX2 support"
+- preference: "User prefers terse responses with no trailing summaries"
+
+# What NOT to extract (bad examples — reject these)
+- "User is currently busy and will deal with X later"  ← one-off event, not long-term
+- "User may prefer faster solutions"                   ← speculation with hedge words ("may", "可能", "傾向")
+- "User likes solutions that work"                     ← vacuous truism
+- "User tends to choose the practical option"          ← over-broad personality claim
+- "Assistant is helping user with file Y"              ← current-session noise
+- "User asked about Z"                                 ← query log, not knowledge
+
+# Triggers (the array must use SPECIFIC nouns)
+- GOOD: ["LanceDB", "vector DB", "i7-3770", "AVX2"]
+- BAD:  ["方案選擇", "快速解決", "user preference"]  ← too broad, will match everything
+
+# Output
+JSON only: [{"type":"fact","tier":"project","content":"...","triggers":["..."]}]
+Empty array [] is correct when nothing worth long-term recall — DON'T pad with weak items.${crossCtx}${userCtx}
 # Assistant Response
 ${response.slice(0, 20000)}`;
 }

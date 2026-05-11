@@ -1154,7 +1154,7 @@ function defaultMemoryConfig(raw: Partial<MemoryConfig> | undefined, workspaceDi
     vectorDbPath:   r.vectorDbPath ?? "",
     contextBudget:  r.contextBudget ?? 3000,
     contextBudgetRatio: r.contextBudgetRatio ?? { global: 0.3, project: 0.4, account: 0.3 },
-    writeGate:      r.writeGate ?? { enabled: true, dedupThreshold: 0.80 },
+    writeGate:      r.writeGate ?? { enabled: true, dedupThreshold: 0.72 },
     recall: {
       triggerMatch: r.recall?.triggerMatch ?? true,
       vectorSearch: r.recall?.vectorSearch ?? true,

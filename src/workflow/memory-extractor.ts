@@ -26,8 +26,20 @@ function layerDir(globalDir: string, layer: KnowledgeItem["targetLayer"], ctx: {
   }
 }
 
+/** 把內容前 N 字轉為安全檔名：只過濾檔名禁止字元（保留中文/Unicode） */
 function safeName(content: string): string {
-  return content.slice(0, 20).replace(/[^a-z0-9]/gi, "_").slice(0, 20);
+  return content
+    .slice(0, 20)
+    .replace(/[\/\\:*?"<>|\s]+/g, "_")  // 檔名禁止字元 + 空白 → _
+    .replace(/^_+|_+$/g, "")              // 去頭尾 _
+    .slice(0, 20) || "untitled";
+}
+
+/** 生成可讀的 timestamp（YYYYMMDD-HHmm），取代 epoch ms */
+function tsName(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 }
 
 // ── 累積制 buffer（per session key）─────────────────────────────────────────
@@ -56,7 +68,7 @@ async function writeItems(items: KnowledgeItem[], ctx: { accountId: string; proj
         log.debug(`[memory-extractor] write-gate 阻擋 (${gate.reason})：${item.content.slice(0, 40)}`);
         continue;
       }
-      const name = `ext_${Date.now()}_${safeName(item.content)}`;
+      const name = `ext_${tsName()}_${safeName(item.content)}`;
       const dir = layerDir(globalDir, item.targetLayer, ctx);
       writeAtom(dir, name, {
         description: item.content.slice(0, 60),

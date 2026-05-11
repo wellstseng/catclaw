@@ -112,7 +112,7 @@ export async function checkWriteGate(
   namespace: string,
   opts: WriteGateOpts = {}
 ): Promise<WriteGateResult> {
-  const threshold = opts.dedupThreshold ?? 0.80;
+  const threshold = opts.dedupThreshold ?? 0.72;
 
   // ── Q2: bypass（使用者明確指示） ──
   if (opts.bypass) {
