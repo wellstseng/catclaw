@@ -452,6 +452,7 @@ label.cfg-toggle { min-width: 36px; }
   <div class="tab" onclick="switchTab('ops',this)">操作</div>
   <div class="tab" onclick="switchTab('cron',this)">排程</div>
   <div class="tab" onclick="switchTab('traces',this)">追蹤</div>
+  <div class="tab" onclick="switchTab('subagents',this)">🤖 子代理</div>
   <div class="tab" onclick="switchTab('guardian',this)">Guardian</div>
   <div class="tab" onclick="switchTab('insights',this)">洞察</div>
   <div class="tab" onclick="switchTab('improvements',this)">提案</div>
@@ -679,6 +680,31 @@ label.cfg-toggle { min-width: 36px; }
       <button class="btn btn-sm" style="float:right" onclick="loadTasks()">↻ 重新載入</button>
     </h2>
     <div id="tasks-list" style="font-size:0.82rem;color:#ccc">載入中...</div>
+  </div>
+</div>
+
+<!-- 子代理 -->
+<div id="pane-subagents" class="pane">
+  <div class="card">
+    <h2>子代理執行歷史
+      <button class="btn btn-sm" style="float:right" onclick="loadSubagentsFull()">↻ 重新載入</button>
+    </h2>
+    <div style="font-size:0.78rem;color:var(--fg2);margin-bottom:6px">
+      所有 subagent 執行紀錄（metadata）。點 runId 查該 subagent 的所有 trace（透過 /api/traces?parentTraceId=）。
+    </div>
+    <table class="tbl" style="font-size:0.82rem">
+      <thead><tr>
+        <th style="text-align:left">runId</th>
+        <th style="text-align:left">label</th>
+        <th style="text-align:left">parent session</th>
+        <th style="text-align:left">agent</th>
+        <th>status</th>
+        <th>turns</th>
+        <th>duration</th>
+        <th style="text-align:left">task preview</th>
+      </tr></thead>
+      <tbody id="subagents-full-list"><tr><td colspan="8" style="color:var(--fg2);text-align:center;padding:12px">載入中...</td></tr></tbody>
+    </table>
   </div>
 </div>
 
@@ -1023,6 +1049,7 @@ function switchTab(id, el) {
   if (id !== 'logs') disconnectLogStream();
   if (id === 'ops') { loadSubagents(); loadRestartHistory(); }
   if (id === 'tasks') { loadTasks(); }
+  if (id === 'subagents') { loadSubagentsFull(); }
   if (id === 'guardian') { loadGuardianHits(); }
   if (id === 'insights') { loadInsights(); }
   if (id === 'improvements') { loadSkillImprovements(); }
@@ -1225,7 +1252,8 @@ async function loadSessionTraces(sessionKey, containerId) {
       authFetch('/api/traces?limit=50&sessionKey=' + encodeURIComponent(sessionKey)).then(r => r.json()),
     ]);
     const liveTraces = (liveRes.traces || []).filter(t => t.sessionKey === sessionKey);
-    const histTraces = histRes.traces || [];
+    // strict filter：防 API 邊界 case（e.g. 同 prefix 的 subagent channel 被誤收）
+    const histTraces = (histRes.traces || []).filter(t => t.sessionKey === sessionKey);
     const seenIds = new Set();
     const traces = [];
     for (const t of liveTraces) { seenIds.add(t.traceId); traces.push(t); }
@@ -1240,8 +1268,7 @@ async function loadSessionTraces(sessionKey, containerId) {
       const statusIcon = isLive ? '⏳' : t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
       const cost = t.estimatedCostUsd ? '$' + t.estimatedCostUsd.toFixed(4) : '-';
       const prev = (t.inbound?.textPreview ?? '').slice(0, 30);
-      // Debug-aid：trace row 開頭顯示 sessionKey 末 16 字，方便重現時肉眼判別 collision
-      const skTag = '[' + (t.sessionKey ? t.sessionKey.slice(-16) : '?') + ']';
+      // sub-list 內 sessionKey 一定相同，不再標 skTag
       const liveStyle = isLive ? 'background:rgba(255,200,0,0.08);' : '';
       html += '<tr style="' + liveStyle + '">';
       html += '<td>' + ts + '</td>';
@@ -1253,7 +1280,7 @@ async function loadSessionTraces(sessionKey, containerId) {
       html += '<td>' + (t.llmCalls?.length ?? 0) + '</td>';
       html += '<td style="color:var(--warn)">' + cost + '</td>';
       html += '<td>' + statusIcon + '</td>';
-      html += '<td style="color:var(--fg2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (t.sessionKey || '') + '"><span style="opacity:0.55;font-family:ui-monospace,monospace;font-size:0.72rem">' + skTag + '</span> ' + prev + '</td>';
+      html += '<td style="color:var(--fg2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (t.sessionKey || '') + '">' + prev + '</td>';
       html += '<td><a href="#" style="color:var(--accent);text-decoration:none;font-size:0.78rem" onclick="event.preventDefault();showTraceDetail(\\'' + t.traceId + '\\')">📋 詳情</a></td>';
       html += '</tr>';
     }
@@ -1619,6 +1646,62 @@ async function loadSubagents() {
     document.getElementById('subagents-list').innerHTML =
       \`<table class="tbl"><thead><tr><th>Label</th><th>狀態</th><th>Task</th><th>Turns</th><th>時長</th><th></th></tr></thead><tbody>\${rows}</tbody></table>\`;
   } catch {}
+}
+
+async function loadSubagentsFull() {
+  const tbody = document.getElementById('subagents-full-list');
+  if (!tbody) return;
+  try {
+    const d = await authFetch('/api/subagents').then(r => r.json());
+    const list = d.subagents || [];
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="color:var(--fg2);text-align:center;padding:12px">尚無子代理紀錄</td></tr>';
+      return;
+    }
+    let html = '';
+    for (const s of list) {
+      const dur = s.endedAt
+        ? ((s.endedAt - s.createdAt) / 1000).toFixed(1) + 's'
+        : s.status === 'running'
+          ? ((Date.now() - s.createdAt) / 1000).toFixed(0) + 's…'
+          : '-';
+      const statusIcon = s.status === 'completed' ? '✅' : s.status === 'running' ? '⏳' : s.status === 'error' ? '❌' : '⏹';
+      const badgeColor = s.status === 'completed' ? '#16a34a' : s.status === 'running' ? '#f59e0b' : s.status === 'error' ? '#dc2626' : '#6b7280';
+      const task = ((s.task || '').slice(0, 80)).replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      const parentShort = (s.parentSessionKey || '').split(':').slice(-2).join(':');
+      const agentBadge = s.agentId ? \`<span style="background:#7c3aed;color:#fff;font-size:0.65rem;padding:1px 4px;border-radius:3px">\${s.agentId}</span>\` : '-';
+      html += \`<tr style="cursor:pointer" onclick="showSubagentTraces('\${s.runId}')">\`;
+      html += \`<td style="font-family:ui-monospace,monospace;font-size:0.72rem" title="\${s.runId}">\${s.runId.slice(0, 8)}</td>\`;
+      html += \`<td>\${(s.label || '-').replace(/</g, '&lt;')}</td>\`;
+      html += \`<td title="\${(s.parentSessionKey || '').replace(/"/g, '&quot;')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.75rem">\${parentShort}</td>\`;
+      html += \`<td>\${agentBadge}</td>\`;
+      html += \`<td style="text-align:center;color:\${badgeColor}">\${statusIcon} \${s.status}</td>\`;
+      html += \`<td style="text-align:center">\${s.turns ?? '-'}</td>\`;
+      html += \`<td style="text-align:center;font-size:0.75rem">\${dur}</td>\`;
+      html += \`<td style="color:var(--fg2);font-size:0.75rem">\${task}</td>\`;
+      html += \`</tr>\`;
+    }
+    tbody.innerHTML = html;
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="8" style="color:#dc2626;text-align:center;padding:12px">載入失敗：' + e + '</td></tr>';
+  }
+}
+
+async function showSubagentTraces(runId) {
+  // 跳到追蹤分頁，用 parentTraceId 查詢入口
+  // 簡單版：直接打 API 顯示 trace IDs，未來可整合進 trace detail UI
+  try {
+    const r = await authFetch('/api/traces?parentTraceId=' + encodeURIComponent(runId)).then(r => r.json());
+    const traces = r.traces || [];
+    if (!traces.length) {
+      alert('runId ' + runId.slice(0, 8) + ' 找不到 child trace。可能：\\n- subagent 太舊（trace 已過期）\\n- trace 用 spawn 時的 parentTraceId 關聯（不是 runId）');
+      return;
+    }
+    const ids = traces.map(t => t.traceId.slice(0, 8) + ' (' + (t.inbound?.textPreview ?? '').slice(0, 40) + ')').join('\\n');
+    alert('runId ' + runId.slice(0, 8) + ' 共 ' + traces.length + ' 個 child trace:\\n\\n' + ids + '\\n\\n（後續 PR 接入 trace detail UI）');
+  } catch (e) {
+    alert('查詢失敗：' + e);
+  }
 }
 
 async function killSubagent(runId) {
@@ -3176,7 +3259,10 @@ async function clearCooldown(providerId, profileId) {
 function _traceRowHtml(t) {
   const ts = new Date(t.ts).toLocaleTimeString('zh-TW', {hour12:false});
   const dur = t.totalDurationMs ? (t.totalDurationMs/1000).toFixed(1)+'s' : '-';
-  const ch = (t.channelId ?? '').slice(-6);
+  const chFull = t.channelId ?? '';
+  const chShort = chFull.includes(':agent:')
+    ? chFull.split(':agent:')[1]
+    : chFull.split(':').slice(-2).join(':');
   const isLive = t.status === 'in_progress';
   const statusIcon = isLive ? '⏳' : t.status === 'completed' ? '✅' : t.status === 'aborted' ? '⏹' : '❌';
   const ceData = t.contextEngineering;
@@ -3242,7 +3328,7 @@ function _traceRowHtml(t) {
   html += '<td style="padding:4px;color:var(--fg2)">' + ts + '</td>';
   const agentBadge = t.agentId ? ' <span style="background:#7c3aed;color:#fff;font-size:0.6rem;padding:0 3px;border-radius:3px">' + t.agentId + '</span>' : '';
   const copyBtn = '<span title="複製 Trace ID" style="cursor:pointer;font-size:0.7rem;margin-right:2px;opacity:0.5" onclick="event.stopPropagation();navigator.clipboard.writeText(\\'' + t.traceId + '\\').then(()=>{this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',800)})">📋</span>';
-  html += '<td style="padding:4px">' + copyBtn + '…' + ch + agentBadge + '</td>';
+  html += '<td style="padding:4px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + chFull + '">' + copyBtn + chShort + agentBadge + '</td>';
   html += '<td style="padding:4px;text-align:right">' + dur + '</td>';
   html += '<td style="padding:4px;text-align:right">' + (t.effectiveInputTokens ?? t.totalInputTokens ?? 0).toLocaleString() + '</td>';
   html += '<td style="padding:4px;text-align:right">' + (t.totalOutputTokens ?? 0).toLocaleString() + '</td>';
