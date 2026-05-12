@@ -1352,12 +1352,14 @@ export async function* agentLoop(
   //   "timeout-no-tool" / "timeout-with-tool" — 兩段式 timeout 命中
   //   "stop"                                  — /stop skill 主動中斷
   //   "external"                              — 上層 opts.signal forward 進來
-  const controller = new AbortController();
+  let controller = new AbortController();
   if (opts.signal) {
     opts.signal.addEventListener("abort", () => controller.abort(opts.signal!.reason ?? "external"));
   }
   registerTurnAbort(sessionKey, controller);
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let inGracePeriod = false;          // timeout-with-tool 後給 LLM 一輪 60s 自我驗證
+  const GRACE_PERIOD_MS = 60_000;
   let toolTimeoutSwitched = false;
   let currentToolDeadlineMs = 0;  // 0 = 還沒切到 tool-call mode；> 0 = 當前 deadline 的 epoch ms
   const armTimeout = (ms: number, reason: string): void => {
@@ -1507,7 +1509,42 @@ export async function* agentLoop(
       deferredJustActivated = [];
 
       // ── abort 快速出口（/stop 或 timeout 觸發後，下一輪不再呼叫 LLM）────
-      if (controller.signal.aborted) break;
+      // 例外：timeout-with-tool 第一次命中且未進 grace → 給 LLM 60s 自我驗證輪
+      if (controller.signal.aborted) {
+        const abortReason = String(controller.signal.reason ?? "");
+        if (abortReason === "timeout-with-tool" && !inGracePeriod) {
+          inGracePeriod = true;
+          // swap controller：舊的已 aborted，建新的 + 60s grace timeout
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          controller = new AbortController();
+          if (opts.signal) {
+            opts.signal.addEventListener("abort", () => controller.abort(opts.signal!.reason ?? "external"));
+          }
+          registerTurnAbort(sessionKey, controller);
+          timeoutHandle = setTimeout(() => controller.abort("timeout-grace-exhausted"), GRACE_PERIOD_MS);
+
+          // 注入自我驗證提示
+          const toolsRunSoFar = tracker.toolCalls.length;
+          const toolNames = tracker.toolCalls.map(c => c.name).join(", ");
+          const graceNotice = [
+            "[系統 Grace] 工具 turn timeout 已觸發，正常情境下本輪會被中止。",
+            "你獲得 **60 秒寬限**做自我驗證——請快速確認上面工具執行的實際成果，並把狀態用 1-2 段話回報給使用者。",
+            "",
+            `本 turn 已執行 ${toolsRunSoFar} 個工具：${toolNames}`,
+            "",
+            "建議檢查項目：",
+            "1. 用 `subagents` 工具 `action=list` 看有沒有 spawned 但未消費結果的子任務",
+            "2. 用 `read_file` / `grep` / `ls` 等唯讀工具查相關產出檔（如 runs/ dir 的輸出）",
+            "3. 判斷上次任務是否其實已完成、或進度到哪",
+            "",
+            "**重要**：只用唯讀工具（read_file / grep / glob / run_command 的查詢命令 / subagents action=list），不要再啟動長腳本或寫檔。完成驗證後直接 end_turn 回報。超時會強制中止。",
+          ].join("\n");
+          messages.push({ role: "user", content: graceNotice });
+          log.info(`[agent-loop] [loop=${loopCount}] 進入 grace period 60s（${toolsRunSoFar} 個工具已執行）`);
+          continue;
+        }
+        break;
+      }
 
       // ── 使用者插話/編輯訊息注入（soft inject，不打斷 LLM 進行中的呼叫）──
       const pendingInterrupts = drainInterruptQueue(sessionKey);
@@ -2376,6 +2413,8 @@ export async function* agentLoop(
       const baseLimitMs = opts.turnTimeoutToolCallMs ?? 0;
       const extended = finalLimitMs > baseLimitMs ? `（已自適應延長到 ${finalLimitMs}ms，base=${baseLimitMs}ms）` : `（上限 ${baseLimitMs}ms）`;
       bailNotice = `\n\n⏱️ 已達工具 turn timeout${extended}，已執行 ${toolsRun} 個工具，自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」。`;
+    } else if (reason === "timeout-grace-exhausted") {
+      bailNotice = `\n\n⏱️ Grace period（60s 自我驗證輪）也超時了，已執行 ${toolsRun} 個工具，自動中止。Agent 未及完成狀態回報 — 若要繼續請回覆「繼續」。`;
     } else if (reason === "stop") {
       bailNotice = toolsRun > 0
         ? `\n\n🛑 /stop 已強制中斷（已執行 ${toolsRun} 個工具）。`
