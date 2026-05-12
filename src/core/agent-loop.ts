@@ -506,6 +506,8 @@ export type AgentLoopEvent =
   | { type: "tool_start";   name: string; id: string; params: unknown }
   | { type: "tool_result";  name: string; id: string; result: unknown; error?: string }
   | { type: "tool_blocked"; name: string; reason: string }
+  /** async subagent 完成回流：reply-handler 依 subagentNotify 設定決定是否轉 Discord */
+  | { type: "subagent_relay"; status: "completed" | "failed"; runId: string; label: string; content: string }
   | { type: "done";         text: string; turnCount: number }
   | { type: "context_warning"; level: "high" | "critical"; utilization: number; estimatedTokens: number; contextWindow: number; source: "session" | "model" }
   | { type: "ce_applied";   strategies: string[]; tokensBefore: number; tokensAfter: number }
@@ -1516,6 +1518,10 @@ export async function* agentLoop(
       // ≤ INLINE_LIMIT 字 → 完整 inline；> 限制 → 寫檔 + 注入 preview + 路徑，
       // parent agent 可用 read_file 取完整內容（避免 context 被一個 subagent 大輸出佔滿）
       if (pendingBgResults.length > 0) {
+        // 先 yield 給 reply-handler 在主 stream 內按時序送到 Discord（避免 fire-and-forget 插隊）
+        for (const r of pendingBgResults) {
+          yield { type: "subagent_relay", status: r.type, runId: r.runId, label: r.label, content: r.content };
+        }
         const INLINE_LIMIT = 8000; // ~2000 tokens
         const parts = pendingBgResults.splice(0).map(r => {
           const status = r.type === "completed" ? "✅ 完成" : "❌ 失敗";

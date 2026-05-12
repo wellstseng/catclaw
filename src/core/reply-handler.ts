@@ -13,6 +13,7 @@ import { basename } from "node:path";
 import type { AgentLoopEvent } from "./agent-loop.js";
 import type { BridgeConfig } from "./config.js";
 import { log } from "../logger.js";
+import { markParentStreamActive, unmarkParentStreamActive } from "./subagent-discord-bridge.js";
 
 // Discord 字數上限
 const TEXT_LIMIT = 2000;
@@ -120,6 +121,7 @@ export async function handleAgentLoopReply(
   const structuredThreshold = bridgeConfig.structuredFileThreshold;
   const toolMode = bridgeConfig.showToolCalls;
   const interimMode = bridgeConfig.interimMode ?? "summary";
+  const subagentNotify = bridgeConfig.subagentNotify ?? "inline";
   const threadChannel = opts?.threadChannel;
   // interimMode=summary/indicator 完全靜默中段 text → 不走 stream edit（progressMsg），最後 done 一次發
   const useStreamEdit = (bridgeConfig.streamingReply !== false) && interimMode === "full";
@@ -204,6 +206,11 @@ export async function handleAgentLoopReply(
     if ("sendTyping" in channel) void (channel as SendableChannels).sendTyping();
   }, 8_000);
   const stopTyping = () => clearInterval(typingInterval);
+
+  // 標記此 channel 主 stream 還在跑，async subagent 完成時跳過 fire-and-forget 通知
+  // （改由 subagent_relay event 走主 stream，順序時序正確）
+  const activeChannelId = originalMessage.channelId;
+  markParentStreamActive(activeChannelId);
 
   // ── Chunk 模式：flush timer ───────────────────────────────────────────────
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -389,6 +396,22 @@ export async function handleAgentLoopReply(
           isFirst = false;
         }
 
+      } else if (event.type === "subagent_relay") {
+        if (subagentNotify === "inline") {
+          // 主 stream 中段先 flush（避免 wendy buffer 黏在通知後），再送 subagent 完成通知
+          if (useStreamEdit) { cancelEditTimer(); await finalizeStreamEdit(); pendingSegmentReset = true; }
+          else if (interimMode === "full") { cancelFlushTimer(); if (!fileMode) await flush(true); }
+          const icon = event.status === "completed" ? "✅" : "❌";
+          const header = `${icon} **${event.label}** ${event.status === "completed" ? "完成" : "失敗"}`;
+          // 內容過長 → 縮成 preview + 提示。完整 result 仍透過 pendingBgResults 注入 LLM
+          const body = event.content.length > 1800
+            ? event.content.slice(0, 1800) + `\n…（${event.content.length} 字，已縮減；完整內容已注入 agent context）`
+            : event.content;
+          await send(`${header}\n${body}`);
+          if (isFirst) stopTyping();
+          isFirst = false;
+        }
+
       } else if (event.type === "tool_blocked") {
         if (toolMode !== "none") {
           if (useStreamEdit) { cancelEditTimer(); await finalizeStreamEdit(); pendingSegmentReset = true; }
@@ -523,5 +546,6 @@ export async function handleAgentLoopReply(
     cancelFlushTimer();
     cancelEditTimer();
     stopTyping();
+    unmarkParentStreamActive(activeChannelId);
   }
 }

@@ -34,6 +34,7 @@ const PATCH_WHITELIST = [
   "logLevel",
   "showToolCalls",
   "interimMode",
+  "subagentNotify",
   "memory.recall.vectorSearch",
   "memory.recall.vectorMinScore",
   "memory.recall.vectorTopK",

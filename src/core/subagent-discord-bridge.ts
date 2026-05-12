@@ -24,6 +24,24 @@ export function getDiscordClient(): Client | null {
   return _client;
 }
 
+// ── Parent Stream Active Registry ─────────────────────────────────────────────
+// reply-handler 在 turn 開始時 mark channelId、結束 unmark。spawn-subagent 用此判斷
+// async 完成時是否該 fallback 直接 send Discord（parent 在 → event 已接住；parent 不在 → fallback）
+
+const _activeChannels = new Set<string>();
+
+export function markParentStreamActive(channelId: string): void {
+  _activeChannels.add(channelId);
+}
+
+export function unmarkParentStreamActive(channelId: string): void {
+  _activeChannels.delete(channelId);
+}
+
+export function isParentStreamActive(channelId: string): boolean {
+  return _activeChannels.has(channelId);
+}
+
 // ── Thread Binding（SUB-5）────────────────────────────────────────────────────
 
 /** threadId → childSessionKey */

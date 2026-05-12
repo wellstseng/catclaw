@@ -2069,6 +2069,7 @@ const CFG_SCHEMA = [
     {k:'debounceMs',t:'num',l:'Debounce (ms)',d:'連續訊息合併延遲，在此毫秒內的連續訊息會合併為一次處理'},
     {k:'showToolCalls',t:'select',l:'Show Tool Calls',opts:['all','summary','none'],d:'Discord 回覆中是否顯示 tool 呼叫過程'},
     {k:'interimMode',t:'select',l:'中段 Text 揭露',opts:['full','summary','indicator'],d:'LLM 中段 narration 揭露程度。full=邊跑邊發；summary=tool 切換時送「⏳ tool」摘要；indicator=完全靜默到 done（只 typing 表示活著）。後端 trace/tool-log 不受影響，照樣完整記錄。'},
+    {k:'subagentNotify',t:'select',l:'Subagent 完成通知',opts:['inline','silent'],d:'Async subagent 完成時是否送到 Discord。inline=經 parent reply-handler 主 stream 按邏輯時序送（解決順序錯亂）；silent=不送 Discord（後端 trace 仍記）。'},
     {k:'fileUploadThreshold',t:'num',l:'File Upload 硬上限 (字)',d:'回覆總字數超過此值 → 改成上傳 .md 附件。預設 3000。設 0 = 停用'},
     {k:'structuredFileThreshold',t:'num',l:'結構化內容門檻 (字)',d:'回覆超過此字數且含 markdown 結構（≥2 headers / ≥3 表格列 / ≥2 hr / ≥4 code block）→ 提早走 .md 附件。預設 1500。設 0 = 停用結構化偵測'},
   ]},

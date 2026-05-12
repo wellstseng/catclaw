@@ -689,25 +689,41 @@ export const tool: Tool = {
       }
     } else {
       // 非同步：背景執行，立即回傳 runId（SUB-4）
+      // Discord 通知改由 parent reply-handler 透過 subagent_relay event 統一處理（順序時序正確）。
+      // 若 parent 已退場（BG wait 用完），event 沒人接 → 通知漏，下方 fallback 直接 send 補救。
       runChildFn()
         .then(async () => {
-          // EventBus 通知 parent（agent-loop 在下次 LLM 呼叫前注入結果）
           const { eventBus } = await import("../../core/event-bus.js");
           eventBus.emit("subagent:completed", record.parentSessionKey, record.runId, record.label ?? record.task.slice(0, 60), record.result ?? "");
 
-          const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
-          await sendSubagentNotification(record);
+          // Fallback：300ms 後若 record 仍未被 parent 消費（status 還是 completed 但 result 未 ACK），
+          // 直接 send Discord 避免使用者完全收不到通知。實作 ack 機制成本高，先用時間鎖代替。
+          setTimeout(() => {
+            void (async () => {
+              const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
+              const { isParentStreamActive } = await import("../../core/subagent-discord-bridge.js");
+              if (record.discordChannelId && !isParentStreamActive(record.discordChannelId)) {
+                await sendSubagentNotification(record);
+              }
+            })();
+          }, 300);
         })
         .catch(async (err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           log.warn(`[spawn-subagent] async background error runId=${record.runId}: ${msg}`);
 
-          // EventBus 通知 parent（失敗）
           const { eventBus } = await import("../../core/event-bus.js");
           eventBus.emit("subagent:failed", record.parentSessionKey, record.runId, record.label ?? record.task.slice(0, 60), msg);
 
-          const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
-          await sendSubagentNotification(record, { error: true });
+          setTimeout(() => {
+            void (async () => {
+              const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
+              const { isParentStreamActive } = await import("../../core/subagent-discord-bridge.js");
+              if (record.discordChannelId && !isParentStreamActive(record.discordChannelId)) {
+                await sendSubagentNotification(record, { error: true });
+              }
+            })();
+          }, 300);
         });
 
       return {
