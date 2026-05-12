@@ -1123,6 +1123,36 @@ export async function* agentLoop(
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${planNotice}` : planNotice;
   }
 
+  // ── 接續守門：上一個 turn 被 abort → 注入狀態提示，逼 LLM 先查 prior progress
+  // 避免「使用者回繼續但 LLM 從頭重跑、或直接 end_turn」的盲區
+  try {
+    const traceStore = getTraceStore();
+    if (traceStore) {
+      // 取最新 1 筆（含當前這筆未 finalize 的 — bySession 只查已持久化）
+      const recent = traceStore.bySession(sessionKey, 1);
+      const last = recent[0];
+      // last.abort 存在 + 30 分鐘內 → 注入
+      if (last?.abort && last.phase?.completedMs) {
+        const elapsedMs = Date.now() - last.phase.completedMs;
+        if (elapsedMs < 30 * 60_000) {
+          const elapsedMin = Math.round(elapsedMs / 60_000);
+          const toolsRun = last.llmCalls?.reduce((n, c) => n + (c.toolCalls?.length ?? 0), 0) ?? 0;
+          const resumeNotice = [
+            "## ⚠️ 接續守門",
+            `上一個 turn 被中止（reason=${last.abort.trigger}，約 ${elapsedMin} 分鐘前，已執行 ${toolsRun} 個工具）。`,
+            "若使用者本次訊息是要求接續（如「繼續」、「resume」），**不要直接從頭重跑也不要直接 end_turn**。先：",
+            "1. 用 `subagents` 工具 `action=list` 查 spawned 但未消費結果的子任務",
+            "2. 檢查相關產出目錄（如 `~/projects/manga-translate/runs/` 等）最新檔案，判斷上次任務是否其實已完成",
+            "3. 若已完成 → 直接回報結果；只完成一半 → 從中斷點接續；完全沒進度 → 重跑（建議用 spawn_subagent async 包長腳本）",
+          ].join("\n");
+          systemPrompt = systemPrompt ? `${systemPrompt}\n\n${resumeNotice}` : resumeNotice;
+        }
+      }
+    }
+  } catch (err) {
+    log.debug(`[agent-loop] 接續守門查詢失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const _agentLoopBlocks: string[] = [];
 
   // Agent 專屬 skills（agents/{agentId}/skills/*.md）+ 自建提示
