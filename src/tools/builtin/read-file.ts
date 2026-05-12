@@ -104,7 +104,7 @@ function readNotebook(filePath: string): string {
 
 export const tool: Tool = {
   name: "read_file",
-  description: "讀取檔案內容",
+  description: "讀取檔案內容。**大檔（≥100 KB / ≥2000 行）請用 offset/limit 分段讀**，避免被外部化機制連環包進 stub 鏈（每層都會再被外部化，越讀越深）。先用 head 看結構，再用 offset/limit 精準取目標段落，最有效率。",
   tier: "elevated",
   resultTokenCap: 4000,
   concurrencySafe: true,

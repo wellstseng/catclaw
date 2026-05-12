@@ -137,10 +137,15 @@ export function externalizeToolOutput(opts: ExternalizeToolOpts): ExternalizedTo
   writeFileSync(filePath, opts.text, "utf-8");
 
   const meta = buildStubMetadata(opts.toolName, opts.text, opts.args);
+  const sizeKB = opts.text.length / 1024;
+  const isLargeFile = sizeKB >= 100;
+  const guidance = isLargeFile
+    ? `如需檢視請呼叫 read_file 讀取——**檔案 ${sizeKB.toFixed(1)} KB 偏大，建議帶 offset/limit 分段讀**（如 offset:1, limit:200），整檔讀會再次被外部化形成 stub 鏈。先用 grep 找關鍵字定位行號，再用 offset/limit 精準取段，最有效率。`
+    : `如需檢視請呼叫 read_file 讀取。`;
   const stub =
     `${TOOL_OUTPUT_STUB_PREFIX} ${opts.toolName} | ${meta} | 完整內容 @ ${filePath}]\n` +
     `↑ 上方為 tool_result 的外部化指標（CatClaw 自動截斷）。完整原始輸出已寫入該絕對路徑，` +
-    `如需檢視請呼叫 read_file 讀取。Stub 不含原文，勿從 stub 推測缺失內容。`;
+    `${guidance}Stub 不含原文，勿從 stub 推測缺失內容。`;
 
   return {
     stub,
