@@ -33,6 +33,7 @@ const PATCH_WHITELIST = [
   "debounceMs",
   "logLevel",
   "showToolCalls",
+  "interimMode",
   "memory.recall.vectorSearch",
   "memory.recall.vectorMinScore",
   "memory.recall.vectorTopK",

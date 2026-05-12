@@ -119,8 +119,10 @@ export async function handleAgentLoopReply(
   const threshold = bridgeConfig.fileUploadThreshold;
   const structuredThreshold = bridgeConfig.structuredFileThreshold;
   const toolMode = bridgeConfig.showToolCalls;
+  const interimMode = bridgeConfig.interimMode ?? "summary";
   const threadChannel = opts?.threadChannel;
-  const useStreamEdit = (bridgeConfig.streamingReply !== false);
+  // interimMode=summary/indicator 完全靜默中段 text → 不走 stream edit（progressMsg），最後 done 一次發
+  const useStreamEdit = (bridgeConfig.streamingReply !== false) && interimMode === "full";
 
   // ── Streaming edit 狀態（rolling progress msg 模式） ──────────────────────
   // progressMsg：此 turn 唯一的 live-edit 目標訊息
@@ -338,11 +340,14 @@ export async function handleAgentLoopReply(
           await streamEditTextDelta(event.text);
         } else {
           buffer += event.text;
-          if (buffer.length >= TEXT_LIMIT) {
-            cancelFlushTimer();
-            await flush(false);
-          } else {
-            scheduleFlush();
+          // interimMode=summary/indicator：累積 buffer 但不 flush（totalText/buffer 留到 done 一次發）
+          if (interimMode === "full") {
+            if (buffer.length >= TEXT_LIMIT) {
+              cancelFlushTimer();
+              await flush(false);
+            } else {
+              scheduleFlush();
+            }
           }
         }
 
@@ -365,6 +370,12 @@ export async function handleAgentLoopReply(
         } else if (toolMode === "summary") {
           // summary 模式後續 tool：靜默切下一段，progressMsg 保留前段內容直到下個 text_delta 覆寫
           if (useStreamEdit) { cancelEditTimer(); await finalizeStreamEdit(); pendingSegmentReset = true; }
+        } else if (toolMode === "none" && interimMode === "summary") {
+          // toolMode=none 但 interimMode=summary：用戶不想看 tool listing，但要簡短摘要
+          // → 每個 tool_start 送一行「⏳ ${tool}」，**不 flush buffer**（中段 narration 留到 done）
+          await send(`⏳ ${event.name}`);
+          if (isFirst) stopTyping();
+          isFirst = false;
         }
 
       } else if (event.type === "tool_result") {

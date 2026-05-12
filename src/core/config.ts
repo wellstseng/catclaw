@@ -676,6 +676,8 @@ export interface BridgeConfig {
   turnTimeoutToolCallMs: number;
   showToolCalls: "all" | "summary" | "none";
   showThinking: boolean;
+  /** LLM 中段 text 揭露程度（full=邊跑邊發；summary=tool 切換時送精簡摘要；indicator=完全靜默到 done） */
+  interimMode: "full" | "summary" | "indicator";
   debounceMs: number;
   fileUploadThreshold: number;
   structuredFileThreshold: number;
@@ -839,6 +841,7 @@ interface RawConfig {
   turnTimeoutToolCallMs?: number;
   showToolCalls?: string | boolean;
   showThinking?: boolean;
+  interimMode?: "full" | "summary" | "indicator";
   debounceMs?: number;
   fileUploadThreshold?: number;
   structuredFileThreshold?: number;
@@ -1339,6 +1342,7 @@ function loadConfig(): BridgeConfig {
     turnTimeoutToolCallMs: raw.turnTimeoutToolCallMs ?? Math.round(turnTimeoutMs * 1.6),
     showToolCalls: parseShowToolCalls(raw.showToolCalls),
     showThinking: raw.showThinking ?? false,
+    interimMode: raw.interimMode ?? "summary",
     debounceMs: raw.debounceMs ?? 500,
     fileUploadThreshold: raw.fileUploadThreshold ?? 3000,
     structuredFileThreshold: raw.structuredFileThreshold ?? 1500,
