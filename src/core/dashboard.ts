@@ -2212,7 +2212,7 @@ const CFG_SCHEMA = [
     ]},
     {k:'memory.extract',l:'Extract',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'自動從對話中萃取知識寫入記憶（總開關）'},
-      {k:'perTurn',t:'bool',l:'Extract Per Turn',d:'累積 buffer 達閾值時是否觸發萃取（關閉 = 停用萃取）'},
+      {k:'perTurn',t:'bool',l:'Extract Per Turn',d:'累積制萃取總開關。名稱易誤解：不是每輪都萃取，而是「累積 buffer 達閾值才 flush」的總開關（關閉 = 完全停用萃取）。實際觸發頻率由下方「累積字元閾值」與「累積 Turn 閾值」控制（任一達標即觸發）。'},
       {k:'maxItemsPerTurn',t:'num',l:'單次 Flush 上限',d:'每次 flush 最多萃取幾條記憶，預設 3'},
       {k:'accumCharThreshold',t:'num',l:'累積字元閾值',d:'累積多少字元觸發萃取，預設 200'},
       {k:'accumTurnThreshold',t:'num',l:'累積 Turn 閾值',d:'累積幾個 turn 觸發萃取，預設 5'},
