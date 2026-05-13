@@ -401,10 +401,28 @@ export async function handleAgentLoopReply(
           if (useStreamEdit) { cancelEditTimer(); await finalizeStreamEdit(); pendingSegmentReset = true; }
           else if (interimMode === "full") { cancelFlushTimer(); if (!fileMode) await flush(true); }
           const icon = event.status === "completed" ? "✅" : "❌";
-          const tail = event.status === "completed"
-            ? `（exitCode=${event.exitCode ?? "null"}）${event.stdoutPath ? `\nstdout: \`${event.stdoutPath}\`` : ""}`
-            : `\n原因：${event.reason ?? "unknown"}`;
-          await send(`${icon} **背景 Job ${event.status === "completed" ? "完成" : "失敗"}**：${event.label}${tail}`);
+          let body: string;
+          if (event.status === "completed") {
+            body = `（exitCode=${event.exitCode ?? "null"}）${event.stdoutPath ? `\nstdout: \`${event.stdoutPath}\`` : ""}`;
+          } else {
+            // 失敗時附 stdout 尾 10 行讓使用者立刻看到診斷
+            let tail = "";
+            if (event.stdoutPath) {
+              try {
+                const { existsSync, statSync, openSync, readSync, closeSync } = await import("node:fs");
+                if (existsSync(event.stdoutPath)) {
+                  const stat = statSync(event.stdoutPath);
+                  const buf = Buffer.alloc(Math.min(8000, stat.size));
+                  const fd = openSync(event.stdoutPath, "r");
+                  try { readSync(fd, buf, 0, buf.length, Math.max(0, stat.size - 8000)); } finally { closeSync(fd); }
+                  const lines = buf.toString("utf-8").split("\n").filter(l => l.length > 0).slice(-10).join("\n");
+                  if (lines) tail = `\n**stdout 尾 10 行：**\n\`\`\`\n${lines.slice(-1500)}\n\`\`\``;
+                }
+              } catch { /* ignore */ }
+            }
+            body = `\n原因：${event.reason ?? "unknown"}${event.stdoutPath ? `\nstdout: \`${event.stdoutPath}\`` : ""}${tail}`;
+          }
+          await send(`${icon} **背景 Job ${event.status === "completed" ? "完成" : "失敗"}**：${event.label}${body}`);
           if (isFirst) stopTyping();
           isFirst = false;
         }
