@@ -396,6 +396,19 @@ export async function handleAgentLoopReply(
           isFirst = false;
         }
 
+      } else if (event.type === "background_job_relay") {
+        if (subagentNotify === "inline") {
+          if (useStreamEdit) { cancelEditTimer(); await finalizeStreamEdit(); pendingSegmentReset = true; }
+          else if (interimMode === "full") { cancelFlushTimer(); if (!fileMode) await flush(true); }
+          const icon = event.status === "completed" ? "✅" : "❌";
+          const tail = event.status === "completed"
+            ? `（exitCode=${event.exitCode ?? "null"}）${event.stdoutPath ? `\nstdout: \`${event.stdoutPath}\`` : ""}`
+            : `\n原因：${event.reason ?? "unknown"}`;
+          await send(`${icon} **背景 Job ${event.status === "completed" ? "完成" : "失敗"}**：${event.label}${tail}`);
+          if (isFirst) stopTyping();
+          isFirst = false;
+        }
+
       } else if (event.type === "subagent_relay") {
         if (subagentNotify === "inline") {
           // 主 stream 中段先 flush（避免 wendy buffer 黏在通知後），再送 subagent 完成通知

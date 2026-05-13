@@ -41,6 +41,7 @@ import { renameSessions } from "../migration/rename-sessions.js";
 import { initTraceStore, getTraceStore, getTraceContextStore } from "./message-trace.js";
 import { initContextEngine } from "./context-engine.js";
 import { initSubagentRegistry } from "./subagent-registry.js";
+import { initBackgroundJobRegistry } from "./background-job-registry.js";
 import { initToolLogStore, getToolLogStore } from "./tool-log-store.js";
 import { initInboundHistoryStore } from "../discord/inbound-history.js";
 import { initSessionSnapshotStore, getSessionSnapshotStore } from "./session-snapshot.js";
@@ -268,6 +269,18 @@ export async function initPlatform(
   // ── 9.65 Subagent Registry ─────────────────────────────────────────────────
   initSubagentRegistry(config.subagents?.maxConcurrent ?? 3);
   log.info("[platform] SubagentRegistry 初始化完成");
+
+  // ── 9.66 Background Job Registry（本地 shell 長期程式追蹤） ───────────────
+  const bgRegistry = initBackgroundJobRegistry();
+  bgRegistry.setEventHandlers({
+    onComplete: (r) => {
+      eventBus.emit("background-job:completed", r.parentSessionKey, r.jobId, r.label, r.exitCode ?? null, r.stdoutPath);
+    },
+    onFail: (r, reason) => {
+      eventBus.emit("background-job:failed", r.parentSessionKey, r.jobId, r.label, reason);
+    },
+  });
+  log.info("[platform] BackgroundJobRegistry 初始化完成");
 
   // ── 9.66 Collab Conflict Detector ─────────────────────────────────────────
   if (config.safety?.collabConflict?.enabled !== false) {

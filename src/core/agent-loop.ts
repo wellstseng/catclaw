@@ -508,6 +508,8 @@ export type AgentLoopEvent =
   | { type: "tool_blocked"; name: string; reason: string }
   /** async subagent 完成回流：reply-handler 依 subagentNotify 設定決定是否轉 Discord */
   | { type: "subagent_relay"; status: "completed" | "failed"; runId: string; label: string; content: string }
+  /** background job (本地 shell 長期程式) 完成回流 */
+  | { type: "background_job_relay"; status: "completed" | "failed"; jobId: string; label: string; exitCode: number | null; stdoutPath?: string; reason?: string }
   | { type: "done";         text: string; turnCount: number }
   | { type: "context_warning"; level: "high" | "critical"; utilization: number; estimatedTokens: number; contextWindow: number; source: "session" | "model" }
   | { type: "ce_applied";   strategies: string[]; tokensBefore: number; tokensAfter: number }
@@ -1484,6 +1486,23 @@ export async function* agentLoop(
     () => eventBus.off("subagent:failed", _onBgFailed),
   );
 
+  // ── Background Job 結果 Queue（本地 shell 長期程式） ─────────────────────
+  const pendingJobResults: Array<{ type: "completed" | "failed"; jobId: string; label: string; exitCode: number | null; stdoutPath?: string; reason?: string }> = [];
+  const _onJobCompleted = (_pkey: string, jobId: string, label: string, exitCode: number | null, stdoutPath?: string) => {
+    if (_pkey !== sessionKey) return;
+    pendingJobResults.push({ type: "completed", jobId, label, exitCode, stdoutPath });
+  };
+  const _onJobFailed = (_pkey: string, jobId: string, label: string, reason: string) => {
+    if (_pkey !== sessionKey) return;
+    pendingJobResults.push({ type: "failed", jobId, label, exitCode: null, reason });
+  };
+  eventBus.on("background-job:completed", _onJobCompleted);
+  eventBus.on("background-job:failed", _onJobFailed);
+  _wfListeners.push(
+    () => eventBus.off("background-job:completed", _onJobCompleted),
+    () => eventBus.off("background-job:failed", _onJobFailed),
+  );
+
   // end_turn 時若仍有 running async subagent，強制等待結果而非結束 turn
   // （否則 listener 被 cleanup，subagent 完成事件無人接，分派承諾變空話）
   let bgWaitCount = 0;
@@ -1584,6 +1603,33 @@ export async function* agentLoop(
       // ── Background Agent 結果注入 ──────────────────────────────────────────
       // ≤ INLINE_LIMIT 字 → 完整 inline；> 限制 → 寫檔 + 注入 preview + 路徑，
       // parent agent 可用 read_file 取完整內容（避免 context 被一個 subagent 大輸出佔滿）
+      // Background Job 結果注入（與 subagent 相同 pattern + 強制驗證 checklist）
+      if (pendingJobResults.length > 0) {
+        for (const j of pendingJobResults) {
+          yield { type: "background_job_relay", status: j.type, jobId: j.jobId, label: j.label, exitCode: j.exitCode, stdoutPath: j.stdoutPath, reason: j.reason };
+        }
+        const jobParts = pendingJobResults.splice(0).map(j => {
+          const status = j.type === "completed" ? `✅ 完成（exitCode=${j.exitCode ?? "null"}）` : `❌ 失敗：${j.reason ?? "unknown"}`;
+          const stdoutHint = j.stdoutPath ? `\nstdout 完整內容 @ ${j.stdoutPath}` : "";
+          return `[背景 Job ${status}] ${j.label} (${j.jobId.slice(0, 8)})${stdoutHint}`;
+        });
+        const verifyChecklist = [
+          "",
+          "## ⚠️ 驗證步驟（必做，不可省略）",
+          "上面是 background job 完成事件，**回報使用者前先驗證**：",
+          "1. **檢查 exitCode**：== 0 才算正常，非 0 或 null 視為可疑",
+          "2. **read_file stdoutPath 尾段（如 offset=-50）**：看有沒有 traceback / error / exception 字眼",
+          "3. **確認預期產出檔存在**：用 ls / glob 確認 expectedOutputs 全部在磁碟",
+          "4. **依結果分流回報**：",
+          "   - 全綠 → 報「✅ 完成」+ 摘要（數量/路徑）",
+          "   - 部分成功 → 報「⚠️ 完成 X / 失敗 Y」+ 失敗原因 + 是否重試",
+          "   - 全失敗 → 報「❌ 失敗」+ 根因（從 stdout 找）+ 下一步建議",
+          "**不要直接信 status 欄位回報「完成」，必須先 read stdout 驗證**。",
+        ].join("\n");
+        messages.push({ role: "user", content: jobParts.join("\n\n") + verifyChecklist });
+        log.info(`[agent-loop] 注入 ${jobParts.length} 個 background job 結果到 LLM messages（含驗證 checklist）`);
+      }
+
       if (pendingBgResults.length > 0) {
         // 先 yield 給 reply-handler 在主 stream 內按時序送到 Discord（避免 fire-and-forget 插隊）
         for (const r of pendingBgResults) {

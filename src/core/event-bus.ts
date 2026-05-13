@@ -118,6 +118,10 @@ export interface CatClawEvents {
   "subagent:completed":  [parentSessionKey: string, runId: string, label: string, result: string];
   "subagent:failed":     [parentSessionKey: string, runId: string, label: string, error: string];
 
+  // ── Background Job（本地 shell 長期程式） ──
+  "background-job:completed": [parentSessionKey: string, jobId: string, label: string, exitCode: number | null, stdoutPath?: string];
+  "background-job:failed":    [parentSessionKey: string, jobId: string, label: string, reason: string];
+
   // ── Task UI ──
   "task:ui":             [channelId: string, tasks: TaskUiPayload[]];
 
