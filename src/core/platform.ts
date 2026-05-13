@@ -274,10 +274,34 @@ export async function initPlatform(
   const bgRegistry = initBackgroundJobRegistry();
   bgRegistry.setEventHandlers({
     onComplete: (r) => {
+      // 先 emit：parent turn 還活著時 agent-loop listener 會接住
       eventBus.emit("background-job:completed", r.parentSessionKey, r.jobId, r.label, r.exitCode ?? null, r.stdoutPath);
+      // Fallback：300ms 後若 parent stream 已退場 → 直接 send Discord 避免通知漏掉
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const { isParentStreamActive } = await import("./subagent-discord-bridge.js");
+            if (r.discordChannelId && !isParentStreamActive(r.discordChannelId)) {
+              const { sendBgJobNotification } = await import("./bg-job-discord-bridge.js");
+              await sendBgJobNotification(r, { type: "completed" });
+            }
+          } catch (err) { log.warn(`[bg-job] fallback notify 失敗：${err instanceof Error ? err.message : String(err)}`); }
+        })();
+      }, 300);
     },
     onFail: (r, reason) => {
       eventBus.emit("background-job:failed", r.parentSessionKey, r.jobId, r.label, reason);
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const { isParentStreamActive } = await import("./subagent-discord-bridge.js");
+            if (r.discordChannelId && !isParentStreamActive(r.discordChannelId)) {
+              const { sendBgJobNotification } = await import("./bg-job-discord-bridge.js");
+              await sendBgJobNotification(r, { type: "failed", reason });
+            }
+          } catch (err) { log.warn(`[bg-job] fallback notify 失敗：${err instanceof Error ? err.message : String(err)}`); }
+        })();
+      }, 300);
     },
   });
   log.info("[platform] BackgroundJobRegistry 初始化完成");
