@@ -453,6 +453,7 @@ label.cfg-toggle { min-width: 36px; }
   <div class="tab" onclick="switchTab('cron',this)">排程</div>
   <div class="tab" onclick="switchTab('traces',this)">追蹤</div>
   <div class="tab" onclick="switchTab('subagents',this)">🤖 子代理</div>
+  <div class="tab" onclick="switchTab('bgjobs',this)">⚙️ 背景任務</div>
   <div class="tab" onclick="switchTab('guardian',this)">Guardian</div>
   <div class="tab" onclick="switchTab('insights',this)">洞察</div>
   <div class="tab" onclick="switchTab('improvements',this)">提案</div>
@@ -704,6 +705,32 @@ label.cfg-toggle { min-width: 36px; }
         <th style="text-align:left">task preview</th>
       </tr></thead>
       <tbody id="subagents-full-list"><tr><td colspan="8" style="color:var(--fg2);text-align:center;padding:12px">載入中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 背景任務（Background Jobs） -->
+<div id="pane-bgjobs" class="pane">
+  <div class="card">
+    <h2>背景任務（local shell long-running jobs）
+      <button class="btn btn-sm" style="float:right" onclick="loadBgJobs()">↻ 重新載入</button>
+    </h2>
+    <div style="font-size:0.78rem;color:var(--fg2);margin-bottom:6px">
+      由 <code>run_background_command</code> 工具啟動的本地 shell job。完成（process exit 或 expectedOutputs 齊全）會自動通知。
+    </div>
+    <table class="tbl" style="font-size:0.82rem">
+      <thead><tr>
+        <th style="text-align:left">jobId</th>
+        <th style="text-align:left">label</th>
+        <th>status</th>
+        <th>pid</th>
+        <th>exitCode</th>
+        <th>duration</th>
+        <th style="text-align:left">command</th>
+        <th style="text-align:left">stdout</th>
+        <th>action</th>
+      </tr></thead>
+      <tbody id="bgjobs-list"><tr><td colspan="9" style="color:var(--fg2);text-align:center;padding:12px">載入中...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1050,6 +1077,7 @@ function switchTab(id, el) {
   if (id === 'ops') { loadSubagents(); loadRestartHistory(); }
   if (id === 'tasks') { loadTasks(); }
   if (id === 'subagents') { loadSubagentsFull(); }
+  if (id === 'bgjobs') { loadBgJobs(); }
   if (id === 'guardian') { loadGuardianHits(); }
   if (id === 'insights') { loadInsights(); }
   if (id === 'improvements') { loadSkillImprovements(); }
@@ -1701,6 +1729,64 @@ async function showSubagentTraces(runId) {
     alert('runId ' + runId.slice(0, 8) + ' 共 ' + traces.length + ' 個 child trace:\\n\\n' + ids + '\\n\\n（後續 PR 接入 trace detail UI）');
   } catch (e) {
     alert('查詢失敗：' + e);
+  }
+}
+
+async function loadBgJobs() {
+  try {
+    const d = await authFetch('/api/bgjobs').then(r => r.json());
+    const tbody = document.getElementById('bgjobs-list');
+    if (!d.jobs || !d.jobs.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="color:var(--fg2);text-align:center;padding:12px">尚無背景任務紀錄</td></tr>';
+      return;
+    }
+    const sorted = d.jobs.sort((a, b) => b.startedAt - a.startedAt);
+    tbody.innerHTML = sorted.map(j => {
+      const dur = j.endedAt ? Math.round((j.endedAt - j.startedAt) / 1000) + 's' : Math.round((Date.now() - j.startedAt) / 1000) + 's+';
+      const cmdShort = j.command.length > 80 ? j.command.slice(0, 80) + '…' : j.command;
+      const stdoutLink = j.stdoutPath
+        ? '<a href="#" onclick="viewBgJobStdout(\\''+ j.jobId +'\\');return false">log</a>'
+        : '-';
+      const killBtn = j.status === 'running'
+        ? '<button class="btn btn-sm btn-red" onclick="killBgJob(\\''+ j.jobId +'\\')">✕</button>'
+        : '';
+      const statusBadge = '<span class="badge badge-' + j.status + '">' + j.status + '</span>';
+      return '<tr>' +
+        '<td style="font-family:monospace;font-size:0.7rem">' + j.jobId.slice(0, 8) + '</td>' +
+        '<td>' + (j.label || '?') + '</td>' +
+        '<td style="text-align:center">' + statusBadge + '</td>' +
+        '<td style="text-align:right">' + (j.pid || '-') + '</td>' +
+        '<td style="text-align:right">' + (j.exitCode != null ? j.exitCode : '-') + '</td>' +
+        '<td style="text-align:right">' + dur + '</td>' +
+        '<td style="font-family:monospace;font-size:0.7rem">' + cmdShort.replace(/</g, '&lt;') + '</td>' +
+        '<td>' + stdoutLink + '</td>' +
+        '<td>' + killBtn + '</td>' +
+        '</tr>';
+    }).join('');
+  } catch (e) {
+    document.getElementById('bgjobs-list').innerHTML = '<tr><td colspan="9" style="color:var(--err)">載入失敗：' + e + '</td></tr>';
+  }
+}
+
+async function viewBgJobStdout(jobId) {
+  try {
+    const r = await authFetch('/api/bgjobs/stdout?jobId=' + encodeURIComponent(jobId) + '&lines=200').then(r => r.json());
+    const w = window.open('', '_blank');
+    w.document.write('<pre style="font-family:monospace;white-space:pre-wrap;font-size:13px;padding:12px">' + (r.stdout || '(empty)').replace(/</g, '&lt;') + '</pre>');
+    w.document.title = 'BG Job ' + jobId.slice(0, 8) + ' stdout';
+  } catch (e) {
+    alert('讀取失敗：' + e);
+  }
+}
+
+async function killBgJob(jobId) {
+  if (!confirm('確定強制中止 background job ' + jobId.slice(0, 8) + '？')) return;
+  try {
+    const d = await authFetch('/api/bgjobs/kill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId }) }).then(r => r.json());
+    if (d.ok) loadBgJobs();
+    else alert('Kill 失敗：' + (d.error || 'unknown'));
+  } catch (e) {
+    alert('Kill 失敗：' + e);
   }
 }
 
@@ -5605,6 +5691,84 @@ export class DashboardServer {
             res.end(JSON.stringify({ subagents: [], error: String(err) }));
           }
         })();
+        return;
+      }
+
+      // GET /api/bgjobs — 列所有 background job 紀錄
+      if (url === "/api/bgjobs" && method === "GET") {
+        void (async () => {
+          try {
+            const { getBackgroundJobRegistry } = await import("./background-job-registry.js");
+            const reg = getBackgroundJobRegistry();
+            const jobs = reg ? reg.listAll() : [];
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ jobs }));
+          } catch (err) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ jobs: [], error: String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // GET /api/bgjobs/stdout?jobId=&lines=200 — 讀指定 job 的 stdout 尾段
+      if (url.startsWith("/api/bgjobs/stdout") && method === "GET") {
+        void (async () => {
+          try {
+            const u = new URL(req.url ?? "", "http://x");
+            const jobId = u.searchParams.get("jobId") ?? "";
+            const lines = Number(u.searchParams.get("lines") ?? "200");
+            const { getBackgroundJobRegistry } = await import("./background-job-registry.js");
+            const reg = getBackgroundJobRegistry();
+            const job = reg?.get(jobId);
+            if (!job || !job.stdoutPath) {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ stdout: "(無 stdoutPath 或 jobId 不存在)" }));
+              return;
+            }
+            const { existsSync, statSync, openSync, readSync, closeSync } = await import("node:fs");
+            if (!existsSync(job.stdoutPath)) {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ stdout: "(stdout 檔不存在)" }));
+              return;
+            }
+            const stat = statSync(job.stdoutPath);
+            const maxBytes = 64_000;
+            const buf = Buffer.alloc(Math.min(maxBytes, stat.size));
+            const fd = openSync(job.stdoutPath, "r");
+            try {
+              readSync(fd, buf, 0, buf.length, Math.max(0, stat.size - maxBytes));
+            } finally {
+              closeSync(fd);
+            }
+            const all = buf.toString("utf-8").split("\n");
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ stdout: all.slice(-lines).join("\n") }));
+          } catch (err) {
+            res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // POST /api/bgjobs/kill
+      if (url === "/api/bgjobs/kill" && method === "POST") {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { jobId } = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as { jobId: string };
+              const { getBackgroundJobRegistry } = await import("./background-job-registry.js");
+              const reg = getBackgroundJobRegistry();
+              const ok = reg ? reg.kill(jobId) : false;
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok }));
+            } catch (err) {
+              res.writeHead(400); res.end(JSON.stringify({ ok: false, error: String(err) }));
+            }
+          })();
+        });
         return;
       }
 

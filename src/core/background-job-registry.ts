@@ -126,6 +126,11 @@ export class BackgroundJobRegistry {
     return Array.from(this.records.values()).filter(r => r.parentSessionKey === parentSessionKey);
   }
 
+  /** 列所有 records（dashboard 用，跨 session） */
+  listAll(): BackgroundJobRecord[] {
+    return Array.from(this.records.values());
+  }
+
   listRunning(): BackgroundJobRecord[] {
     return Array.from(this.records.values()).filter(r => r.status === "running");
   }
