@@ -1077,7 +1077,14 @@ function switchTab(id, el) {
   if (id === 'ops') { loadSubagents(); loadRestartHistory(); }
   if (id === 'tasks') { loadTasks(); }
   if (id === 'subagents') { loadSubagentsFull(); }
-  if (id === 'bgjobs') { loadBgJobs(); }
+  if (id === 'bgjobs') {
+    loadBgJobs();
+    if (_bgJobsAutoRefresh) clearInterval(_bgJobsAutoRefresh);
+    _bgJobsAutoRefresh = setInterval(loadBgJobs, 5000);
+  } else if (_bgJobsAutoRefresh) {
+    clearInterval(_bgJobsAutoRefresh);
+    _bgJobsAutoRefresh = null;
+  }
   if (id === 'guardian') { loadGuardianHits(); }
   if (id === 'insights') { loadInsights(); }
   if (id === 'improvements') { loadSkillImprovements(); }
@@ -1732,51 +1739,102 @@ async function showSubagentTraces(runId) {
   }
 }
 
+let _bgJobsAutoRefresh = null;
+
+function _bgEscapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function loadBgJobs() {
   try {
     const d = await authFetch('/api/bgjobs').then(r => r.json());
     const tbody = document.getElementById('bgjobs-list');
     if (!d.jobs || !d.jobs.length) {
-      tbody.innerHTML = '<tr><td colspan="9" style="color:var(--fg2);text-align:center;padding:12px">尚無背景任務紀錄</td></tr>';
+      _safeSetHtml(tbody, '<tr><td colspan="9" style="color:var(--fg2);text-align:center;padding:12px">尚無背景任務紀錄</td></tr>');
       return;
     }
     const sorted = d.jobs.sort((a, b) => b.startedAt - a.startedAt);
-    tbody.innerHTML = sorted.map(j => {
+    const html = sorted.map(j => {
       const dur = j.endedAt ? Math.round((j.endedAt - j.startedAt) / 1000) + 's' : Math.round((Date.now() - j.startedAt) / 1000) + 's+';
       const cmdShort = j.command.length > 80 ? j.command.slice(0, 80) + '…' : j.command;
       const stdoutLink = j.stdoutPath
-        ? '<a href="#" onclick="viewBgJobStdout(\\''+ j.jobId +'\\');return false">log</a>'
-        : '-';
+        ? '<a href="#" style="color:#5ab5ff;text-decoration:underline" onclick="viewBgJobStdout(\\''+ j.jobId +'\\');return false">log</a>'
+        : '<span style="color:var(--fg2)">-</span>';
       const killBtn = j.status === 'running'
-        ? '<button class="btn btn-sm btn-red" onclick="killBgJob(\\''+ j.jobId +'\\')">✕</button>'
-        : '';
-      const statusBadge = '<span class="badge badge-' + j.status + '">' + j.status + '</span>';
+        ? '<button class="btn btn-sm btn-red" onclick="killBgJob(\\''+ j.jobId +'\\')" title="強制中止">✕</button>'
+        : '<button class="btn btn-sm" onclick="deleteBgJob(\\''+ j.jobId +'\\')" title="從紀錄移除">🗑</button>';
+      const statusColor = { running:'#5ab5ff', completed:'#7ecf6c', failed:'#ff7878', killed:'#ffa550', timeout:'#ffa550', stale:'#aaa' }[j.status] || '#fff';
+      const statusBadge = '<span style="color:' + statusColor + ';font-weight:600">' + j.status + '</span>';
+      const jobIdLink = '<a href="#" style="font-family:monospace;font-size:0.7rem;color:#5ab5ff;text-decoration:underline" onclick="showBgJobDetail(\\''+ j.jobId +'\\');return false">' + j.jobId.slice(0, 8) + '</a>';
       return '<tr>' +
-        '<td style="font-family:monospace;font-size:0.7rem">' + j.jobId.slice(0, 8) + '</td>' +
-        '<td>' + (j.label || '?') + '</td>' +
+        '<td>' + jobIdLink + '</td>' +
+        '<td>' + _bgEscapeHtml(j.label || '?') + '</td>' +
         '<td style="text-align:center">' + statusBadge + '</td>' +
-        '<td style="text-align:right">' + (j.pid || '-') + '</td>' +
-        '<td style="text-align:right">' + (j.exitCode != null ? j.exitCode : '-') + '</td>' +
-        '<td style="text-align:right">' + dur + '</td>' +
-        '<td style="font-family:monospace;font-size:0.7rem">' + cmdShort.replace(/</g, '&lt;') + '</td>' +
+        '<td style="text-align:right;color:var(--fg2)">' + (j.pid || '-') + '</td>' +
+        '<td style="text-align:right;color:var(--fg2)">' + (j.exitCode != null ? j.exitCode : '-') + '</td>' +
+        '<td style="text-align:right;color:var(--fg2)">' + dur + '</td>' +
+        '<td style="font-family:monospace;font-size:0.7rem;color:var(--fg2)">' + _bgEscapeHtml(cmdShort) + '</td>' +
         '<td>' + stdoutLink + '</td>' +
         '<td>' + killBtn + '</td>' +
         '</tr>';
     }).join('');
+    _safeSetHtml(tbody, html);
   } catch (e) {
     document.getElementById('bgjobs-list').innerHTML = '<tr><td colspan="9" style="color:var(--err)">載入失敗：' + e + '</td></tr>';
   }
 }
 
+async function showBgJobDetail(jobId) {
+  try {
+    const d = await authFetch('/api/bgjobs').then(r => r.json());
+    const j = (d.jobs || []).find(x => x.jobId === jobId);
+    if (!j) { alert('jobId 不存在：' + jobId); return; }
+    const dur = j.endedAt ? Math.round((j.endedAt - j.startedAt) / 1000) + 's' : Math.round((Date.now() - j.startedAt) / 1000) + 's+';
+    const expectedHtml = (j.expectedOutputs && j.expectedOutputs.length)
+      ? j.expectedOutputs.map(p => '<div style="font-family:monospace;font-size:11px">  ' + _bgEscapeHtml(p) + '</div>').join('')
+      : '<div style="color:#888">(無)</div>';
+    const r2 = await authFetch('/api/bgjobs/stdout?jobId=' + encodeURIComponent(jobId) + '&lines=300').then(r => r.json());
+    const w = window.open('', '_blank');
+    w.document.write(
+      '<html><head><title>BG Job ' + jobId.slice(0, 8) + '</title>' +
+      '<style>body{font-family:system-ui,sans-serif;background:#1e1e1e;color:#d4d4d4;padding:20px;margin:0;line-height:1.5}' +
+      'pre{font-family:Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all;font-size:12px;background:#252526;color:#d4d4d4;padding:12px;border-radius:6px;border:1px solid #3c3c3c;max-height:60vh;overflow:auto}' +
+      'h1{color:#fff;border-bottom:1px solid #3c3c3c;padding-bottom:8px;font-size:18px}' +
+      'h2{color:#9cdcfe;margin-top:20px;font-size:14px}' +
+      '.kv{display:grid;grid-template-columns:120px 1fr;gap:6px;margin:6px 0;font-size:13px}' +
+      '.kv label{color:#9cdcfe}' +
+      '.kv .v{color:#d4d4d4;font-family:Menlo,Consolas,monospace}' +
+      '</style></head><body>' +
+      '<h1>Background Job ' + jobId.slice(0, 8) + '</h1>' +
+      '<div class="kv"><label>jobId:</label><div class="v">' + j.jobId + '</div></div>' +
+      '<div class="kv"><label>label:</label><div class="v">' + _bgEscapeHtml(j.label || '?') + '</div></div>' +
+      '<div class="kv"><label>status:</label><div class="v">' + j.status + '</div></div>' +
+      '<div class="kv"><label>pid:</label><div class="v">' + (j.pid || '-') + '</div></div>' +
+      '<div class="kv"><label>exitCode:</label><div class="v">' + (j.exitCode != null ? j.exitCode : 'null') + '</div></div>' +
+      '<div class="kv"><label>duration:</label><div class="v">' + dur + '</div></div>' +
+      '<div class="kv"><label>started:</label><div class="v">' + new Date(j.startedAt).toLocaleString() + '</div></div>' +
+      (j.endedAt ? '<div class="kv"><label>ended:</label><div class="v">' + new Date(j.endedAt).toLocaleString() + '</div></div>' : '') +
+      '<h2>command</h2><pre>' + _bgEscapeHtml(j.command) + '</pre>' +
+      (j.cwd ? '<h2>cwd</h2><pre>' + _bgEscapeHtml(j.cwd) + '</pre>' : '') +
+      '<h2>expectedOutputs</h2>' + expectedHtml +
+      '<h2>stdoutPath</h2><pre>' + _bgEscapeHtml(j.stdoutPath || '(無)') + '</pre>' +
+      '<h2>stdout 尾 300 行</h2><pre>' + _bgEscapeHtml(r2.stdout || '(empty)') + '</pre>' +
+      '</body></html>'
+    );
+  } catch (e) { alert('讀取失敗：' + e); }
+}
+
 async function viewBgJobStdout(jobId) {
   try {
-    const r = await authFetch('/api/bgjobs/stdout?jobId=' + encodeURIComponent(jobId) + '&lines=200').then(r => r.json());
+    const r = await authFetch('/api/bgjobs/stdout?jobId=' + encodeURIComponent(jobId) + '&lines=300').then(r => r.json());
     const w = window.open('', '_blank');
-    w.document.write('<pre style="font-family:monospace;white-space:pre-wrap;font-size:13px;padding:12px">' + (r.stdout || '(empty)').replace(/</g, '&lt;') + '</pre>');
-    w.document.title = 'BG Job ' + jobId.slice(0, 8) + ' stdout';
-  } catch (e) {
-    alert('讀取失敗：' + e);
-  }
+    w.document.write(
+      '<html><head><title>BG Job ' + jobId.slice(0, 8) + ' stdout</title>' +
+      '<style>body{background:#1e1e1e;color:#d4d4d4;padding:20px;margin:0;font-family:Menlo,Consolas,monospace;font-size:12px;line-height:1.5}' +
+      'pre{white-space:pre-wrap;word-break:break-all;color:#d4d4d4;margin:0}</style></head><body>' +
+      '<pre>' + _bgEscapeHtml(r.stdout || '(empty)') + '</pre></body></html>'
+    );
+  } catch (e) { alert('讀取失敗：' + e); }
 }
 
 async function killBgJob(jobId) {
@@ -1785,9 +1843,16 @@ async function killBgJob(jobId) {
     const d = await authFetch('/api/bgjobs/kill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId }) }).then(r => r.json());
     if (d.ok) loadBgJobs();
     else alert('Kill 失敗：' + (d.error || 'unknown'));
-  } catch (e) {
-    alert('Kill 失敗：' + e);
-  }
+  } catch (e) { alert('Kill 失敗：' + e); }
+}
+
+async function deleteBgJob(jobId) {
+  if (!confirm('從紀錄移除 job ' + jobId.slice(0, 8) + '？stdout 檔不會自動刪除。')) return;
+  try {
+    const d = await authFetch('/api/bgjobs/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId }) }).then(r => r.json());
+    if (d.ok) loadBgJobs();
+    else alert('移除失敗：' + (d.error || 'unknown'));
+  } catch (e) { alert('移除失敗：' + e); }
 }
 
 async function killSubagent(runId) {
@@ -5748,6 +5813,27 @@ export class DashboardServer {
             res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
           }
         })();
+        return;
+      }
+
+      // POST /api/bgjobs/delete — 從 registry 移除（不刪 stdout 檔）
+      if (url === "/api/bgjobs/delete" && method === "POST") {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { jobId } = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as { jobId: string };
+              const { getBackgroundJobRegistry } = await import("./background-job-registry.js");
+              const reg = getBackgroundJobRegistry();
+              const ok = reg ? reg.deleteJob(jobId) : false;
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok, error: ok ? undefined : "找不到或仍 running（先 kill）" }));
+            } catch (err) {
+              res.writeHead(400); res.end(JSON.stringify({ ok: false, error: String(err) }));
+            }
+          })();
+        });
         return;
       }
 

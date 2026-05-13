@@ -131,6 +131,19 @@ export class BackgroundJobRegistry {
     return Array.from(this.records.values());
   }
 
+  /** 從紀錄移除（dashboard 手動清理用，不刪 stdout 檔） */
+  deleteJob(jobId: string): boolean {
+    const r = this.records.get(jobId);
+    if (!r) return false;
+    if (r.status === "running" && r.pid && isProcessAlive(r.pid)) {
+      // running 還活著的不允許直接 delete，要先 kill
+      return false;
+    }
+    this.records.delete(jobId);
+    this.persist();
+    return true;
+  }
+
   listRunning(): BackgroundJobRecord[] {
     return Array.from(this.records.values()).filter(r => r.status === "running");
   }
