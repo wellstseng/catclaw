@@ -1705,7 +1705,7 @@ async function loadSubagentsFull() {
       const task = ((s.task || '').slice(0, 80)).replace(/</g, '&lt;').replace(/"/g, '&quot;');
       const parentShort = (s.parentSessionKey || '').split(':').slice(-2).join(':');
       const agentBadge = s.agentId ? \`<span style="background:#7c3aed;color:#fff;font-size:0.65rem;padding:1px 4px;border-radius:3px">\${s.agentId}</span>\` : '-';
-      html += \`<tr style="cursor:pointer" onclick="showSubagentTraces('\${s.runId}')">\`;
+      html += \`<tr data-runid="\${s.runId}" style="cursor:pointer" onclick="toggleSubagentDetail('\${s.runId}')">\`;
       html += \`<td style="font-family:ui-monospace,monospace;font-size:0.72rem" title="\${s.runId}">\${s.runId.slice(0, 8)}</td>\`;
       html += \`<td>\${(s.label || '-').replace(/</g, '&lt;')}</td>\`;
       html += \`<td title="\${(s.parentSessionKey || '').replace(/"/g, '&quot;')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.75rem">\${parentShort}</td>\`;
@@ -1722,20 +1722,92 @@ async function loadSubagentsFull() {
   }
 }
 
-async function showSubagentTraces(runId) {
-  // 跳到追蹤分頁，用 parentTraceId 查詢入口
-  // 簡單版：直接打 API 顯示 trace IDs，未來可整合進 trace detail UI
+function _subEscapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function toggleSubagentDetail(runId) {
+  const detailId = 'sub-detail-' + runId;
+  const existing = document.getElementById(detailId);
+  if (existing) { existing.remove(); return; }
+  // 收合其他已展開的 detail（一次只展開一個，避免畫面太亂）
+  document.querySelectorAll('tr[id^="sub-detail-"]').forEach(el => el.remove());
+
+  const row = document.querySelector('tr[data-runid="' + runId + '"]');
+  if (!row) return;
+
+  // 先插一個 loading row 提供即時反饋
+  const detailRow = document.createElement('tr');
+  detailRow.id = detailId;
+  detailRow.innerHTML = '<td colspan="8" style="background:#1e1e1e;color:#d4d4d4;padding:14px;border-top:1px solid #3c3c3c"><div style="color:#9cdcfe">載入 ' + runId.slice(0, 8) + ' 詳情中⋯</div></td>';
+  row.parentNode.insertBefore(detailRow, row.nextSibling);
+
   try {
-    const r = await authFetch('/api/traces?parentTraceId=' + encodeURIComponent(runId)).then(r => r.json());
-    const traces = r.traces || [];
-    if (!traces.length) {
-      alert('runId ' + runId.slice(0, 8) + ' 找不到 child trace。可能：\\n- subagent 太舊（trace 已過期）\\n- trace 用 spawn 時的 parentTraceId 關聯（不是 runId）');
-      return;
-    }
-    const ids = traces.map(t => t.traceId.slice(0, 8) + ' (' + (t.inbound?.textPreview ?? '').slice(0, 40) + ')').join('\\n');
-    alert('runId ' + runId.slice(0, 8) + ' 共 ' + traces.length + ' 個 child trace:\\n\\n' + ids + '\\n\\n（後續 PR 接入 trace detail UI）');
+    const allD = await authFetch('/api/subagents').then(r => r.json());
+    const s = (allD.subagents || []).find(x => x.runId === runId);
+    if (!s) { detailRow.querySelector('td').innerHTML = '<div style="color:#dc2626">找不到 runId ' + runId.slice(0, 8) + '</div>'; return; }
+
+    // 拉 child traces（可能沒有）
+    let tracesHtml = '<div style="color:#888;font-size:0.75rem">查詢中⋯</div>';
+    let tracesPromise = authFetch('/api/traces?parentTraceId=' + encodeURIComponent(runId)).then(r => r.json()).catch(() => ({ traces: [] }));
+
+    const dur = s.endedAt ? Math.round((s.endedAt - s.createdAt) / 1000) + 's' : Math.round((Date.now() - s.createdAt) / 1000) + 's+';
+    const statusBadge = s.status === 'completed' ? '✅ completed' : s.status === 'running' ? '⏳ running' : s.status === 'error' ? '❌ error' : '⏹ ' + s.status;
+
+    const kv = function(k, v) {
+      return '<div style="display:grid;grid-template-columns:140px 1fr;gap:6px;margin:4px 0;font-size:0.78rem"><label style="color:#9cdcfe">' + k + '</label><div style="color:#d4d4d4;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all">' + _subEscapeHtml(v) + '</div></div>';
+    };
+    const block = function(title, content) {
+      return '<div style="margin-top:10px"><div style="color:#9cdcfe;font-size:0.78rem;margin-bottom:4px">' + title + '</div><pre style="font-family:Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all;font-size:0.75rem;background:#252526;color:#d4d4d4;padding:8px;border-radius:4px;border:1px solid #3c3c3c;max-height:260px;overflow:auto;margin:0">' + _subEscapeHtml(content) + '</pre></div>';
+    };
+
+    let html = '';
+    html += kv('runId', s.runId);
+    html += kv('label', s.label || '-');
+    html += kv('status', statusBadge);
+    html += kv('mode', (s.mode || '-') + ' / runtime=' + (s.runtime || '-') + ' / async=' + (s.async ? 'true' : 'false'));
+    html += kv('parentSessionKey', s.parentSessionKey || '-');
+    html += kv('childSessionKey', s.childSessionKey || '-');
+    html += kv('parentAgentId', s.parentAgentId || '-');
+    html += kv('agentId (子)', s.agentId || '-');
+    html += kv('accountId', s.accountId || '-');
+    html += kv('parentId', s.parentId || '-');
+    html += kv('discordChannelId', s.discordChannelId || '-');
+    if (s.discordThreadId) html += kv('discordThreadId', s.discordThreadId);
+    html += kv('createdAt', new Date(s.createdAt).toLocaleString());
+    if (s.endedAt) html += kv('endedAt', new Date(s.endedAt).toLocaleString());
+    html += kv('duration', dur);
+    html += kv('turns', s.turns ?? '-');
+    if (s.acked !== undefined) html += kv('acked', String(s.acked));
+
+    if (s.task) html += block('task（完整）', s.task);
+    if (s.result) html += block('result', s.result);
+    if (s.error) html += block('error', s.error);
+
+    html += '<div id="sub-traces-' + runId + '" style="margin-top:10px"><div style="color:#9cdcfe;font-size:0.78rem;margin-bottom:4px">child traces</div>' + tracesHtml + '</div>';
+
+    detailRow.querySelector('td').innerHTML = html;
+
+    // 非同步填 traces
+    tracesPromise.then(function(tr) {
+      const traces = tr.traces || [];
+      const slot = document.getElementById('sub-traces-' + runId);
+      if (!slot) return;
+      if (!traces.length) {
+        slot.innerHTML = '<div style="color:#9cdcfe;font-size:0.78rem;margin-bottom:4px">child traces</div><div style="color:#888;font-size:0.75rem">(無 — subagent 太舊或 trace 過期)</div>';
+        return;
+      }
+      let th = '<div style="color:#9cdcfe;font-size:0.78rem;margin-bottom:4px">child traces (' + traces.length + ')</div>';
+      th += '<div style="background:#252526;border:1px solid #3c3c3c;border-radius:4px;padding:6px;max-height:200px;overflow:auto">';
+      traces.forEach(function(t) {
+        const preview = _subEscapeHtml((t.inbound && t.inbound.textPreview) || '');
+        th += '<div style="font-size:0.72rem;padding:2px 0;border-bottom:1px solid #2d2d2d"><a href="javascript:void(0)" onclick="showTraceDetail(\\''+ t.traceId +'\\')" style="color:#5ab5ff;font-family:monospace">' + t.traceId.slice(0, 8) + '</a> <span style="color:#888">' + preview.slice(0, 80) + '</span></div>';
+      });
+      th += '</div>';
+      slot.innerHTML = th;
+    });
   } catch (e) {
-    alert('查詢失敗：' + e);
+    detailRow.querySelector('td').innerHTML = '<div style="color:#dc2626">載入失敗：' + _subEscapeHtml(String(e)) + '</div>';
   }
 }
 
