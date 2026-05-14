@@ -17,6 +17,7 @@
  */
 
 import { log } from "../logger.js";
+import type { MessageTrace } from "./message-trace.js";
 
 const _wakeDedup = new Set<string>();
 const DEDUP_TTL_MS = 5 * 60_000;
@@ -31,11 +32,15 @@ export interface WakeAgentOpts {
   source: "background-job" | "subagent";
   /** 用於去重（jobId / runId） */
   recordId: string;
+  /** 可選 trace；提供時 wake turn 會被記錄、可從 dashboard 追蹤 */
+  trace?: MessageTrace;
 }
 
 export interface WakeAgentResult {
   ok: boolean;
   reason?: string;
+  /** wake turn 的 traceId（若 opts.trace 有提供） */
+  traceId?: string;
 }
 
 export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeAgentResult> {
@@ -87,6 +92,7 @@ export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeA
       isAdmin: getBootIsAdmin(),
       provider,
       _sessionKeyOverride: opts.sessionKey,
+      ...(opts.trace ? { trace: opts.trace } : {}),
     }, {
       sessionManager: getPlatformSessionManager(),
       permissionGate: getPlatformPermissionGate(),
@@ -123,8 +129,8 @@ export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeA
       }
     }
 
-    log.info(`[wake-agent] woke session=${opts.sessionKey} source=${opts.source} record=${opts.recordId.slice(0, 8)} replyChars=${trimmed.length}`);
-    return { ok: true };
+    log.info(`[wake-agent] woke session=${opts.sessionKey} source=${opts.source} record=${opts.recordId.slice(0, 8)} replyChars=${trimmed.length}${opts.trace ? ` trace=${opts.trace.traceId.slice(0, 8)}` : ""}`);
+    return { ok: true, traceId: opts.trace?.traceId };
   } catch (err) {
     log.warn(`[wake-agent] 失敗 session=${opts.sessionKey} source=${opts.source}: ${err instanceof Error ? err.message : String(err)}`);
     if (markedActive) {

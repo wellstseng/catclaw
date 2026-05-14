@@ -2795,6 +2795,22 @@ export async function* agentLoop(
               ``,
               `請務必回報結果給使用者（即使 1 句話），不要再 silent end_turn。`,
             ].filter(Boolean).join("\n");
+            // 先建 trace 讓 ping 帶 traceId
+            const { MessageTrace } = await import("./message-trace.js");
+            const { randomUUID } = await import("node:crypto");
+            const wakeTrace = MessageTrace.create(randomUUID(), r.discordChannelId, r.accountId ?? accountId, "wake");
+            wakeTrace.recordInbound({ text: injected.slice(0, 200), attachments: 0 });
+            // 即時 ping：避免 wake turn 跑 30-60s 期間使用者沒訊號；附 traceId
+            try {
+              const { getDiscordClient } = await import("./subagent-discord-bridge.js");
+              const client = getDiscordClient();
+              if (client) {
+                const ch = await client.channels.fetch(r.discordChannelId);
+                if (ch && "send" in ch) {
+                  await (ch as { send: (s: string) => Promise<unknown> }).send(`${isOk ? "✅" : "⚠️"} 背景 Job ${isOk ? "完成" : "結束"}：${r.label}（exitCode=${r.exitCode ?? "null"}）— agent 補回報中⋯ \`[trace ${wakeTrace.traceId.slice(0, 8)}]\``);
+                }
+              }
+            } catch (e) { log.warn(`[ACK-scan] 即時 ping 失敗：${e instanceof Error ? e.message : String(e)}`); }
             void wakeAgentForCompletion({
               sessionKey: r.parentSessionKey,
               channelId: r.discordChannelId,
@@ -2803,6 +2819,7 @@ export async function* agentLoop(
               injectedMessage: injected,
               source: "background-job",
               recordId: r.jobId,
+              trace: wakeTrace,
             });
           }
         }
@@ -2826,6 +2843,11 @@ export async function* agentLoop(
               ``,
               `請務必回報結果給使用者（即使 1 句話），不要再 silent end_turn。`,
             ].join("\n");
+            // Trace（subagent ACK scan 也建，可追蹤 wake turn）
+            const { MessageTrace: MT2 } = await import("./message-trace.js");
+            const { randomUUID: ru2 } = await import("node:crypto");
+            const subWakeTrace = MT2.create(ru2(), r.discordChannelId, r.accountId, "wake");
+            subWakeTrace.recordInbound({ text: injected.slice(0, 200), attachments: 0 });
             void wakeAgentForCompletion({
               sessionKey: r.parentSessionKey,
               channelId: r.discordChannelId,
@@ -2834,6 +2856,7 @@ export async function* agentLoop(
               injectedMessage: injected,
               source: "subagent",
               recordId: r.runId,
+              trace: subWakeTrace,
             });
           }
         }

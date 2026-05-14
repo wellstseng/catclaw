@@ -121,7 +121,7 @@ export interface TraceWorkflowEvent {
 }
 
 /** Trace 分類 */
-export type TraceCategory = "discord" | "subagent" | "cron" | "api";
+export type TraceCategory = "discord" | "subagent" | "cron" | "api" | "wake";
 
 /** 完整訊息追蹤記錄 */
 export interface MessageTraceEntry {

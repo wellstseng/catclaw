@@ -280,7 +280,7 @@ export async function initPlatform(
       setTimeout(() => {
         void (async () => {
           try {
-            const { isParentStreamActive } = await import("./subagent-discord-bridge.js");
+            const { isParentStreamActive, getDiscordClient } = await import("./subagent-discord-bridge.js");
             if (!r.discordChannelId || isParentStreamActive(r.discordChannelId)) return;
             const injected = [
               `[平台喚醒] 你之前 spawn 的背景 job 已完成。`,
@@ -293,6 +293,22 @@ export async function initPlatform(
               `請依本 session 之前的脈絡判斷後續：執行下一步、回報使用者、或結束。`,
               `（你 end_turn 後事件無人接，由平台自動為你重啟 turn。）`,
             ].filter(Boolean).join("\n");
+            // 先建 trace（讓 ping 訊息能附 traceId 短碼，使用者可在 dashboard 追蹤 wake turn）
+            const { MessageTrace } = await import("./message-trace.js");
+            const { randomUUID } = await import("node:crypto");
+            const wakeTrace = MessageTrace.create(randomUUID(), r.discordChannelId, r.accountId ?? "_system", "wake");
+            wakeTrace.recordInbound({ text: injected.slice(0, 200), attachments: 0 });
+            // 即時 ping：避免 wake turn 30-60s 期間使用者完全沒訊號；附 traceId 短碼
+            try {
+              const client = getDiscordClient();
+              if (client) {
+                const ch = await client.channels.fetch(r.discordChannelId);
+                if (ch && "send" in ch) {
+                  const ok = r.exitCode === 0 || r.exitCode === null;
+                  await (ch as { send: (s: string) => Promise<unknown> }).send(`${ok ? "✅" : "⚠️"} 背景 Job 完成：${r.label}（exitCode=${r.exitCode ?? "null"}）— agent 處理中⋯ \`[trace ${wakeTrace.traceId.slice(0, 8)}]\``);
+                }
+              }
+            } catch (e) { log.warn(`[bg-job] 即時 ping 失敗：${e instanceof Error ? e.message : String(e)}`); }
             const { wakeAgentForCompletion } = await import("./wake-agent.js");
             const wakeResult = await wakeAgentForCompletion({
               sessionKey: r.parentSessionKey,
@@ -302,6 +318,7 @@ export async function initPlatform(
               injectedMessage: injected,
               source: "background-job",
               recordId: r.jobId,
+              trace: wakeTrace,
             });
             if (!wakeResult.ok) {
               log.warn(`[bg-job] wake 失敗（${wakeResult.reason}），fallback 走 Discord 文字通知`);
@@ -317,7 +334,7 @@ export async function initPlatform(
       setTimeout(() => {
         void (async () => {
           try {
-            const { isParentStreamActive } = await import("./subagent-discord-bridge.js");
+            const { isParentStreamActive, getDiscordClient } = await import("./subagent-discord-bridge.js");
             if (!r.discordChannelId || isParentStreamActive(r.discordChannelId)) return;
             // 失敗 case：wake + 同時保留平台 Discord 通知（雙保險）
             const injected = [
@@ -331,6 +348,21 @@ export async function initPlatform(
               `請判斷根因（看 stdout 尾段）、決定是否重試或回報使用者。`,
               `（你 end_turn 後事件無人接，由平台自動為你重啟 turn。）`,
             ].filter(Boolean).join("\n");
+            // 先建 trace（讓 ping 訊息能附 traceId 短碼）
+            const { MessageTrace } = await import("./message-trace.js");
+            const { randomUUID } = await import("node:crypto");
+            const wakeTrace = MessageTrace.create(randomUUID(), r.discordChannelId, r.accountId ?? "_system", "wake");
+            wakeTrace.recordInbound({ text: injected.slice(0, 200), attachments: 0 });
+            // 即時 ping：失敗也要快速通知，wake turn 才有時間做根因分析；附 traceId
+            try {
+              const client = getDiscordClient();
+              if (client) {
+                const ch = await client.channels.fetch(r.discordChannelId);
+                if (ch && "send" in ch) {
+                  await (ch as { send: (s: string) => Promise<unknown> }).send(`❌ 背景 Job 失敗：${r.label}（${reason}）— agent 分析中⋯ \`[trace ${wakeTrace.traceId.slice(0, 8)}]\``);
+                }
+              }
+            } catch (e) { log.warn(`[bg-job] 即時 ping 失敗：${e instanceof Error ? e.message : String(e)}`); }
             const { wakeAgentForCompletion } = await import("./wake-agent.js");
             void wakeAgentForCompletion({
               sessionKey: r.parentSessionKey,
@@ -340,6 +372,7 @@ export async function initPlatform(
               injectedMessage: injected,
               source: "background-job",
               recordId: r.jobId,
+              trace: wakeTrace,
             }).then(wakeResult => {
               if (!wakeResult.ok) log.warn(`[bg-job] failed wake 失敗（${wakeResult.reason}），平台通知仍會送`);
             });

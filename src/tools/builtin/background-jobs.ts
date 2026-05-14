@@ -60,6 +60,20 @@ export const tool: Tool = {
     const action = String(params["action"] ?? "").trim();
     const jobId = params["jobId"] ? String(params["jobId"]) : undefined;
 
+    /**
+     * 解析 jobId：吃完整 UUID 或前綴短碼（≥4 字元）。
+     * Wendy 從 ping 訊息 / dashboard 拿到的常是 8 字短碼，原本嚴格匹配讓她要先 list 再對。
+     */
+    const resolveJob = (input: string): { record?: BackgroundJobRecord; error?: string } => {
+      const exact = registry.get(input);
+      if (exact) return { record: exact };
+      if (input.length < 4) return { error: `jobId 太短（≥4 字元）：${input}` };
+      const matches = registry.listAll().filter(x => x.jobId.startsWith(input));
+      if (matches.length === 1) return { record: matches[0] };
+      if (matches.length > 1) return { error: `jobId 短碼 "${input}" 撞到 ${matches.length} 筆，請給更多字元` };
+      return { error: `找不到 jobId：${input}` };
+    };
+
     switch (action) {
       case "list": {
         const records = registry.listByParent(ctx.sessionId);
@@ -70,8 +84,9 @@ export const tool: Tool = {
 
       case "status": {
         if (!jobId) return { error: "status 需要指定 jobId" };
-        const r = registry.get(jobId);
-        if (!r) return { error: `找不到 jobId：${jobId}` };
+        const resolved = resolveJob(jobId);
+        if (resolved.error) return { error: resolved.error };
+        const r = resolved.record!;
         const lines = typeof params["stdoutLines"] === "number" ? params["stdoutLines"] : 50;
         const stdoutTail = r.stdoutPath ? tailFile(r.stdoutPath, lines) : "(無 stdoutPath)";
         const expected = r.expectedOutputs?.length
@@ -91,21 +106,25 @@ export const tool: Tool = {
 
       case "kill": {
         if (!jobId) return { error: "kill 需要指定 jobId" };
-        const ok = registry.kill(jobId);
-        return { result: ok ? `✅ killed ${jobId}` : `❌ 找不到或已結束：${jobId}` };
+        const resolved = resolveJob(jobId);
+        if (resolved.error) return { error: resolved.error };
+        const fullId = resolved.record!.jobId;
+        const ok = registry.kill(fullId);
+        return { result: ok ? `✅ killed ${fullId}` : `❌ 已結束：${fullId}` };
       }
 
       case "wait": {
         if (!jobId) return { error: "wait 需要指定 jobId" };
-        const r = registry.get(jobId);
-        if (!r) return { error: `找不到 jobId：${jobId}` };
+        const resolved = resolveJob(jobId);
+        if (resolved.error) return { error: resolved.error };
+        const fullId = resolved.record!.jobId;
         const timeoutMs = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : 60_000;
         const start = Date.now();
         // poll 每 1s
         while (Date.now() - start < timeoutMs) {
-          const cur = registry.get(jobId);
+          const cur = registry.get(fullId);
           if (cur && cur.status !== "running") {
-            return { result: `job ${jobId.slice(0, 8)} 結束：status=${cur.status} exitCode=${cur.exitCode ?? "null"} 經過 ${Math.round((Date.now() - start) / 1000)}s` };
+            return { result: `job ${fullId.slice(0, 8)} 結束：status=${cur.status} exitCode=${cur.exitCode ?? "null"} 經過 ${Math.round((Date.now() - start) / 1000)}s` };
           }
           await new Promise(r => setTimeout(r, 1000));
         }
