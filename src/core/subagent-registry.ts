@@ -48,6 +48,8 @@ export interface SubagentRunRecord {
   turns?: number;
   /** 建立此 record 的父 subagent runId（頂層 spawn 無此欄位） */
   parentId?: string;
+  /** 父 agentId — wake-agent 喚醒父 agent 新 turn 時用（多 agent 識別） */
+  parentAgentId?: string;
 }
 
 export type SpawnResult =
@@ -82,6 +84,8 @@ export class SubagentRegistry {
     parentId?: string;
     /** Agent ID — 有值時 session key 為 deterministic（自動恢復歷史） */
     agentId?: string;
+    /** 父 agentId（spawn 時的 ctx.agentId）— wake-agent 用 */
+    parentAgentId?: string;
   }): SubagentRunRecord {
     const runId = randomUUID();
     const childSessionKey = opts.agentId
@@ -104,6 +108,7 @@ export class SubagentRegistry {
       accountId: opts.accountId,
       createdAt: Date.now(),
       parentId: opts.parentId,
+      parentAgentId: opts.parentAgentId,
     };
 
     this.records.set(runId, record);

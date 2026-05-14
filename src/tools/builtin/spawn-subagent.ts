@@ -510,6 +510,7 @@ export const tool: Tool = {
       accountId: ctx.accountId,
       parentId: ctx.parentRunId,
       agentId: agentParam,
+      parentAgentId: ctx.agentId,
     });
 
     // SUB-5：mode:session → 建立 Discord thread 並綁定
@@ -696,15 +697,42 @@ export const tool: Tool = {
           const { eventBus } = await import("../../core/event-bus.js");
           eventBus.emit("subagent:completed", record.parentSessionKey, record.runId, record.label ?? record.task.slice(0, 60), record.result ?? "");
 
-          // Fallback：300ms 後若 record 仍未被 parent 消費（status 還是 completed 但 result 未 ACK），
-          // 直接 send Discord 避免使用者完全收不到通知。實作 ack 機制成本高，先用時間鎖代替。
+          // Fallback：300ms 後若 parent stream 已退場 → wake-agent 喚醒新 turn 由 parent agent 自報
+          // wake 失敗才走原 sendSubagentNotification 文字通知（雙保險）
           setTimeout(() => {
             void (async () => {
-              const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
-              const { isParentStreamActive } = await import("../../core/subagent-discord-bridge.js");
-              if (record.discordChannelId && !isParentStreamActive(record.discordChannelId)) {
-                await sendSubagentNotification(record);
-              }
+              try {
+                const { isParentStreamActive } = await import("../../core/subagent-discord-bridge.js");
+                if (!record.discordChannelId || isParentStreamActive(record.discordChannelId)) return;
+                const labelStr = record.label ?? record.task.slice(0, 60);
+                const resultPreview = (record.result ?? "(無輸出)").slice(0, 500);
+                const injected = [
+                  `[平台喚醒] 你之前 spawn 的子 agent 已 ✅ 完成。`,
+                  `- runId: ${record.runId}`,
+                  `- label: ${labelStr}`,
+                  `- 結果預覽（前 500 字）：`,
+                  `  ${resultPreview}`,
+                  ``,
+                  `完整結果可用 \`subagents action=status runId=${record.runId}\` 取回。`,
+                  `請依本 session 之前的脈絡判斷後續：執行下一步、回報使用者、或結束。`,
+                  `（你 end_turn 後事件無人接，由平台自動為你重啟 turn。）`,
+                ].join("\n");
+                const { wakeAgentForCompletion } = await import("../../core/wake-agent.js");
+                const wakeResult = await wakeAgentForCompletion({
+                  sessionKey: record.parentSessionKey,
+                  channelId: record.discordChannelId,
+                  accountId: record.accountId,
+                  agentId: record.parentAgentId,
+                  injectedMessage: injected,
+                  source: "subagent",
+                  recordId: record.runId,
+                });
+                if (!wakeResult.ok) {
+                  log.warn(`[spawn-subagent] wake 失敗（${wakeResult.reason}），fallback 走 Discord 文字通知`);
+                  const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
+                  await sendSubagentNotification(record);
+                }
+              } catch (err) { log.warn(`[spawn-subagent] fallback notify 失敗：${err instanceof Error ? err.message : String(err)}`); }
             })();
           }, 300);
         })
@@ -715,13 +743,38 @@ export const tool: Tool = {
           const { eventBus } = await import("../../core/event-bus.js");
           eventBus.emit("subagent:failed", record.parentSessionKey, record.runId, record.label ?? record.task.slice(0, 60), msg);
 
+          // 失敗 case：wake + 同時送平台 Discord 通知（雙保險，避免 agent 不擅長處理失敗 case 漏報）
           setTimeout(() => {
             void (async () => {
-              const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
-              const { isParentStreamActive } = await import("../../core/subagent-discord-bridge.js");
-              if (record.discordChannelId && !isParentStreamActive(record.discordChannelId)) {
+              try {
+                const { isParentStreamActive } = await import("../../core/subagent-discord-bridge.js");
+                if (!record.discordChannelId || isParentStreamActive(record.discordChannelId)) return;
+                const labelStr = record.label ?? record.task.slice(0, 60);
+                const injected = [
+                  `[平台喚醒] 你之前 spawn 的子 agent ❌ 失敗。`,
+                  `- runId: ${record.runId}`,
+                  `- label: ${labelStr}`,
+                  `- error: ${msg}`,
+                  ``,
+                  `請判斷根因、決定是否重試或回報使用者。`,
+                  `（你 end_turn 後事件無人接，由平台自動為你重啟 turn。）`,
+                ].join("\n");
+                const { wakeAgentForCompletion } = await import("../../core/wake-agent.js");
+                void wakeAgentForCompletion({
+                  sessionKey: record.parentSessionKey,
+                  channelId: record.discordChannelId,
+                  accountId: record.accountId,
+                  agentId: record.parentAgentId,
+                  injectedMessage: injected,
+                  source: "subagent",
+                  recordId: record.runId,
+                }).then(wakeResult => {
+                  if (!wakeResult.ok) log.warn(`[spawn-subagent] failed wake 失敗（${wakeResult.reason}），平台通知仍會送`);
+                });
+                // 失敗一律送平台通知
+                const { sendSubagentNotification } = await import("../../core/subagent-discord-bridge.js");
                 await sendSubagentNotification(record, { error: true });
-              }
+              } catch (err2) { log.warn(`[spawn-subagent] fallback notify 失敗：${err2 instanceof Error ? err2.message : String(err2)}`); }
             })();
           }, 300);
         });

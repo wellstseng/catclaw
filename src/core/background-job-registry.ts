@@ -43,6 +43,10 @@ export interface BackgroundJobRecord {
   /** 觸發 timeout 的 deadline（startedAt + maxDurationMs；0 = 不限時） */
   maxDurationMs: number;
   discordChannelId?: string;
+  /** 啟動者 accountId（wake-agent 重啟新 turn 時用） */
+  accountId?: string;
+  /** 啟動者 agentId（wake-agent 重啟新 turn 時用；多 agent 場景識別） */
+  agentId?: string;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -95,6 +99,8 @@ export class BackgroundJobRegistry {
     pollIntervalMs?: number;
     maxDurationMs?: number;
     discordChannelId?: string;
+    accountId?: string;
+    agentId?: string;
   }): BackgroundJobRecord {
     const jobId = randomUUID();
     const record: BackgroundJobRecord = {
@@ -111,6 +117,8 @@ export class BackgroundJobRegistry {
       pollIntervalMs: opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
       maxDurationMs: opts.maxDurationMs ?? 0,
       discordChannelId: opts.discordChannelId,
+      accountId: opts.accountId,
+      agentId: opts.agentId,
     };
     this.records.set(jobId, record);
     log.info(`[bg-job] 建立 jobId=${jobId} label=${opts.label} pid=${opts.pid}`);

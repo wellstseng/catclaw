@@ -106,6 +106,8 @@ export const tool: Tool = {
       pollIntervalMs,
       maxDurationMs,
       discordChannelId: ctx.channelId,
+      accountId: ctx.accountId,
+      agentId: ctx.agentId,
     });
 
     log.info(`[run-bg-cmd] spawned jobId=${record.jobId} pid=${child.pid} label="${label}" cmd="${command.slice(0, 100)}"`);

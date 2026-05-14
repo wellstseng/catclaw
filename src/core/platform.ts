@@ -276,12 +276,35 @@ export async function initPlatform(
     onComplete: (r) => {
       // 先 emit：parent turn 還活著時 agent-loop listener 會接住
       eventBus.emit("background-job:completed", r.parentSessionKey, r.jobId, r.label, r.exitCode ?? null, r.stdoutPath);
-      // Fallback：300ms 後若 parent stream 已退場 → 直接 send Discord 避免通知漏掉
+      // Fallback：300ms 後若 parent stream 已退場 → wake-agent 喚醒新 turn 由 agent 自報
       setTimeout(() => {
         void (async () => {
           try {
             const { isParentStreamActive } = await import("./subagent-discord-bridge.js");
-            if (r.discordChannelId && !isParentStreamActive(r.discordChannelId)) {
+            if (!r.discordChannelId || isParentStreamActive(r.discordChannelId)) return;
+            const injected = [
+              `[平台喚醒] 你之前 spawn 的背景 job 已完成。`,
+              `- jobId: ${r.jobId}`,
+              `- label: ${r.label}`,
+              `- exitCode: ${r.exitCode ?? "null"}`,
+              r.stdoutPath ? `- stdout: ${r.stdoutPath}` : "",
+              r.expectedOutputs?.length ? `- expectedOutputs: ${r.expectedOutputs.slice(0, 3).join(", ")}` : "",
+              ``,
+              `請依本 session 之前的脈絡判斷後續：執行下一步、回報使用者、或結束。`,
+              `（你 end_turn 後事件無人接，由平台自動為你重啟 turn。）`,
+            ].filter(Boolean).join("\n");
+            const { wakeAgentForCompletion } = await import("./wake-agent.js");
+            const wakeResult = await wakeAgentForCompletion({
+              sessionKey: r.parentSessionKey,
+              channelId: r.discordChannelId,
+              accountId: r.accountId ?? "_system",
+              agentId: r.agentId,
+              injectedMessage: injected,
+              source: "background-job",
+              recordId: r.jobId,
+            });
+            if (!wakeResult.ok) {
+              log.warn(`[bg-job] wake 失敗（${wakeResult.reason}），fallback 走 Discord 文字通知`);
               const { sendBgJobNotification } = await import("./bg-job-discord-bridge.js");
               await sendBgJobNotification(r, { type: "completed" });
             }
@@ -295,10 +318,34 @@ export async function initPlatform(
         void (async () => {
           try {
             const { isParentStreamActive } = await import("./subagent-discord-bridge.js");
-            if (r.discordChannelId && !isParentStreamActive(r.discordChannelId)) {
-              const { sendBgJobNotification } = await import("./bg-job-discord-bridge.js");
-              await sendBgJobNotification(r, { type: "failed", reason });
-            }
+            if (!r.discordChannelId || isParentStreamActive(r.discordChannelId)) return;
+            // 失敗 case：wake + 同時保留平台 Discord 通知（雙保險）
+            const injected = [
+              `[平台喚醒] 你之前 spawn 的背景 job ❌ 失敗。`,
+              `- jobId: ${r.jobId}`,
+              `- label: ${r.label}`,
+              `- exitCode: ${r.exitCode ?? "null"}`,
+              `- reason: ${reason}`,
+              r.stdoutPath ? `- stdout: ${r.stdoutPath}` : "",
+              ``,
+              `請判斷根因（看 stdout 尾段）、決定是否重試或回報使用者。`,
+              `（你 end_turn 後事件無人接，由平台自動為你重啟 turn。）`,
+            ].filter(Boolean).join("\n");
+            const { wakeAgentForCompletion } = await import("./wake-agent.js");
+            void wakeAgentForCompletion({
+              sessionKey: r.parentSessionKey,
+              channelId: r.discordChannelId,
+              accountId: r.accountId ?? "_system",
+              agentId: r.agentId,
+              injectedMessage: injected,
+              source: "background-job",
+              recordId: r.jobId,
+            }).then(wakeResult => {
+              if (!wakeResult.ok) log.warn(`[bg-job] failed wake 失敗（${wakeResult.reason}），平台通知仍會送`);
+            });
+            // 失敗 case 不論 wake 成功與否一律送平台通知（避免 agent 不擅長處理失敗 case 漏報）
+            const { sendBgJobNotification } = await import("./bg-job-discord-bridge.js");
+            await sendBgJobNotification(r, { type: "failed", reason });
           } catch (err) { log.warn(`[bg-job] fallback notify 失敗：${err instanceof Error ? err.message : String(err)}`); }
         })();
       }, 300);
