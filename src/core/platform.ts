@@ -384,6 +384,9 @@ export async function initPlatform(
       }, 300);
     },
   });
+  // Startup Recovery：補救 catclaw crash 在 onComplete 觸發前的漏洞 — 重啟後掃
+  // 1h 內結束但 acked=false 的 records，重觸發 onComplete/onFail handler 走 wake
+  bgRegistry.runStartupRecovery();
   log.info("[platform] BackgroundJobRegistry 初始化完成");
 
   // ── 9.66 Collab Conflict Detector ─────────────────────────────────────────

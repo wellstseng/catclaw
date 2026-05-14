@@ -308,6 +308,39 @@ export class BackgroundJobRegistry {
       log.warn(`[bg-job] loadFromDisk 失敗：${err instanceof Error ? err.message : String(err)}`);
     }
   }
+
+  /**
+   * Startup Recovery：catclaw crash 在 onComplete 觸發前 → 重啟後 record 已是
+   * completed/failed 狀態、poller 不會再觸發 callback、wake 永不跑。本方法在
+   * setEventHandlers 後呼叫，掃 1h 內結束的 unacked records 重觸發 onComplete/onFail。
+   *
+   * 條件：acked === false（明確 false，舊紀錄 undefined 不掃）+ endedAt 在 cutoff 內
+   * 時窗 1h：避免重啟後對遠古 records 大量補通知打擾使用者
+   */
+  runStartupRecovery(timeWindowMs: number = 60 * 60_000): void {
+    const cutoff = Date.now() - timeWindowMs;
+    const candidates = Array.from(this.records.values()).filter(r => {
+      if (r.acked !== false) return false;  // undefined 不掃、true 不掃
+      if (!r.endedAt || r.endedAt < cutoff) return false;
+      return r.status === "completed" || r.status === "failed" || r.status === "timeout" || r.status === "stale";
+    });
+    if (candidates.length === 0) {
+      log.debug(`[bg-job] startup recovery：無 unacked recent record 需處理`);
+      return;
+    }
+    log.info(`[bg-job] startup recovery：發現 ${candidates.length} 筆 acked=false 且 ${Math.round(timeWindowMs / 60_000)} 分鐘內結束的 record，重觸發 handler 補通知`);
+    for (const r of candidates) {
+      try {
+        if (r.status === "completed" || r.status === "stale") {
+          this.onComplete?.(r);
+        } else if (r.status === "failed" || r.status === "timeout") {
+          this.onFail?.(r, `recovered after catclaw restart（status=${r.status}，原 reason 已遺失）`);
+        }
+      } catch (err) {
+        log.warn(`[bg-job] startup recovery 觸發 ${r.jobId.slice(0, 8)} 失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
 }
 
 let _registry: BackgroundJobRegistry | null = null;

@@ -2820,6 +2820,19 @@ export async function* agentLoop(
               source: "background-job",
               recordId: r.jobId,
               trace: wakeTrace,
+            }).then(async wakeResult => {
+              // ACK scan wake 失敗 → fallback 走 sendBgJobNotification 文字通知（補洞）
+              if (!wakeResult.ok) {
+                log.warn(`[ACK-scan] wake 失敗（${wakeResult.reason}），fallback 走 Discord 文字通知 jobId=${r.jobId.slice(0, 8)}`);
+                try {
+                  const { sendBgJobNotification } = await import("./bg-job-discord-bridge.js");
+                  if (isOk) {
+                    await sendBgJobNotification(r, { type: "completed" });
+                  } else {
+                    await sendBgJobNotification(r, { type: "failed", reason: `recovered: status=${r.status}` });
+                  }
+                } catch (e) { log.warn(`[ACK-scan] fallback notify 也失敗：${e instanceof Error ? e.message : String(e)}`); }
+              }
             });
           }
         }
