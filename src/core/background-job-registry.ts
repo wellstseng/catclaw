@@ -47,6 +47,14 @@ export interface BackgroundJobRecord {
   accountId?: string;
   /** 啟動者 agentId（wake-agent 重啟新 turn 時用；多 agent 場景識別） */
   agentId?: string;
+  /**
+   * ACK 旗標（解 LLM silent end_turn 漏報）：
+   * - complete/fail/timeout 時 mark false
+   * - agent-loop 把 result 注入 LLM messages 時 mark true
+   * - turn 結束 scan：completed 但 acked=false → 補 wake
+   * undefined = 舊紀錄（不掃，避免重啟後大量補 wake）
+   */
+  acked?: boolean;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -178,6 +186,7 @@ export class BackgroundJobRegistry {
     r.status = "completed";
     r.exitCode = exitCode;
     r.endedAt = Date.now();
+    r.acked = false;
     this.persist();
     this.onComplete?.(r);
   }
@@ -188,6 +197,7 @@ export class BackgroundJobRegistry {
     r.status = "failed";
     r.exitCode = exitCode;
     r.endedAt = Date.now();
+    r.acked = false;
     this.persist();
     this.onFail?.(r, reason);
   }
@@ -200,8 +210,17 @@ export class BackgroundJobRegistry {
     }
     r.status = "timeout";
     r.endedAt = Date.now();
+    r.acked = false;
     this.persist();
     this.onFail?.(r, "max duration exceeded");
+  }
+
+  /** 標記 record 已 ACK（agent-loop 注入結果到 LLM messages 時呼叫） */
+  markAcked(jobId: string): void {
+    const r = this.records.get(jobId);
+    if (!r) return;
+    r.acked = true;
+    this.persist();
   }
 
   /** 啟動週期 poller，每秒檢查一次（內部 throttle 至每 job 的 pollIntervalMs） */

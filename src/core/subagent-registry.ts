@@ -50,6 +50,14 @@ export interface SubagentRunRecord {
   parentId?: string;
   /** 父 agentId — wake-agent 喚醒父 agent 新 turn 時用（多 agent 識別） */
   parentAgentId?: string;
+  /**
+   * ACK 旗標（解 LLM silent end_turn 漏報）：
+   * - complete/fail/timeout 時 mark false
+   * - agent-loop 把 result 注入 LLM messages 時 mark true
+   * - turn 結束 scan：completed 但 acked=false → 補 wake
+   * undefined = 舊紀錄（不掃，避免重啟後大量補 wake）
+   */
+  acked?: boolean;
 }
 
 export type SpawnResult =
@@ -181,6 +189,7 @@ export class SubagentRegistry {
     record.result = result;
     record.turns = turns;
     record.endedAt = Date.now();
+    record.acked = false;
     this.persist();
   }
 
@@ -190,6 +199,7 @@ export class SubagentRegistry {
     record.status = "failed";
     record.error = error;
     record.endedAt = Date.now();
+    record.acked = false;
     this.cascadeAbortChildren(runId, "failed");
     this.persist();
   }
@@ -200,6 +210,15 @@ export class SubagentRegistry {
     record.abortController.abort();
     record.status = "timeout";
     record.endedAt = Date.now();
+    record.acked = false;
+    this.persist();
+  }
+
+  /** 標記 record 已 ACK（agent-loop 注入結果到 LLM messages 時呼叫） */
+  markAcked(runId: string): void {
+    const record = this.records.get(runId);
+    if (!record) return;
+    record.acked = true;
     this.persist();
   }
 

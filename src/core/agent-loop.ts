@@ -868,6 +868,12 @@ export async function* agentLoop(
     return;
   }
 
+  // ACK 追蹤：本 turn 內注入過 LLM 的 records id；turn 結束 finally 視 reply 有無決定 markAcked
+  // 提到 outer try 之前 → finally 看得到（let block-scoped 規則）
+  const _injectedJobIds = new Set<string>();
+  const _injectedRunIds = new Set<string>();
+  let _finalFullResponseForAck = "";
+
   // ── 以下受 Turn Queue 保護（讀 session → 執行 → 寫回 → dequeueTurn）──────
   try {
 
@@ -1487,6 +1493,7 @@ export async function* agentLoop(
   );
 
   // ── Background Job 結果 Queue（本地 shell 長期程式） ─────────────────────
+  // 注：_injectedJobIds / _injectedRunIds 已在 outer try 之前 declared（finally 訪問用）
   const pendingJobResults: Array<{ type: "completed" | "failed"; jobId: string; label: string; exitCode: number | null; stdoutPath?: string; reason?: string }> = [];
   const _onJobCompleted = (_pkey: string, jobId: string, label: string, exitCode: number | null, stdoutPath?: string) => {
     if (_pkey !== sessionKey) return;
@@ -1607,6 +1614,7 @@ export async function* agentLoop(
       if (pendingJobResults.length > 0) {
         for (const j of pendingJobResults) {
           yield { type: "background_job_relay", status: j.type, jobId: j.jobId, label: j.label, exitCode: j.exitCode, stdoutPath: j.stdoutPath, reason: j.reason };
+          _injectedJobIds.add(j.jobId);  // ACK 追蹤：turn 結束有 reply 才 markAcked
         }
         const jobParts = pendingJobResults.splice(0).map(j => {
           const status = j.type === "completed" ? `✅ 完成（exitCode=${j.exitCode ?? "null"}）` : `❌ 失敗：${j.reason ?? "unknown"}`;
@@ -1634,6 +1642,7 @@ export async function* agentLoop(
         // 先 yield 給 reply-handler 在主 stream 內按時序送到 Discord（避免 fire-and-forget 插隊）
         for (const r of pendingBgResults) {
           yield { type: "subagent_relay", status: r.type, runId: r.runId, label: r.label, content: r.content };
+          _injectedRunIds.add(r.runId);  // ACK 追蹤：turn 結束有 reply 才 markAcked
         }
         const INLINE_LIMIT = 8000; // ~2000 tokens
         const parts = pendingBgResults.splice(0).map(r => {
@@ -2723,6 +2732,7 @@ export async function* agentLoop(
     }
   } catch { /* ignore */ }
 
+  _finalFullResponseForAck = fullResponse;  // ACK scan 用（finally 內可訪問）
   yield { type: "done", text: fullResponse, turnCount: loopCount };
   log.debug(`[agent-loop] ── turn 完成 ── accountId=${accountId} channelId=${channelId} loops=${loopCount} tools=${tracker.toolCalls.length}`);
 
@@ -2746,5 +2756,90 @@ export async function* agentLoop(
     sessionManager.dequeueTurn(sessionKey);
     // 清掉 interrupt queue（避免下一 turn 收到上一 turn 殘留的插話）
     unregisterInterruptQueue(sessionKey);
+
+    // ── ACK Scan：補救 LLM silent end_turn ───────────────────────────────────
+    // 場景：bg-job/subagent 完成 → listener 接住注入 LLM messages → LLM 看到了
+    // 但 silent end_turn 沒 reply 任何文字 → 使用者收不到通知
+    // 對策：
+    // (a) 注入時 push 進 _injectedJobIds/_injectedRunIds（已做）
+    // (b) 本 finally：若 fullResponse 有內容 → 視為 reply 成功 → mark injected records acked=true
+    //     若 fullResponse 為空（silent end_turn）→ 不 mark → scan 補 wake
+    // (c) Scan 條件：acked === false（明確 false；undefined 是舊紀錄不掃）
+    // 注意：fire-and-forget，不阻塞 dequeueTurn / generator return
+    void (async () => {
+      try {
+        const { getBackgroundJobRegistry } = await import("./background-job-registry.js");
+        const { wakeAgentForCompletion } = await import("./wake-agent.js");
+        const bgReg = getBackgroundJobRegistry();
+        // (b) 有 reply → mark injected acked=true
+        const hasReply = _finalFullResponseForAck.trim().length > 0;
+        if (hasReply) {
+          if (bgReg) for (const id of _injectedJobIds) bgReg.markAcked(id);
+          const subRegInline = getSubagentRegistry();
+          if (subRegInline) for (const id of _injectedRunIds) subRegInline.markAcked(id);
+        }
+        if (bgReg) {
+          const records = bgReg.listByParent(sessionKey);
+          for (const r of records) {
+            const isFinal = r.status === "completed" || r.status === "failed" || r.status === "timeout";
+            if (!isFinal || r.acked !== false) continue;  // 只掃明確 false（undefined 是舊紀錄不掃）
+            if (!r.discordChannelId) continue;
+            bgReg.markAcked(r.jobId);  // 先 mark 再 wake，避免 race
+            const isOk = r.status === "completed" && (r.exitCode === 0 || r.exitCode === null);
+            const injected = [
+              `[平台喚醒・補救] 你之前 spawn 的背景 job ${isOk ? "✅ 完成" : "❌ 失敗"}，但上個 turn 結束時沒回報使用者。`,
+              `- jobId: ${r.jobId}`,
+              `- label: ${r.label}`,
+              `- exitCode: ${r.exitCode ?? "null"}`,
+              r.stdoutPath ? `- stdout: ${r.stdoutPath}` : "",
+              ``,
+              `請務必回報結果給使用者（即使 1 句話），不要再 silent end_turn。`,
+            ].filter(Boolean).join("\n");
+            void wakeAgentForCompletion({
+              sessionKey: r.parentSessionKey,
+              channelId: r.discordChannelId,
+              accountId: r.accountId ?? accountId,
+              agentId: r.agentId ?? opts.agentId,
+              injectedMessage: injected,
+              source: "background-job",
+              recordId: r.jobId,
+            });
+          }
+        }
+        const subReg = getSubagentRegistry();
+        if (subReg) {
+          const records = subReg.listByParent(sessionKey);
+          for (const r of records) {
+            const isFinal = r.status === "completed" || r.status === "failed" || r.status === "timeout";
+            if (!isFinal || r.acked !== false) continue;
+            if (!r.discordChannelId) continue;
+            subReg.markAcked(r.runId);
+            const isOk = r.status === "completed";
+            const labelStr = r.label ?? r.task.slice(0, 60);
+            const resultPreview = (r.result ?? r.error ?? "(無輸出)").slice(0, 500);
+            const injected = [
+              `[平台喚醒・補救] 你之前 spawn 的子 agent ${isOk ? "✅ 完成" : "❌ 失敗"}，但上個 turn 結束時沒回報使用者。`,
+              `- runId: ${r.runId}`,
+              `- label: ${labelStr}`,
+              `- 結果預覽（前 500 字）：`,
+              `  ${resultPreview}`,
+              ``,
+              `請務必回報結果給使用者（即使 1 句話），不要再 silent end_turn。`,
+            ].join("\n");
+            void wakeAgentForCompletion({
+              sessionKey: r.parentSessionKey,
+              channelId: r.discordChannelId,
+              accountId: r.accountId,
+              agentId: r.parentAgentId ?? opts.agentId,
+              injectedMessage: injected,
+              source: "subagent",
+              recordId: r.runId,
+            });
+          }
+        }
+      } catch (err) {
+        log.warn(`[agent-loop] ACK scan 失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
   }
 }

@@ -46,8 +46,9 @@ export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeA
   _wakeDedup.add(dedupKey);
   setTimeout(() => _wakeDedup.delete(dedupKey), DEDUP_TTL_MS);
 
+  let markedActive = false;
   try {
-    const { getDiscordClient } = await import("./subagent-discord-bridge.js");
+    const { getDiscordClient, markParentStreamActive, unmarkParentStreamActive } = await import("./subagent-discord-bridge.js");
     const client = getDiscordClient();
     if (!client) return { ok: false, reason: "discord-client-not-ready" };
 
@@ -73,6 +74,11 @@ export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeA
     const provider = getProviderRegistry().resolve();
     const agentId = opts.agentId ?? getBootAgentId();
 
+    // mark active：wake 引發的 turn 期間，若內部 spawn 的 job/subagent 完成，
+    // platform.ts fallback 看到 isParentStreamActive=true 就走 listener 路徑（不重複 wake）
+    markParentStreamActive(opts.channelId);
+    markedActive = true;
+
     const gen = agentLoop(opts.injectedMessage, {
       platform: "discord",
       channelId: opts.channelId,
@@ -96,6 +102,9 @@ export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeA
       else if (ev.type === "done") { if (!totalText && ev.text) totalText = ev.text; break; }
       else if (ev.type === "error") { errored = ev.message; break; }
     }
+    // unmark：turn 結束 → 後續 fallback 應走 wake 路徑
+    unmarkParentStreamActive(opts.channelId);
+    markedActive = false;
 
     if (errored) {
       log.warn(`[wake-agent] agent-loop error session=${opts.sessionKey}: ${errored}`);
@@ -118,6 +127,12 @@ export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeA
     return { ok: true };
   } catch (err) {
     log.warn(`[wake-agent] 失敗 session=${opts.sessionKey} source=${opts.source}: ${err instanceof Error ? err.message : String(err)}`);
+    if (markedActive) {
+      try {
+        const { unmarkParentStreamActive } = await import("./subagent-discord-bridge.js");
+        unmarkParentStreamActive(opts.channelId);
+      } catch { /* 靜默 */ }
+    }
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 }
