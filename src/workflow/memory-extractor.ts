@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import { log } from "../logger.js";
 import { getMemoryEngine } from "../memory/engine.js";
-import { writeAtom } from "../memory/atom.js";
+import { writeAtom, touchAtom } from "../memory/atom.js";
 import type { CatClawEvents } from "../core/event-bus.js";
 import type { KnowledgeItem } from "../memory/extract.js";
+import type { AtomFragment } from "../memory/recall.js";
 type EventBus = {
   on<K extends keyof CatClawEvents>(event: K, listener: (...args: CatClawEvents[K]) => void): unknown;
 };
@@ -53,6 +54,44 @@ interface AccumBuffer {
 const _accumBuffers = new Map<string, AccumBuffer>();
 let _cooldownMs = 120_000;
 
+/**
+ * 萃取前向量去重門檻：cosine score ≥ 此值的既有 atom 視為已存在 → 跳過 + bump confirmations
+ *
+ * 議題：~/WellsDB/CatClaw議題追蹤/2026-05-06_議題_記憶萃取品質_臨時記憶重複片段
+ * decision = 深究、ABC 都處理；本 const 對應 Sprint 1 = 方向 A
+ */
+const DEDUP_THRESHOLD = 0.85;
+
+/**
+ * 查詢 item.content 是否與既有 atom 高度相似（vector cosine）
+ *
+ * - 借 engine.recall 既有路徑（vectorSearch=true / topK=3）
+ * - 命中 vector match 且 score ≥ DEDUP_THRESHOLD → 視為重複
+ * - 任何錯誤（embedding 服務不在、ollama 掛掉等）→ fallback false（不擋寫入）
+ */
+async function checkVectorDedup(
+  content: string,
+  ctx: { accountId: string; projectId?: string },
+): Promise<{ duplicate: boolean; fragment?: AtomFragment }> {
+  try {
+    const engine = getMemoryEngine();
+    const result = await engine.recall(
+      content,
+      { accountId: ctx.accountId, projectId: ctx.projectId, skipCache: true },
+      { vectorSearch: true, vectorTopK: 3 },
+    );
+    if (!result.fragments?.length) return { duplicate: false };
+    const top = result.fragments[0]!;
+    if (top.matchedBy === "vector" && top.score >= DEDUP_THRESHOLD) {
+      return { duplicate: true, fragment: top };
+    }
+    return { duplicate: false };
+  } catch (err) {
+    log.debug(`[memory-extractor] dedup 查詢失敗（fallback 直接寫入）：${err instanceof Error ? err.message : String(err)}`);
+    return { duplicate: false };
+  }
+}
+
 async function writeItems(items: KnowledgeItem[], ctx: { accountId: string; projectId?: string }): Promise<void> {
   if (!items.length) return;
   const engine = getMemoryEngine();
@@ -68,6 +107,15 @@ async function writeItems(items: KnowledgeItem[], ctx: { accountId: string; proj
         log.debug(`[memory-extractor] write-gate 阻擋 (${gate.reason})：${item.content.slice(0, 40)}`);
         continue;
       }
+
+      // 萃取前向量去重：與既有 atom 高度相似 → 跳過寫入 + bump confirmations
+      const dedup = await checkVectorDedup(item.content, ctx);
+      if (dedup.duplicate && dedup.fragment) {
+        try { touchAtom(dedup.fragment.atom.path); } catch { /* 觸碰失敗不致命 */ }
+        log.info(`[memory-extractor] dedup skip: "${item.content.slice(0, 40)}" ≈ ${dedup.fragment.atom.name} (cos=${dedup.fragment.score.toFixed(3)})`);
+        continue;
+      }
+
       const name = `ext_${tsName()}_${safeName(item.content)}`;
       const dir = layerDir(globalDir, item.targetLayer, ctx);
       writeAtom(dir, name, {
