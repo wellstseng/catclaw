@@ -7743,8 +7743,11 @@ export class DashboardServer {
               const body = Buffer.concat(chunks).toString("utf-8");
               const parsed = JSON.parse(body);
               if (!Array.isArray(parsed)) throw new Error("格式錯誤：需要陣列");
-              const { saveCliBridgeConfigs } = await import("../cli-bridge/index.js");
-              saveCliBridgeConfigs(parsed);
+              const cliBridgeMod = await import("../cli-bridge/index.js");
+              cliBridgeMod.saveCliBridgeConfigs(parsed);
+              // 立即觸發 hot-reload（不等 watchFile 2 秒 interval、消除 timing race）
+              try { await cliBridgeMod.triggerHotReload(); }
+              catch (err) { log.warn(`[dashboard] triggerHotReload 失敗（fallback 等 watchFile）：${err instanceof Error ? err.message : String(err)}`); }
               res.writeHead(200); res.end(JSON.stringify({ success: true }));
             } catch (err) {
               res.writeHead(400); res.end(JSON.stringify({ error: String(err) }));

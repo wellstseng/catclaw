@@ -585,6 +585,17 @@ function configSnapshotJson(config: CliBridgeConfig, channelId: string): string 
   return JSON.stringify(top);
 }
 
+/**
+ * 立即觸發 hot-reload（給 dashboard save 等明確 user 操作用，不等 watchFile interval）
+ *
+ * 議題：~/WellsDB/CatClaw議題追蹤/2026-05-14_優化_CLIBridge設定儲存後重啟套用
+ * decision = 已啟動的cli應該要終止並重啟；保證 save 後立即 shutdown + rebuild
+ */
+export async function triggerHotReload(): Promise<void> {
+  log.info(`[cli-bridge] 手動觸發 hot-reload`);
+  await hotReload();
+}
+
 async function hotReload(): Promise<void> {
   if (!_discordClient) return;
 
