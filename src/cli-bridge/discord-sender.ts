@@ -52,6 +52,9 @@ export interface BridgeSender {
   /** 註冊 messageCreate 監聽（僅 IndependentBot 有效） */
   onMessage(callback: OnMessageCallback): void;
 
+  /** 立即停止接收新訊息 — shutdown 開頭呼叫，避免 30s drain 期間訊息持續打進 draining bridge */
+  stopReceiving(): void;
+
   /** 取得 bot user ID（用於 mention 判斷） */
   getBotUserId(): string | null;
 
@@ -204,6 +207,12 @@ export class IndependentBotSender implements BridgeSender {
     this.messageCallbacks.push(callback);
   }
 
+  stopReceiving(): void {
+    if (this.messageCallbacks.length === 0) return;
+    this.messageCallbacks = [];
+    log.info("[bridge-sender] independent bot 停止接收新訊息（messageCallbacks 已清空）");
+  }
+
   getBotUserId(): string | null {
     return this.client?.user?.id ?? null;
   }
@@ -272,6 +281,10 @@ export class MainBotSender implements BridgeSender {
     // MainBot 模式不自行監聯，由主 bot 的 discord.ts 路由處理
   }
 
+  stopReceiving(): void {
+    // MainBot 模式由 discord.ts 路由，無 callback 可清；no-op
+  }
+
   getBotUserId(): string | null {
     return this.mainClient.user?.id ?? null;
   }
@@ -298,6 +311,7 @@ function createChannelProxy(base: BridgeSender, channel: GuildTextBasedChannel):
     editComponents: (message: Message, options: MessageEditOptions) => message.edit(options).then(() => {}),
     sendTyping: () => { void channel.sendTyping(); },
     onMessage: () => {},
+    stopReceiving: () => {},
     getBotUserId: () => base.getBotUserId(),
     withChannel: (ch: GuildTextBasedChannel) => createChannelProxy(base, ch),
     destroy: () => Promise.resolve(),

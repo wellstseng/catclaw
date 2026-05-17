@@ -287,8 +287,13 @@ async function autoSpawnBridge(channelId: string, template: CliBridge, triggerMs
     } as Parameters<typeof handleCliBridgeReply>[3], newConfig, imageBlocks);
 
     // 持久化到 cli-bridges.json
+    // 先 update snapshot 再 save，pre-empt watchFile 觸發的 hotReload，
+    // 否則 hotReload 會把 snapshot=undefined 跟新檔 diff 判定為「config 變了」
+    // 立刻 shutdown 剛 spawn 出來的 bridge
     const allConfigs = loadAllCliBridgeConfigs();
-    allConfigs.push({ ...newConfig, enabled: true });
+    const persisted = { ...newConfig, enabled: true };
+    allConfigs.push(persisted);
+    _lastConfigJson.set(channelId, configSnapshotJson(persisted, channelId));
     saveCliBridgeConfigs(allConfigs);
     log.info(`[cli-bridge] auto-spawn 已持久化：${label}`);
   } catch (err) {
@@ -596,7 +601,35 @@ export async function triggerHotReload(): Promise<void> {
   await hotReload();
 }
 
+/**
+ * hotReload mutex：
+ * - triggerHotReload + watchFile 同時觸發時，避免兩條 hotReload 平行對同一 bridge
+ *   call shutdown，把 bridge 拖進「draining 30 秒黑洞」期間每則訊息都噴
+ *   ❌ bridge 正在關閉。
+ * - 第二個 call 進來時若正在跑，僅標記 pending；第一個跑完會接著再跑一次，
+ *   接住期間任何 disk 變更，不會漏 hot-reload。
+ */
+let _hotReloadRunning = false;
+let _hotReloadPending = false;
+
 async function hotReload(): Promise<void> {
+  if (_hotReloadRunning) {
+    _hotReloadPending = true;
+    log.info(`[cli-bridge] hot-reload 已在執行，標記 pending 等當前完成後再跑`);
+    return;
+  }
+  _hotReloadRunning = true;
+  try {
+    do {
+      _hotReloadPending = false;
+      await doHotReload();
+    } while (_hotReloadPending);
+  } finally {
+    _hotReloadRunning = false;
+  }
+}
+
+async function doHotReload(): Promise<void> {
   if (!_discordClient) return;
 
   const newConfigs = loadCliBridgeConfigs();

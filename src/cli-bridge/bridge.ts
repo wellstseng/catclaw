@@ -383,6 +383,9 @@ export class CliBridge {
   async shutdown(): Promise<void> {
     log.info(`[cli-bridge:${this.label}] shutdown`);
     this._draining = true;
+    // 立刻停 sender 對外接收，避免 drain 30s 期間新訊息持續打進 draining bridge
+    // 噴 ❌ bridge 正在關閉。pending turn 仍可用 sender.send/edit 寫回 channel。
+    try { this._sender?.stopReceiving(); } catch { /* ignore */ }
     this.stopKeepAlive();
 
     // 等 pending turns 自然完成（最多 shutdownDrainTimeoutMs）

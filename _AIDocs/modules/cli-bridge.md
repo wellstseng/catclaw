@@ -1,6 +1,6 @@
 # CLI Bridge 模組
 
-> 原始碼：`src/cli-bridge/` | 更新：2026-04-29
+> 原始碼：`src/cli-bridge/` | 更新：2026-05-17
 
 ## 定位
 
@@ -35,6 +35,9 @@
 - **`--resume` 取代 `--session-id`** — `--session-id` 會因 `~/.claude/projects/<cwd>/<uuid>.jsonl` 存在報 "already in use"；`--resume` 直接載入既有 session 不做此檢查
 - **Hot-reload sessionId 排除** — `configSnapshotJson()` 比對設定時排除 sessionId，避免 `persistSessionId()` 觸發不必要的 bridge 重建
 - **Hot-reload 開關** — `watchConfigFile()` 啟動前檢查 `config.hotReload.cliBridges`（預設 true）；設 false 時不啟動 fs.watch，所有變更需重啟才生效
+- **Hot-reload mutex** — `hotReload()` 由 `_hotReloadRunning` / `_hotReloadPending` 序列化，避免 `triggerHotReload`（dashboard save）+ `watchFile`（fs 事件）平行觸發兩條 hotReload 同時對同一 bridge call shutdown，把 bridge 拖入「draining 30s 黑洞」期間每則訊息都噴 `❌ bridge 正在關閉`。第二次進來只標 pending，第一次跑完會自動再跑一次接住 disk 變更
+- **Drain 期間立刻停外部入口** — `bridge.shutdown()` 把 `_draining=true` 後**立刻** `_sender.stopReceiving()` 清空 `messageCallbacks`，新 Discord 訊息不再 dispatch 進 draining bridge，會走 inbound history 或喚醒新 bridge。Pending turn 仍可用 sender.send/edit 回寫 channel（30s drain timeout 內完成）
+- **autoSpawn snapshot pre-empt** — `autoSpawnBridge()` 寫 `cli-bridges.json` 前先 `_lastConfigJson.set(channelId, ...)`，否則 watchFile 觸發的 hotReload 會把 `undefined` snapshot 跟新檔 diff 判定為 config 變更，立刻 shutdown 剛 spawn 出來的 bridge
 - **process.lastStderr** — `CliProcess` 記錄最後 stderr 輸出，供 bridge crash 偵測使用
 - **圖片附件（multimodal stdin）** — `reply.ts` `extractAttachments()` 下載支援的圖片（png/jpeg/gif/webp，≤5MB）並 base64 編碼成 `StdinImageBlock[]`；`bridge.send()` 有 `imageBlocks` 時改送 `content: [{type:"text"}, {type:"image", source:{type:"base64", ...}}]` 而非純字串。避免 Claude CLI 把 Discord CDN URL 當 image URL source 傳給 Anthropic API（CDN 權限/過期會導致 "Could not process image" 400）。下載失敗或超過大小限制時降級為 URL 文字描述。
 - **權限審批（D3）** — `dangerouslySkipPermissions` **預設 false**（fail-safe）。`process.ts` spawn 時走互斥分支：
