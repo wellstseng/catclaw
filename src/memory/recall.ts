@@ -274,7 +274,13 @@ export async function recall(
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const topFragments = scored.slice(0, maxResults);
+  const rawTop = scored.slice(0, maxResults);
+
+  // ── Step 5.5：注入時向量去重（議題 #記憶萃取品質 Sprint 2 = 方向 C）─────────
+  // 取 atom.content 重新 embed、與已 accept 的 fragment 兩兩比 cosine；
+  // ≥ DEDUP_INJECT_THRESHOLD 視為主題重複，跳過低分的那個。
+  // embed 失敗 / cosine 失敗 → 直接 push（不擋注入主路徑）。
+  const topFragments = await dedupFragmentsByVector(rawTop);
 
   // ── touchAtom + cache ──
   for (const f of topFragments) {
@@ -294,4 +300,67 @@ export async function recall(
 /** 清除 recall cache（測試用） */
 export function clearRecallCache(): void {
   _cache.clear();
+}
+
+// ── 向量去重 helpers（議題 #記憶萃取品質 Sprint 2 = 方向 C）──────────────────
+
+const DEDUP_INJECT_THRESHOLD = 0.85;
+
+/** 兩個向量的 cosine 相似度（0~1）。長度不符或 0 向量回 0 */
+function cosineSim(a: number[], b: number[]): number {
+  if (a.length === 0 || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i]!, bi = b[i]!;
+    dot += ai * bi;
+    na += ai * ai;
+    nb += bi * bi;
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom > 0 ? dot / denom : 0;
+}
+
+/**
+ * 對 fragments 做兩兩 cosine 去重（已按 score 排序、保留高分那筆）
+ *
+ * - 每個 atom.content embed 一次（typical topK ≤ 5，成本可接受）
+ * - embed 失敗的 fragment 直接通過（不擋注入）
+ */
+async function dedupFragmentsByVector(fragments: AtomFragment[]): Promise<AtomFragment[]> {
+  if (fragments.length <= 1) return fragments;
+  const accepted: AtomFragment[] = [];
+  const acceptedVecs: number[][] = [];
+
+  for (const f of fragments) {
+    let vec: number[] = [];
+    try {
+      vec = await embedOne(f.atom.content);
+    } catch {
+      // embed 失敗 → 不能比對、直接通過
+      accepted.push(f);
+      acceptedVecs.push([]);
+      continue;
+    }
+    if (!vec.length) {
+      accepted.push(f);
+      acceptedVecs.push([]);
+      continue;
+    }
+    let isDup = false;
+    for (let i = 0; i < acceptedVecs.length; i++) {
+      const acceptedVec = acceptedVecs[i]!;
+      if (acceptedVec.length === 0) continue;
+      const sim = cosineSim(vec, acceptedVec);
+      if (sim >= DEDUP_INJECT_THRESHOLD) {
+        log.debug(`[recall] dedup skip ${f.atom.name} ≈ ${accepted[i]!.atom.name} (cos=${sim.toFixed(3)})`);
+        isDup = true;
+        break;
+      }
+    }
+    if (!isDup) {
+      accepted.push(f);
+      acceptedVecs.push(vec);
+    }
+  }
+  return accepted;
 }
