@@ -1,6 +1,6 @@
 # providers — LLM Provider 系統
 
-> 更新日期：2026-04-20
+> 更新日期：2026-05-19
 
 ## 檔案
 
@@ -21,6 +21,8 @@
 ## ClaudeApiProvider（claude-api.ts）
 
 使用 `@mariozechner/pi-ai` v0.58.0 的 `streamSimpleAnthropic` 呼叫 Anthropic API。
+
+`ProviderOpts.thinking` 會直接傳入 pi-ai 的 unified `reasoning` 選項，支援 `/think` / mode preset / dashboard chat 傳入的 `minimal | low | medium | high | xhigh`。
 
 ### 核心流程
 
@@ -75,6 +77,10 @@ pi-ai 使用分離的 `ToolResultMessage`（role: "toolResult"）。
 ```
 
 **不使用** `token: "${ENV_VAR}"` 或 `profiles[]`，已移除。
+
+## CodexOAuthProvider（codex-oauth.ts）
+
+Codex OAuth 走手刻 ChatGPT backend Responses body，不經 pi-ai stream helper。`ProviderOpts.thinking` 會轉成 `body.reasoning = { effort, summary: "auto" }`；GPT-5.2+ / GPT-5.3+ / GPT-5.4+ / GPT-5.5+ 不接受 `minimal` 時會降成 `low`，對齊 pi-ai Codex provider 的 clamp 行為。
 
 ## AuthProfileStore（auth-profile-store.ts）
 

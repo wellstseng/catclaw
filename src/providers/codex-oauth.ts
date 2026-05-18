@@ -153,6 +153,8 @@ interface ResponsesChunk {
   };
 }
 
+type ReasoningEffort = NonNullable<ProviderOpts["thinking"]>;
+
 // ── 預設值 ────────────────────────────────────────────────────────────────────
 
 const DEFAULT_TOKEN_PATH = "~/.codex/auth.json";
@@ -164,6 +166,16 @@ const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 // token 提前 5 分鐘刷新
 const REFRESH_BUFFER_MS = 5 * 60_000;
+
+function normalizeReasoningEffort(modelId: string, effort: ReasoningEffort): ReasoningEffort {
+  const id = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  if ((id.startsWith("gpt-5.2") || id.startsWith("gpt-5.3") || id.startsWith("gpt-5.4") || id.startsWith("gpt-5.5")) && effort === "minimal") {
+    return "low";
+  }
+  if (id === "gpt-5.1" && effort === "xhigh") return "high";
+  if (id === "gpt-5.1-codex-mini") return effort === "high" || effort === "xhigh" ? "high" : "medium";
+  return effort;
+}
 
 // ── CodexOAuthProvider ────────────────────────────────────────────────────────
 
@@ -335,6 +347,13 @@ export class CodexOAuthProvider implements LLMProvider {
       tool_choice: "auto",
       parallel_tool_calls: true,
     };
+
+    if (opts.thinking) {
+      body["reasoning"] = {
+        effort: normalizeReasoningEffort(this.modelId, opts.thinking),
+        summary: "auto",
+      };
+    }
 
     // ChatGPT backend 把 instructions 當必填（`Instructions are required`），所以一律送
     body["instructions"] = opts.systemPrompt ?? "";

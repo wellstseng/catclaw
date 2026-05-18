@@ -1,7 +1,7 @@
 # modules/dashboard — Web Dashboard + REST API
 
 > 檔案：`src/core/dashboard.ts` (~5700 行)
-> 更新日期：2026-04-21
+> 更新日期：2026-05-19
 
 ## 職責
 
@@ -36,6 +36,10 @@ Bearer token 認證（可選）：
 | Pipeline | 管線設定總覽 + Embedding/Extract Model 切換 + Ollama 模型管理 + Vector Resync |
 | CLI Bridge | 持久 CLI Bridge 控制台（狀態、即時日誌、turn 歷程、Console 輸入、控制按鈕、idleSuspendMs 設定） |
 | Logs | PM2 日誌 tail + SSE 即時串流 |
+
+## Dashboard Chat
+
+對話分頁提供 `Think` 操作選項：`off / minimal / low / medium / high / xhigh`。選項存於瀏覽器 localStorage，送出 `/api/chat` 時以 `thinking` 欄位傳入 agent loop，最後由 Claude API provider 或 Codex OAuth provider 套用到 upstream reasoning/thinking level。
 
 ## REST API 端點
 

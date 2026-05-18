@@ -48,6 +48,7 @@ import { getContextEngine } from "./context-engine.js";
 import { getInboundHistoryStore } from "../discord/inbound-history.js";
 import { PROTECTED_WRITE_PATHS_DEFAULT, PROTECTED_READ_PATHS_DEFAULT } from "../safety/guard.js";
 import { getAllHealth as healthGetAll, getStartupResults as healthGetStartup } from "./health-monitor.js";
+import type { ThinkingLevel } from "./config.js";
 
 // ── Codex OAuth 狀態 ────────────────────────────────────────────────────────
 let _codexOAuthState: { status: string; authUrl?: string; expiresAt?: string; error?: string } | null = null;
@@ -989,6 +990,15 @@ label.cfg-toggle { min-width: 36px; }
       </select>
       <button class="btn btn-sm" onclick="refreshChatSessions()" title="重新整理 session 列表">🔄</button>
       <button class="btn btn-sm btn-red" onclick="clearChatSession()">🗑 清除</button>
+      <label style="font-size:0.78rem;color:var(--fg2);margin-left:6px">Think:</label>
+      <select id="chat-thinking" onchange="setChatThinkingPref(this.value)" style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem">
+        <option value="">off</option>
+        <option value="minimal">minimal</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+      </select>
       <span id="chat-status" style="font-size:0.72rem;color:var(--fg3)">就緒</span>
     </div>
     <div id="chat-messages" style="flex:1;overflow-y:auto;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:0.85rem;line-height:1.6">
@@ -4614,6 +4624,21 @@ async function pipelineRecallTest() {
 
 // ── Dashboard Chat ──────────────────────────────────────────────────────────
 let _chatBusy = false;
+const CHAT_THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+
+function setChatThinkingPref(value) {
+  const level = CHAT_THINKING_LEVELS.includes(value) ? value : '';
+  localStorage.setItem('cc-chat-thinking', level);
+}
+
+function initChatThinkingPref() {
+  const sel = document.getElementById('chat-thinking');
+  if (!sel) return;
+  const level = CHAT_THINKING_LEVELS.includes(localStorage.getItem('cc-chat-thinking'))
+    ? localStorage.getItem('cc-chat-thinking')
+    : '';
+  sel.value = level || '';
+}
 
 function appendChatMsg(role, text) {
   const el = document.getElementById('chat-messages');
@@ -4655,12 +4680,13 @@ async function sendChat() {
   const assistantDiv = appendChatMsg('assistant', '');
 
   const sessionKey = document.getElementById('chat-session').value || '';
+  const thinking = document.getElementById('chat-thinking')?.value || '';
 
   try {
     const resp = await fetch('/api/chat' + (_authToken ? '?token=' + encodeURIComponent(_authToken) : ''), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, sessionKey }),
+      body: JSON.stringify({ message: text, sessionKey, thinking }),
     });
 
     if (!resp.ok) {
@@ -5231,6 +5257,7 @@ function copyToolLog() {
 
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 loadBuildInfo();
+initChatThinkingPref();
 loadOverview();
 loadStatus();
 setInterval(loadStatus, 30000);
@@ -7210,6 +7237,9 @@ export class DashboardServer {
               if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: "message is required" })); return; }
 
               const rawSessionKey = String(body["sessionKey"] ?? "").trim();
+              const rawThinking = String(body["thinking"] ?? "").trim().toLowerCase();
+              const thinkingLevels = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+              const thinking = thinkingLevels.has(rawThinking) ? rawThinking as ThinkingLevel : undefined;
 
               const { agentLoop } = await import("./agent-loop.js");
               const { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRegistry, getPlatformSafetyGuard } = await import("./platform.js");
@@ -7275,6 +7305,7 @@ export class DashboardServer {
                 systemPrompt: pipeline.systemPrompt || undefined,
                 allowSpawn: true,
                 _sessionKeyOverride: sessionKey,
+                ...(thinking ? { thinking } : {}),
                 ...(pipeline.sessionMemoryOpts ? { sessionMemory: pipeline.sessionMemoryOpts } : {}),
                 trace: pipeline.trace,
                 promptBreakdownHints: pipeline.promptBreakdownHints,
