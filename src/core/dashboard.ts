@@ -990,15 +990,6 @@ label.cfg-toggle { min-width: 36px; }
       </select>
       <button class="btn btn-sm" onclick="refreshChatSessions()" title="重新整理 session 列表">🔄</button>
       <button class="btn btn-sm btn-red" onclick="clearChatSession()">🗑 清除</button>
-      <label style="font-size:0.78rem;color:var(--fg2);margin-left:6px">Think:</label>
-      <select id="chat-thinking" onchange="setChatThinkingPref(this.value)" style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem">
-        <option value="">off</option>
-        <option value="minimal">minimal</option>
-        <option value="low">low</option>
-        <option value="medium">medium</option>
-        <option value="high">high</option>
-        <option value="xhigh">xhigh</option>
-      </select>
       <span id="chat-status" style="font-size:0.72rem;color:var(--fg3)">就緒</span>
     </div>
     <div id="chat-messages" style="flex:1;overflow-y:auto;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:0.85rem;line-height:1.6">
@@ -2967,9 +2958,20 @@ async function loadModelsConfig() {
     const fallbacks = (mc.fallbacks || []).join(', ') || '(無)';
     const aliases = mc.aliases || {};
     const aliasKeys = Object.keys(aliases);
+    const thinking = mc.thinking || '';
 
     let html = '<div style="margin-bottom:12px"><strong style="color:#818cf8">當前模型：</strong><span style="color:#34d399;font-size:1.1em;font-weight:bold">' + primary + '</span>';
     html += '  <span style="color:#888;font-size:0.8em;margin-left:8px">fallback: ' + fallbacks + '</span></div>';
+    html += '<div style="margin-bottom:12px;padding:10px;background:#161827;border-radius:6px;border:1px solid #2a2d3e;display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+    html += '<strong style="color:#818cf8;font-size:0.82rem">Dashboard Think Level</strong>';
+    html += '<select id="models-thinking" onchange="setModelThinking(this.value)" style="padding:4px 8px;background:#0f1117;color:#e0e0e0;border:1px solid #2a2d3e;border-radius:4px;font-size:0.78rem">';
+    for (const lv of ['', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
+      const label = lv || 'off';
+      html += '<option value="' + lv + '"' + (thinking === lv ? ' selected' : '') + '>' + label + '</option>';
+    }
+    html += '</select>';
+    html += '<span style="color:#888;font-size:0.75rem">套用於 Dashboard 對話；Discord 仍可用 /think 或 /mode 控制。</span>';
+    html += '</div>';
 
     // ── 依憑證 provider 分組快捷 ──────────────────────────────────────────────
     // 取 auth-profiles.statuses 的 keys = 有實際憑證的 provider 列表
@@ -3135,6 +3137,18 @@ async function switchPrimary(alias) {
       setTimeout(() => { msg.textContent = '已切換為 ' + alias + '（已重啟）'; loadModelsConfig(); }, 3000);
     } else { msg.className = 'msg err'; msg.textContent = d.error; }
   } catch(e) { msg.className = 'msg err'; msg.textContent = '切換失敗：' + e; }
+}
+
+async function setModelThinking(level) {
+  const msg = document.getElementById('models-config-msg');
+  try {
+    const d = await authFetch('/api/models-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'set-thinking', thinking:level})}).then(r=>r.json());
+    if (d.success) {
+      msg.className = 'msg ok';
+      msg.textContent = 'Dashboard Think Level 已更新為 ' + (level || 'off');
+      loadModelsConfig();
+    } else { msg.className = 'msg err'; msg.textContent = d.error; }
+  } catch(e) { msg.className = 'msg err'; msg.textContent = '更新失敗：' + e; }
 }
 
 async function addRoutingEntry(mapKey) {
@@ -4624,21 +4638,6 @@ async function pipelineRecallTest() {
 
 // ── Dashboard Chat ──────────────────────────────────────────────────────────
 let _chatBusy = false;
-const CHAT_THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-
-function setChatThinkingPref(value) {
-  const level = CHAT_THINKING_LEVELS.includes(value) ? value : '';
-  localStorage.setItem('cc-chat-thinking', level);
-}
-
-function initChatThinkingPref() {
-  const sel = document.getElementById('chat-thinking');
-  if (!sel) return;
-  const level = CHAT_THINKING_LEVELS.includes(localStorage.getItem('cc-chat-thinking'))
-    ? localStorage.getItem('cc-chat-thinking')
-    : '';
-  sel.value = level || '';
-}
 
 function appendChatMsg(role, text) {
   const el = document.getElementById('chat-messages');
@@ -4680,13 +4679,12 @@ async function sendChat() {
   const assistantDiv = appendChatMsg('assistant', '');
 
   const sessionKey = document.getElementById('chat-session').value || '';
-  const thinking = document.getElementById('chat-thinking')?.value || '';
 
   try {
     const resp = await fetch('/api/chat' + (_authToken ? '?token=' + encodeURIComponent(_authToken) : ''), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, sessionKey, thinking }),
+      body: JSON.stringify({ message: text, sessionKey }),
     });
 
     if (!resp.ok) {
@@ -5257,7 +5255,6 @@ function copyToolLog() {
 
 // ── 初始化 ───────────────────────────────────────────────────────────────────
 loadBuildInfo();
-initChatThinkingPref();
 loadOverview();
 loadStatus();
 setInterval(loadStatus, 30000);
@@ -6549,6 +6546,20 @@ export class DashboardServer {
               const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as Record<string, unknown>;
               const data = existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")) : {};
 
+              if (body.action === "set-thinking") {
+                const thinking = String(body.thinking ?? "").trim().toLowerCase();
+                const validThinking = ["", "minimal", "low", "medium", "high", "xhigh"];
+                if (!validThinking.includes(thinking)) {
+                  throw new Error(`無效 think level：${thinking}`);
+                }
+                if (thinking) data.thinking = thinking;
+                else delete data.thinking;
+                writeFileSync(p, JSON.stringify(data, null, 2));
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: true, thinking: thinking || null }));
+                return;
+              }
+
               if (body.action === "set-primary" && body.primary) {
                 const primary = body.primary as string;
                 const aliases = data.aliases as Record<string, string> | undefined;
@@ -7239,7 +7250,16 @@ export class DashboardServer {
               const rawSessionKey = String(body["sessionKey"] ?? "").trim();
               const rawThinking = String(body["thinking"] ?? "").trim().toLowerCase();
               const thinkingLevels = new Set(["minimal", "low", "medium", "high", "xhigh"]);
-              const thinking = thinkingLevels.has(rawThinking) ? rawThinking as ThinkingLevel : undefined;
+              let thinking = thinkingLevels.has(rawThinking) ? rawThinking as ThinkingLevel : undefined;
+              if (!thinking) {
+                try {
+                  const { resolveCatclawDir } = await import("./config.js");
+                  const mcPath = join(resolveCatclawDir(), "models-config.json");
+                  const mc = existsSync(mcPath) ? JSON.parse(readFileSync(mcPath, "utf-8")) as Record<string, unknown> : {};
+                  const cfgThinking = String(mc["thinking"] ?? "").trim().toLowerCase();
+                  if (thinkingLevels.has(cfgThinking)) thinking = cfgThinking as ThinkingLevel;
+                } catch { /* optional dashboard default */ }
+              }
 
               const { agentLoop } = await import("./agent-loop.js");
               const { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRegistry, getPlatformSafetyGuard } = await import("./platform.js");
