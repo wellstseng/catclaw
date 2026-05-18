@@ -749,7 +749,7 @@ async function handleMessage(
           const isMentioned = botUserId ? firstMessage.mentions.has(botUserId) : true;
 
           if (!needsMention || isMentioned) {
-            await cliBridge.ensureAlive();
+            await cliBridge.ensureAlive({ drainInboundHistory: false });
             const { handleCliBridgeReply, extractAttachments } = await import("./cli-bridge/reply.js");
             const { consumeBridgeInboundHistory } = await import("./cli-bridge/index.js");
             const { text: attachmentText, imageBlocks } = await extractAttachments(firstMessage);

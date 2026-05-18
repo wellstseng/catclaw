@@ -276,7 +276,7 @@ async function autoSpawnBridge(channelId: string, template: CliBridge, triggerMs
     }
 
     // 啟動並處理觸發訊息
-    await bridge.ensureAlive();
+    await bridge.ensureAlive({ drainInboundHistory: false });
     const { handleCliBridgeReply, extractAttachments } = await import("./reply.js");
     const { text: attachmentText, imageBlocks } = await extractAttachments(triggerMsg);
     let fullText = triggerMsg.content.replace(/<@!?\d+>/g, "").trim() + attachmentText;
@@ -309,7 +309,7 @@ async function autoSpawnBridge(channelId: string, template: CliBridge, triggerMs
 function handleCrossChannelRoute(bridge: CliBridge, msg: Message): void {
   void (async () => {
     try {
-      await bridge.ensureAlive();
+      await bridge.ensureAlive({ drainInboundHistory: false });
       const { handleCliBridgeReply, extractAttachments } = await import("./reply.js");
       const { text: attachmentText, imageBlocks } = await extractAttachments(msg);
       let fullText = msg.content.replace(/<@!?\d+>/g, "").trim() + attachmentText;
@@ -410,7 +410,7 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
 
   void (async () => {
     try {
-      await bridge.ensureAlive();
+      await bridge.ensureAlive({ drainInboundHistory: false });
       const { handleCliBridgeReply, extractAttachments } = await import("./reply.js");
       const { text: attachmentText, imageBlocks } = await extractAttachments(msg);
       let fullText = msg.content + attachmentText;

@@ -20,7 +20,7 @@
 
 ## 關鍵設計
 
-- **Lazy Start + Idle Suspend** — 所有 bridge 啟動時只建立 CliBridge 物件 + Discord sender（收訊息用），**不 spawn CLI process**。第一則訊息進來時 `ensureAlive()` 觸發 process spawn（含 `--resume` sessionId）。閒置超過 `idleSuspendMs`（預設 10 分鐘）自動 `suspend()`：關 process、保留 sender，下次訊息再喚醒。`rebuildBridgeForChannel`（`/cd`、`/session new/set`）除外，仍 eager start。
+- **Lazy Start + Idle Suspend** — 所有 bridge 啟動時只建立 CliBridge 物件 + Discord sender（收訊息用），**不 spawn CLI process**。第一則訊息進來時 `ensureAlive({ drainInboundHistory: false })` 觸發 process spawn（含 `--resume` sessionId），路由端同步消費 inbound history 串進同一個 turn，避免 startup drain 另開 turn 和第一則訊息互相插話。閒置超過 `idleSuspendMs`（預設 10 分鐘）自動 `suspend()`：關 process、保留 sender，下次訊息再喚醒。`rebuildBridgeForChannel`（`/cd`、`/session new/set`）除外，仍 eager start。
 - **ensureAlive() mutex** — `_ensureAliveLock` Promise mutex 防止多訊息同時觸發雙 spawn。第二個 caller await 同一個 Promise。喚醒前先 `sendTyping()` 撐住 Discord。
 - **BridgeStatus: "suspended"** — 新增狀態，表示 sender 存活但 CLI process 已卸載。`idle` / `busy` = process 活；`suspended` = process 關閉等喚醒；`dead` = 啟動失敗或 shutdown。
 - **Idle Scanner** — `index.ts` 背景 interval（每 30s），掃描所有 status=idle 的 bridge，`Date.now() - lastUsedAt > idleSuspendMs` 時觸發 `suspend()`。
@@ -77,7 +77,7 @@
 | 長訊息分段 | `reply.ts` `splitForDiscord()` | 串流溢出 / 最終 flush 超過 Discord 2000 字上限時自動切段（優先換行切、跨段 fence 補 open/close），避免 `.slice(0, TEXT_LIMIT)` 靜默截斷 |
 | result fallback 文字 | `reply.ts` result handler | buffer 為空但 `result.text` 有值時送出該文字（常見於 permission deny 後 CLI 直接結束 turn）；`is_error` 且無文字時送 `⚠️ turn 結束（無回應文字）` |
 | 上線通知 | `bridge.ts` `sendStartupNotification()` | Bridge start 完成後通知綁定頻道，附帶該 session 未完成任務摘要 |
-| 上線補處理 inbound | `bridge.ts` `drainInboundHistoryOnStartup()` | Bridge start 結尾 fire-and-forget，`consumeForInjection(channelId, ..., "bridge:{label}")` 拿該 scope 全部未消費 inbound entries，加前綴「[bridge 上線補處理：...]」後 `bridge.send()` 丟進 CLI。無 entries 時 noop；避免離線期累積訊息被卡在 inbound 等下一則新訊息才觸發消費 |
+| 上線補處理 inbound | `bridge.ts` `drainInboundHistoryOnStartup()` | keepalive/eager `start()`、`restart()`、crash auto-restart 成功後 fire-and-forget，`consumeForInjection(channelId, ..., "bridge:{label}")` 拿該 scope 全部未消費 inbound entries，加前綴「[bridge 上線補處理：...]」後 `bridge.send()` 丟進 CLI。由 Discord 訊息或 cron 喚醒的 lazy `ensureAlive({ drainInboundHistory: false })` 不自動 drain；Discord 路由會同步消費 inbound 串進當前 turn，避免兩條路徑競爭同一份 inbound history |
 | Dashboard 監控 | `dashboard.ts` UI + `_cbAutoRefresh` | 10s 自動刷新狀態、SSE 即時串流、匯出按鈕、刷新按鈕 |
 | `/cd` 工作目錄切換 | `slash.ts` `handleCd()` + `index.ts` `rebuildBridgeForChannel()` | Slash command 切換 bridge cwd，原子重建路徑統一關舊建新，持久化到 `cli-bridges.json` |
 | `/session new/set` | `slash.ts` `handleSession()` + `index.ts` `rebuildBridgeForChannel()` | 改寫 channelConfig.sessionId 後走原子重建，讓新 process 以正確的 `--resume` 啟動 |

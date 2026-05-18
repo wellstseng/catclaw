@@ -573,7 +573,7 @@ async function execCliBridge(action: {
   }
 
   // 確保 CLI process 還活著（必要時觸發重啟）
-  await bridge.ensureAlive();
+  await bridge.ensureAlive({ drainInboundHistory: false });
 
   const handle = bridge.send(action.task, "cron", {
     user: "system-cron",

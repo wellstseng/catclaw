@@ -92,7 +92,7 @@ export class CliBridge {
 
   // ── 啟動 ──────────────────────────────────────────────────────────────────
 
-  async start(): Promise<void> {
+  async start(options: { drainInboundHistory?: boolean } = {}): Promise<void> {
     if (this._status === "busy" || this._status === "idle") {
       log.warn(`[cli-bridge:${this.label}] start: 已在執行中 (${this._status})`);
       return;
@@ -125,8 +125,10 @@ export class CliBridge {
       void this.sendStartupNotification();
 
       // ── 補處理 inbound history（離線期間累積的訊息）──
-      // 排在「已上線」之後 fire；Discord 先看到 ✅ 再看到 CLI 處理離線訊息
-      void this.drainInboundHistoryOnStartup();
+      // 由 Discord 訊息喚醒時，路由端會把 inbound 串進同一個 turn；避免這裡另開 turn 競爭。
+      if (options.drainInboundHistory !== false) {
+        void this.drainInboundHistoryOnStartup();
+      }
 
       // ── 依 workingDir 自動更新頻道 / 討論串名稱（fire-and-forget）──
       void this.applyAutoChannelName();
@@ -318,6 +320,7 @@ export class CliBridge {
       await this.spawnProcess();
       this._status = "idle";
       this.startKeepAlive();
+      void this.drainInboundHistoryOnStartup();
     } catch (err) {
       this._status = "dead";
       log.error(`[cli-bridge:${this.label}] restart failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -428,14 +431,14 @@ export class CliBridge {
 
   // ── Idle Suspend / Resume ──────────────────────────────────────────────────
 
-  async ensureAlive(): Promise<void> {
+  async ensureAlive(options: { drainInboundHistory?: boolean } = {}): Promise<void> {
     if (this._status === "idle" || this._status === "busy") return;
     if (this._ensureAliveLock) return this._ensureAliveLock;
     this._ensureAliveLock = (async () => {
       try {
         this._sender?.sendTyping();
         log.info(`[cli-bridge:${this.label}] 喚醒中（status=${this._status}）`);
-        await this.start();
+        await this.start(options);
       } finally {
         this._ensureAliveLock = null;
       }
@@ -752,7 +755,7 @@ export class CliBridge {
         line,
       );
     });
-    this.process.on("close", (code) => this.handleClose(code));
+    this.process.on("close", (code) => { void this.handleClose(code); });
     this.process.on("error", (err) => {
       log.error(`[cli-bridge:${this.label}] process error: ${err.message}`);
     });
@@ -921,10 +924,11 @@ export class CliBridge {
 
   // ── 內部：process crash 處理 ──────────────────────────────────────────────
 
-  private handleClose(code: number | null): void {
+  private async handleClose(code: number | null): Promise<void> {
     // 無論狀態如何，先清理 pending turns（防止 typing 永遠不停）
     const hadPending = this.turnListeners.size > 0;
     if (hadPending) {
+      await this.savePendingUserInputsToInboundHistory("crash");
       this.failAllPendingTurns(`process 關閉 (code=${code})`);
     }
 
@@ -992,6 +996,7 @@ export class CliBridge {
       this._crashHandling = false;
       this.startKeepAlive();
       log.info(`[cli-bridge:${this.label}] 重啟成功`);
+      void this.drainInboundHistoryOnStartup();
     } catch (err) {
       log.error(`[cli-bridge:${this.label}] 重啟失敗: ${err instanceof Error ? err.message : String(err)}`);
       // 繼續嘗試
