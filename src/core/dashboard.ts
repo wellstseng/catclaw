@@ -1098,7 +1098,35 @@ function switchTab(id, el) {
   if (id !== 'clibridge') cbDisconnectStream();
 }
 
-function refreshAll() { loadOverview(); loadStatus(); }
+function refreshAll() {
+  // 永遠刷頂部 overview / status 摘要
+  loadOverview();
+  loadStatus();
+  // 再依當前 tab 呼對應 loader（mirror switchTab 的 loader 配對）
+  const activePane = document.querySelector('.pane.active');
+  const tabId = activePane ? activePane.id.replace(/^pane-/, '') : '';
+  switch (tabId) {
+    case 'sessions': loadSessions(); break;
+    case 'inbound': loadInboundHistory(); break;
+    case 'chat': refreshChatSessions(); break;
+    case 'logs': loadErrorSnapshots(); loadHealth(); break;
+    case 'ops': loadSubagents(); loadRestartHistory(); break;
+    case 'tasks': loadTasks(); break;
+    case 'subagents': loadSubagentsFull(); break;
+    case 'bgjobs': loadBgJobs(); break;
+    case 'guardian': loadGuardianHits(); break;
+    case 'insights': loadInsights(); break;
+    case 'improvements': loadSkillImprovements(); break;
+    case 'auth': loadModelsConfig(); loadAuthProfiles(); loadModelsJson(); break;
+    case 'traces': loadTraces(); break;
+    case 'cron': loadCron(); break;
+    case 'config': loadCfg(); break;
+    case 'memory': loadAgentList().then(() => loadMemory()); break;
+    case 'pipeline': loadPipeline(); break;
+    case 'clibridge': cbLoadConfig(); loadCliBridges(); if (_cbSelectedLabel) cbLoadStatus(); break;
+    // overview 不另外呼，loadOverview/loadStatus 已涵蓋
+  }
+}
 
 // ── 概覽 ─────────────────────────────────────────────────────────────────────
 async function loadStatus() {
