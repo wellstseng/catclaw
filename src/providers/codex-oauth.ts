@@ -126,8 +126,11 @@ interface ResponsesInputItem {
 }
 
 interface ResponsesContentBlock {
-  type: "input_text" | "output_text";
-  text: string;
+  type: "input_text" | "output_text" | "input_image";
+  /** text 類別必填 */
+  text?: string;
+  /** input_image 必填，data URL 或公開 URL（OpenAI Responses API 規格） */
+  image_url?: string;
 }
 
 interface ResponsesChunk {
@@ -487,6 +490,16 @@ function convertToResponsesInput(messages: Message[]): ResponsesInputItem[] {
           content: [{
             type: msg.role === "user" ? "input_text" : "output_text",
             text: block.text,
+          }],
+        });
+      } else if (block.type === "image") {
+        // OpenAI Responses API 的圖片輸入格式：{type:"input_image", image_url:"data:<mime>;base64,<data>"}
+        // 漏這個分支會讓 image content 被靜默丟掉，模型只看到文字（trace 9d4c20ae：vision_file 收到「未收到任何圖片附件」回應）
+        result.push({
+          role: "user",
+          content: [{
+            type: "input_image",
+            image_url: `data:${block.mimeType};base64,${block.data}`,
           }],
         });
       } else if (block.type === "tool_use") {
