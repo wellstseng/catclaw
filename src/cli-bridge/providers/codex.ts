@@ -111,6 +111,34 @@ class CodexJsonRpcClient {
   }
 }
 
+// ── ThreadItem union shape (codex 0.130 v2 schema) ──────────────────────────
+//
+// 從 `codex app-server generate-json-schema --out ...` 的 ThreadItem oneOf 整理出來的
+// 共用欄位（各 item type 子集）。只挑要 surface 為 tool_call/tool_result 用得到的，
+// 不細分每個 type 的精確 union — 用 optional 接受所有可能組合，runtime 由 type 分流。
+interface CodexItem {
+  type?: string;
+  /** v1: functionCall name */
+  name?: string;
+  /** v2: mcpToolCall / dynamicToolCall / collabAgentToolCall 的工具名 */
+  tool?: string;
+  /** v1 localShellCall: string[]；v2 commandExecution: string */
+  command?: unknown;
+  /** webSearch */
+  query?: string;
+  /** fileChange */
+  changes?: Array<{ path?: string }>;
+  /** mcpToolCall: server 名 */
+  server?: string;
+  /** 完成狀態（多型別共用） */
+  status?: string;
+  /** 失敗原因（多型別共用：可能 string，也可能 { message: string } 之類 object） */
+  error?: unknown;
+  /** commandExecution */
+  exitCode?: number;
+  durationMs?: number;
+}
+
 // ── CodexProvider ────────────────────────────────────────────────────────────
 
 export class CodexProvider implements CliProvider {
@@ -416,38 +444,30 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
       }
 
       case "item/started": {
-        // 區分 item type：functionCall / localShellCall / mcpToolCall / collabAgentToolCall → tool_call
-        const item = p["item"] as { type?: string; name?: string; command?: unknown[] } | undefined;
+        const item = p["item"] as CodexItem | undefined;
         if (!item) return;
-        const itemType = item.type;
-        if (itemType === "functionCall" || itemType === "mcpToolCall") {
-          ctx.emit({ type: "tool_call", title: item.name ?? itemType });
-        } else if (itemType === "localShellCall") {
-          const cmd = Array.isArray(item.command) ? (item.command as string[]).join(" ").slice(0, 80) : "shell";
-          ctx.emit({ type: "tool_call", title: `shell: ${cmd}` });
-        } else if (itemType === "collabAgentToolCall") {
-          // 對齊 Claude Task tool_call 的 surfacing — 讓使用者看到「啟動了 subagent」
-          ctx.emit({ type: "tool_call", title: `subagent: ${item.name ?? "task"}` });
-        }
-        // userMessage / agentMessage / reasoning 的 started 不轉發（agentMessage 由 delta 帶內容）
+        const title = this.getItemTitle(item);
+        if (title) ctx.emit({ type: "tool_call", title });
+        // 不被 getItemTitle surface 的 item type（userMessage / hookPrompt / agentMessage /
+        // plan / reasoning / imageView / imageGeneration / *ReviewMode / contextCompaction）
+        // 都不轉發 tool_call — agentMessage / reasoning 由各自 delta notification 帶內容。
         return;
       }
 
       case "item/completed": {
-        const item = p["item"] as { type?: string; name?: string; status?: string; error?: string; durationMs?: number } | undefined;
+        const item = p["item"] as CodexItem | undefined;
         if (!item) return;
-        const itemType = item.type;
-        if (itemType === "functionCall" || itemType === "mcpToolCall" || itemType === "localShellCall" || itemType === "collabAgentToolCall") {
-          const title = itemType === "collabAgentToolCall"
-            ? `subagent: ${item.name ?? "task"}`
-            : (item.name ?? itemType);
-          ctx.emit({
-            type: "tool_result",
-            title,
-            duration_ms: typeof item.durationMs === "number" ? item.durationMs : undefined,
-            error: item.status === "failed" ? (item.error ?? "tool failed") : undefined,
-          });
-        }
+        const title = this.getItemTitle(item);
+        if (!title) return;
+        // 失敗判定：status=failed/declined；commandExecution 額外吃 exitCode != 0
+        const failed = item.status === "failed" || item.status === "declined" ||
+          (item.type === "commandExecution" && typeof item.exitCode === "number" && item.exitCode !== 0);
+        ctx.emit({
+          type: "tool_result",
+          title,
+          duration_ms: typeof item.durationMs === "number" ? item.durationMs : undefined,
+          error: failed ? this.extractItemErrorMessage(item) : undefined,
+        });
         return;
       }
 
@@ -476,6 +496,66 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
       default:
         ctx.emit({ type: "status", subtype: `codex:${method}`, raw: params });
     }
+  }
+
+  // ── Item type → tool_call/tool_result title 對映 ────────────────────────────
+  //
+  // 對齊 Claude provider 的 tool_use surfacing：所有「工具型」item 都 emit 為 tool_call。
+  // 非工具型（agentMessage / reasoning / userMessage / plan / *ReviewMode / contextCompaction
+  // / imageView / imageGeneration / hookPrompt）回 null，由呼叫端自行跳過。
+  //
+  // Schema 來源：codex 0.130 generate-json-schema 的 ThreadItem oneOf（16 種 variants）。
+  private getItemTitle(item: CodexItem): string | null {
+    switch (item.type) {
+      // ── v1 / legacy（舊版 codex 可能仍會發；保留向後相容） ──
+      case "functionCall":
+        return item.name ?? "functionCall";
+      case "localShellCall": {
+        const cmd = Array.isArray(item.command) ? (item.command as string[]).join(" ") : "shell";
+        return `shell: ${cmd.slice(0, 80)}`;
+      }
+
+      // ── v2（codex 0.130 主要 item types） ──
+      case "mcpToolCall": {
+        const tool = item.tool ?? item.name ?? "mcpToolCall";
+        return item.server ? `mcp:${item.server}/${tool}` : tool;
+      }
+      case "dynamicToolCall":
+        return item.tool ?? "tool";
+      case "commandExecution": {
+        const cmd = typeof item.command === "string" ? item.command : "shell";
+        return `shell: ${cmd.slice(0, 80)}`;
+      }
+      case "fileChange": {
+        const changes = Array.isArray(item.changes) ? item.changes : [];
+        const first = changes[0]?.path ?? "?";
+        return changes.length > 1
+          ? `Edit: ${first} (+${changes.length - 1})`
+          : `Edit: ${first}`;
+      }
+      case "webSearch": {
+        const q = (item.query ?? "").trim().slice(0, 80);
+        return q ? `WebSearch: ${q}` : "WebSearch";
+      }
+      case "collabAgentToolCall":
+        return `subagent: ${item.tool ?? "task"}`;
+
+      default:
+        return null;
+    }
+  }
+
+  /** error 欄位多型別共用（string 或 { message: string }）— 抽出可讀字串 */
+  private extractItemErrorMessage(item: CodexItem): string | undefined {
+    const raw = item.error;
+    if (typeof raw === "string") return raw;
+    if (raw && typeof raw === "object" && "message" in raw) {
+      return String((raw as { message: unknown }).message);
+    }
+    if (item.type === "commandExecution" && typeof item.exitCode === "number" && item.exitCode !== 0) {
+      return `exit ${item.exitCode}`;
+    }
+    return item.status ?? "failed";
   }
 
   // ── Server-request handler（Phase 3：依 askUser 有無決定走 Discord 按鈕審批 or 信任 auto-approve）
