@@ -149,6 +149,9 @@ export class CodexProvider implements CliProvider {
   private label = "";
   private savedSessionId: string | undefined;
   private currentTurnImageTmpFiles: string[] = [];
+  /** 當前 turn 內是否已見過 agentMessage item — 用於在第二個以後的 agentMessage 前插段落分隔。
+   *  Codex 一個 turn 內常分多個 agentMessage（中間穿插 reasoning），不插分隔會擠成一坨。 */
+  private sawAgentMessageInTurn = false;
 
   // ── 啟動 ──────────────────────────────────────────────────────────────────
 
@@ -384,6 +387,7 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
     }
     this.rpc = null;
     this.threadId = null;
+    this.sawAgentMessageInTurn = false;
     this.cleanupCurrentTurnImages();
   }
 
@@ -446,11 +450,22 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
       case "item/started": {
         const item = p["item"] as CodexItem | undefined;
         if (!item) return;
+        // agentMessage 邊界：Codex 一個 turn 內可能連發多個 agentMessage（中間夾 reasoning）。
+        // reasoning 走 thinking_delta，預設 showThinking=false 時不切段，會導致多個 agentMessage
+        // 的文字全部黏在同一個 Discord 訊息裡沒換行。這裡在第二個以後的 agentMessage 開始時
+        // 插一個 \n\n 段落分隔。tool_call 已透過 reply.ts 的 pendingSegmentReset 切段，不影響。
+        if (item.type === "agentMessage") {
+          if (this.sawAgentMessageInTurn) {
+            ctx.emit({ type: "text_delta", text: "\n\n" });
+          }
+          this.sawAgentMessageInTurn = true;
+          return;
+        }
         const title = this.getItemTitle(item);
         if (title) ctx.emit({ type: "tool_call", title });
-        // 不被 getItemTitle surface 的 item type（userMessage / hookPrompt / agentMessage /
-        // plan / reasoning / imageView / imageGeneration / *ReviewMode / contextCompaction）
-        // 都不轉發 tool_call — agentMessage / reasoning 由各自 delta notification 帶內容。
+        // 不被 getItemTitle surface 的 item type（userMessage / hookPrompt / plan / reasoning /
+        // imageView / imageGeneration / *ReviewMode / contextCompaction）都不轉發 tool_call —
+        // reasoning 由 item/reasoning/{textDelta,summaryTextDelta} 帶內容。
         return;
       }
 
@@ -475,6 +490,7 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
         const turn = p["turn"] as { status?: string; error?: { message?: string } } | undefined;
         const isError = turn?.status === "failed";
         const errText = turn?.error?.message;
+        this.sawAgentMessageInTurn = false; // 重置 agentMessage 邊界追蹤
         ctx.emit({ type: "result", is_error: isError, text: errText });
         return;
       }
