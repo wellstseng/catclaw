@@ -371,10 +371,31 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
 
   private handleNotification(method: string, params: unknown, ctx: ProviderContext): void {
     const p = (params ?? {}) as Record<string, unknown>;
+
+    // ── Subagent thread 過濾（對齊 ClaudeProvider 的 parent_tool_use_id 過濾邏輯）──
+    // Codex 0.130 subagent（collabAgentToolCall / _delegate / spawn_agent）會 spawn 子 thread。
+    // 主 thread 已透過 collabAgentToolCall tool_call 告知有 subagent 在跑，
+    // 子 thread 內部的 agentMessage / reasoning / item / turn / error 屬於實作細節，不轉發。
+    //
+    // Schema (codex 0.130 generate-json-schema) 確認以下 notification 都帶 required threadId：
+    //   item/agentMessage/delta, item/reasoning/textDelta, item/reasoning/summaryTextDelta,
+    //   item/started, item/completed, turn/started, turn/completed, error
+    // → 一律以 threadId 為過濾基準。
+    //
+    // thread/started 例外處理：沒有 params.threadId（只有 thread.id），會走到下面的 case
+    // 並用 `!this.threadId` 守門避免子 thread 蓋掉主 threadId。
+    const evtThreadId = p["threadId"] as string | undefined;
+    if (evtThreadId && this.threadId && evtThreadId !== this.threadId) {
+      return;
+    }
+
     switch (method) {
       case "thread/started": {
         const threadId = (p["thread"] as { id?: string } | undefined)?.id;
-        if (threadId) {
+        // 只接受首次 thread/started（postSpawn 的 thread/start 或 thread/resume 觸發）；
+        // 後續子 thread 的 thread/started 不能蓋過主 thread，否則 threadId 追蹤錯亂、
+        // 過濾邏輯反向（主變子、子變主）。
+        if (threadId && !this.threadId) {
           this.threadId = threadId;
           ctx.emit({ type: "session_init", sessionId: threadId });
         }
@@ -395,7 +416,7 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
       }
 
       case "item/started": {
-        // 區分 item type：functionCall / localShellCall / mcpToolCall → tool_call
+        // 區分 item type：functionCall / localShellCall / mcpToolCall / collabAgentToolCall → tool_call
         const item = p["item"] as { type?: string; name?: string; command?: unknown[] } | undefined;
         if (!item) return;
         const itemType = item.type;
@@ -404,6 +425,9 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
         } else if (itemType === "localShellCall") {
           const cmd = Array.isArray(item.command) ? (item.command as string[]).join(" ").slice(0, 80) : "shell";
           ctx.emit({ type: "tool_call", title: `shell: ${cmd}` });
+        } else if (itemType === "collabAgentToolCall") {
+          // 對齊 Claude Task tool_call 的 surfacing — 讓使用者看到「啟動了 subagent」
+          ctx.emit({ type: "tool_call", title: `subagent: ${item.name ?? "task"}` });
         }
         // userMessage / agentMessage / reasoning 的 started 不轉發（agentMessage 由 delta 帶內容）
         return;
@@ -413,10 +437,13 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
         const item = p["item"] as { type?: string; name?: string; status?: string; error?: string; durationMs?: number } | undefined;
         if (!item) return;
         const itemType = item.type;
-        if (itemType === "functionCall" || itemType === "mcpToolCall" || itemType === "localShellCall") {
+        if (itemType === "functionCall" || itemType === "mcpToolCall" || itemType === "localShellCall" || itemType === "collabAgentToolCall") {
+          const title = itemType === "collabAgentToolCall"
+            ? `subagent: ${item.name ?? "task"}`
+            : (item.name ?? itemType);
           ctx.emit({
             type: "tool_result",
-            title: item.name ?? itemType,
+            title,
             duration_ms: typeof item.durationMs === "number" ? item.durationMs : undefined,
             error: item.status === "failed" ? (item.error ?? "tool failed") : undefined,
           });
