@@ -1,0 +1,1 @@
+@~/.catclaw/workspace/AGENTS.md
