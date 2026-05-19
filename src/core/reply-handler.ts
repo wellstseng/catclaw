@@ -457,8 +457,14 @@ export async function handleAgentLoopReply(
         else { cancelFlushTimer(); }
         stopTyping();
 
-        // Fallback：LLM 回傳空字串時，送出預設訊息避免使用者完全收不到回覆
+        // Fallback：LLM 回傳空字串時，送出預設訊息避免使用者完全收不到回覆。
+        // 例外：模型若已透過 Discord tool 直接送出訊息，agent-loop 會標記 directDiscordReplySent；
+        // 此時再補 fallback 會形成「已回覆 + 無法回覆」的雙訊息。
         if (!totalText.trim()) {
+          if (event.directDiscordReplySent) {
+            log.info(`[reply-handler] 空 text 但 Discord tool 已直送，跳過 fallback`);
+            continue;
+          }
           totalText = "（抱歉，我暫時無法回覆這條訊息。請再試一次或換個方式描述。）";
           if (useStreamEdit) segmentBuffer = totalText;
           else buffer = totalText;

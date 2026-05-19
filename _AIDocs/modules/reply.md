@@ -157,6 +157,10 @@ const MEDIA_RE = /\bMEDIA:\s*`?([^\n`]+)`?/gi;
 | `error` | cancelFlushTimer + stopTyping → flush(true) → 傳 `⚠️ 發生錯誤：{message}`（截斷至 TEXT_LIMIT） |
 | `status` | 靜默忽略 |
 
+### Direct Discord Tool 防線
+
+若模型違規使用 Discord MCP / `discord` tool 的 `send` 類操作直接把回覆送出，`agent-loop` 會在 `done` event 標記 `directDiscordReplySent`，並把已送出的文字補回 session/trace。`reply-handler` 收到空 `totalText` 但看到此標記時，會跳過空回覆 fallback，避免同一輪出現「已回覆」後又補一則「暫時無法回覆」。
+
 ## 型別注意
 
 使用 `SendableChannels`（非 `TextBasedChannel`）避免 `PartialGroupDMChannel` 缺少 `send()` 的 TS 編譯錯誤。

@@ -46,7 +46,7 @@
 | `coding-rules` | 30 | 行為約束（precision 模式載入外部 .md） |
 | `git-rules` | 40 | Git 安全協定 |
 | `output-format` | 50 | 輸出規則（直球、繁中、不總結） |
-| `discord-reply` | 55 | Discord 回覆規則（有 Discord MCP 才注入） |
+| `discord-reply` | 55 | Discord 回覆規則（有 Discord MCP 才注入；一般最終回覆仍走 CatClaw reply-handler，Discord tool 只用於明確操作） |
 | `tool-summary` | 56 | 可用工具摘要（含 MCP 工具），由 `platform.ts` 延遲注入 |
 | `skill-summary` | 57 | 可用 Skill 指令摘要，由 `platform.ts` 延遲注入 |
 | `failure-recall` | 55 | 跨 session 錯誤學習（已知 tool 陷阱注入） |
@@ -66,6 +66,12 @@ detectIntent(userMessage: string): "coding" | "research" | "conversation"
 | `research` | researchScore ≥ 2 且 codingScore = 0 | 省略 coding-rules, git-rules（含 context-integrity） |
 | `coding`（fallback） | codingScore ≥ 1 | 全部 |
 | `conversation` | 其餘 | date-time, identity, context-integrity, catclaw-md, output-format, discord-reply, memory-rules |
+
+## Discord Reply Module
+
+`discord-reply` 只負責釐清責任邊界：在 Discord agent-loop 中，一般最終回答要直接輸出文字，由 `reply-handler` 統一送回 Discord 並寫入 session/trace。只有使用者明確要求 Discord 操作（建立討論串、跨頻道傳訊、讀取/編輯訊息、上傳附件或管理頻道）時，才使用 Discord MCP / `discord` tool。
+
+不要要求模型為了回答當前訊息自行呼叫 Discord `send`/`reply`。這會繞過 reply-handler，造成 session history 缺普通 assistant text，並可能讓 reply-handler 誤判空回覆。
 
 ## CATCLAW.md 兩層載入
 

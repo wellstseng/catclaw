@@ -510,7 +510,7 @@ export type AgentLoopEvent =
   | { type: "subagent_relay"; status: "completed" | "failed"; runId: string; label: string; content: string }
   /** background job (本地 shell 長期程式) 完成回流 */
   | { type: "background_job_relay"; status: "completed" | "failed"; jobId: string; label: string; exitCode: number | null; stdoutPath?: string; reason?: string }
-  | { type: "done";         text: string; turnCount: number }
+  | { type: "done";         text: string; turnCount: number; directDiscordReplySent?: boolean }
   | { type: "context_warning"; level: "high" | "critical"; utilization: number; estimatedTokens: number; contextWindow: number; source: "session" | "model" }
   | { type: "ce_applied";   strategies: string[]; tokensBefore: number; tokensAfter: number }
   | { type: "tools_evicted"; evicted: string[]; tokensBefore: number; tokensAfter: number }
@@ -524,6 +524,43 @@ interface ToolCallRecord {
   result: unknown;
   error?: string;
   durationMs: number;
+}
+
+const DIRECT_DISCORD_REPLY_ACTIONS = new Set(["send", "threadReply", "threadCreate", "poll"]);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringParam(params: Record<string, unknown>, key: string): string | null {
+  const value = params[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getDirectDiscordReplyText(call: ToolCallRecord): string | null {
+  if (call.error) return null;
+  if (call.name !== "discord" && call.name !== "mcp_catclaw-discord_discord") return null;
+  const params = asRecord(call.params);
+  if (!params) return null;
+  const action = stringParam(params, "action");
+  if (!action || !DIRECT_DISCORD_REPLY_ACTIONS.has(action)) return null;
+
+  const text =
+    stringParam(params, "message") ??
+    stringParam(params, "content") ??
+    stringParam(params, "question") ??
+    (action === "threadCreate" ? stringParam(params, "name") : null);
+  if (text) return text;
+
+  if (typeof call.result === "string" && call.result.trim()) return call.result.trim();
+  return "Discord 訊息已送出";
+}
+
+function collectDirectDiscordReplyText(toolCalls: ToolCallRecord[]): string | null {
+  const parts = toolCalls.map(getDirectDiscordReplyText).filter((v): v is string => !!v);
+  return parts.length > 0 ? parts.join("\n\n") : null;
 }
 
 class TurnTracker {
@@ -2512,6 +2549,15 @@ export async function* agentLoop(
     yield { type: "text_delta", text: bailNotice };
   }
 
+  // 若模型違規用 Discord tool 直接把回覆送出，reply-handler 收不到 text_delta。
+  // 這裡把已送出的內容補回 session/trace，並在 done event 標記讓 reply-handler 不再誤發空回覆 fallback。
+  const directDiscordReplyText = collectDirectDiscordReplyText(tracker.toolCalls);
+  const directDiscordReplySent = directDiscordReplyText !== null;
+  if (directDiscordReplySent && !fullResponse.trim()) {
+    fullResponse = directDiscordReplyText;
+    log.info(`[agent-loop] direct Discord tool reply captured for history sessionKey=${sessionKey}`);
+  }
+
   // Tool Log Store：儲存 tool 執行記錄，session history 加索引摘要
   // 注意：session.turnCount 此時是「本輪尚未計入」的值（addMessages 下面才 ++）
   // 必須把這個「本輪」值同時給 tool-log 的檔名和 trace 的 turnIndex，否則兩邊差 1
@@ -2733,7 +2779,7 @@ export async function* agentLoop(
   } catch { /* ignore */ }
 
   _finalFullResponseForAck = fullResponse;  // ACK scan 用（finally 內可訪問）
-  yield { type: "done", text: fullResponse, turnCount: loopCount };
+  yield { type: "done", text: fullResponse, turnCount: loopCount, directDiscordReplySent };
   log.debug(`[agent-loop] ── turn 完成 ── accountId=${accountId} channelId=${channelId} loops=${loopCount} tools=${tracker.toolCalls.length}`);
 
   } catch (fatalErr) {

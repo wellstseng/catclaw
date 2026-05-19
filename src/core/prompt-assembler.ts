@@ -237,8 +237,9 @@ const discordReplyModule: PromptModule = {
     if (!hasDiscordMcp) return "";
     return [
       "## Discord 回覆規則",
-      "當前 session 已啟用 Discord MCP。所有回覆必須透過 Discord MCP 的 reply 工具發送回 Discord 頻道。",
-      "不要只在本地輸出文字——使用者在 Discord 端等待你的回覆。",
+      "你正在 CatClaw 的 Discord agent-loop 內；一般最終回覆請直接輸出文字，平台 reply-handler 會負責送回 Discord。",
+      "只有在使用者明確要求 Discord 操作時才使用 Discord MCP/discord tool，例如建立討論串、跨頻道傳訊、讀取/編輯訊息、上傳附件或管理頻道。",
+      "不要為了回答當前訊息而自行呼叫 Discord send/reply；這會繞過 reply-handler 與 session history。",
     ].join("\n");
   },
 };
