@@ -113,6 +113,8 @@ WriteGateResult：
 - `reason: "bypass" | "injection" | "duplicate" | "ok"`
 - `similarity?: number` — dedup 比對相似度（duplicate 時有值）
 
+`bypass=true` 跳過向量 dedup（保留 prompt injection / secret 掃描）。LLM 端透過 `atom_write` tool 的 `bypass` 參數觸發；agent 應依使用者明確指令（「記住 / 記下來 / 強制存 / 覆蓋記憶」）才填 true，autonomous 自主寫入維持 false。
+
 ### Seed & Rebuild
 
 ```typescript

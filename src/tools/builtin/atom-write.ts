@@ -12,7 +12,8 @@ export const tool: Tool = {
   description:
     "寫入或更新一筆記憶 atom。自動更新 MEMORY.md 索引和向量資料庫。" +
     "scope 決定寫入位置：global（全域共用）、agent（當前 agent 專屬）、project、account。" +
-    "判斷規則：跨 agent 共用的知識/規則/使用者偏好 → global；agent 專屬的行為校正/工作記錄 → agent。",
+    "判斷規則：跨 agent 共用的知識/規則/使用者偏好 → global；agent 專屬的行為校正/工作記錄 → agent。" +
+    "bypass=true 用於使用者明確說「記住/記下來/強制存/覆蓋記憶」等指令時跳過 dedup gate；一般 autonomous 寫入維持預設 false。",
   tier: "standard",
   deferred: false,
   resultTokenCap: 500,
@@ -27,6 +28,7 @@ export const tool: Tool = {
       scope:       { type: "string",  description: "範圍：global（全域共用）/ agent（當前 agent 專屬）/ project / account。預設 global" },
       triggers:    { type: "string",  description: "觸發關鍵字，逗號分隔（例如：團隊名單, 成員查詢）" },
       related:     { type: "string",  description: "相關 atom 名稱，逗號分隔" },
+      bypass:      { type: "boolean", description: "跳過 dedup gate。僅在使用者明確指示『記住 / 記下來 / 強制存 / 覆蓋記憶』等情境填 true；autonomous 自主寫入維持 false（讓 gate 擋掉高相似度重複內容）" },
     },
     required: ["name", "content"],
   },
@@ -38,6 +40,7 @@ export const tool: Tool = {
     const scope = String(params["scope"] ?? "global").trim() as "global" | "agent" | "project" | "account";
     const triggersRaw = String(params["triggers"] ?? "").trim();
     const relatedRaw = String(params["related"] ?? "").trim();
+    const bypass = params["bypass"] === true;
 
     if (!name) return { error: "name 不能為空" };
     if (!content) return { error: "content 不能為空" };
@@ -92,8 +95,8 @@ export const tool: Tool = {
         namespace = "global";
       }
 
-      // write-gate 去重檢查
-      const gate = await engine.checkWrite(content, namespace);
+      // write-gate 去重檢查（bypass=true 時使用者明確要求，跳過 dedup）
+      const gate = await engine.checkWrite(content, namespace, bypass);
       if (!gate.allowed) {
         return { result: { written: false, reason: `write-gate 阻擋：${gate.reason}` } };
       }
