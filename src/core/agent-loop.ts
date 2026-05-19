@@ -778,13 +778,18 @@ async function runBeforeToolCall(
   }
 
   // 4b. Alternating Tool Cycle Detection（period-2：A→B→A→B→A…）
-  // 白名單：edit→run / write→run 是合理的迭代開發 pattern（改→測→改→測），不擋
+  // 白名單：
+  //   - edit→run / write→run：合理的迭代開發 pattern（改→測→改→測）
+  //   - tool_search ↔ X：tool_search 是 schema 查詢（資訊類）不是執行；
+  //     LLM 撞到這個 pattern 通常是 deferred activation 沒接好（見 trace 7ac0edbc 的 LRU bug），
+  //     而不是真的卡死。擋下來反而讓使用者體感變糟，先放行讓 LLM 自己往下走。
   const ITERATIVE_DEV_TOOLS = new Set(["edit_file", "write_file", "run_command"]);
   if (ctx.recentCalls.length >= 4) {
     const r4 = ctx.recentCalls.slice(-4).map(c => c.name);
     if (r4[0] === r4[2] && r4[1] === r4[3] && r4[0] !== r4[1] && call.name === r4[0]) {
       const isIterativeDev = ITERATIVE_DEV_TOOLS.has(r4[0]) && ITERATIVE_DEV_TOOLS.has(r4[1]);
-      if (!isIterativeDev) {
+      const involvesToolSearch = r4[0] === "tool_search" || r4[1] === "tool_search";
+      if (!isIterativeDev && !involvesToolSearch) {
         return { blocked: true, reason: `偵測到交替工具迴圈：${r4[1]}↔${r4[0]}（已重複 2 輪）` };
       }
     }
@@ -2424,6 +2429,9 @@ export async function* agentLoop(
             if (activatedThisIter >= ACTIVATE_PER_ITER_LIMIT) break;
             toolDefs.push(def);
             loadedDeferredNames.add(def.name);
+            // 剛活化視為「本輪剛用過」，避免下輪 LRU eviction 因 lastUsed=-1 把它排第一個踢掉
+            //（trace 7ac0edbc：tool_search→活化→下輪 schema cap 觸發→剛活化的 vision_file 被踢→LLM 找不到→再 tool_search→死循環）
+            toolLastUsedIter.set(def.name, loopCount);
             deferredJustActivated.push(def.name);
             activatedThisIter++;
             log.debug(`[agent-loop] deferred tool activated: ${def.name}`);
