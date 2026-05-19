@@ -12,7 +12,7 @@
  * - Turn Queue 規則：max depth 5，排隊超時 60s，自動移出
  */
 
-import { writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync, mkdirSync, renameSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync, mkdirSync, renameSync, copyFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
@@ -81,6 +81,16 @@ export class SessionManager {
   getOrCreate(sessionKey: string, accountId: string, channelId: string, providerId: string): Session {
     let session = this.sessions.get(sessionKey);
     if (!session) {
+      // 先嘗試從 _expired/ archive 還原（cleanExpired 不再直接 unlink，而是 archive）
+      const restored = this.tryRestoreFromArchive(sessionKey);
+      if (restored) {
+        restored.providerId = providerId;
+        restored.lastActiveAt = Date.now();
+        this.sessions.set(sessionKey, restored);
+        this.persist(restored);
+        log.info(`[session] 從 archive 還原 ${sessionKey}（turnCount=${restored.turnCount}, messages=${restored.messages.length}）`);
+        return restored;
+      }
       session = {
         sessionKey, accountId, channelId, providerId,
         messages: [],
@@ -92,6 +102,29 @@ export class SessionManager {
       log.debug(`[session] 建立 ${sessionKey}`);
     }
     return session;
+  }
+
+  /**
+   * 從 _expired/ archive 還原 session 檔案到 active 區。
+   * 找到並還原 → 回 Session；無對應 archive → null。
+   */
+  private tryRestoreFromArchive(sessionKey: string): Session | null {
+    const safe = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const archiveDir = join(this.persistDir, "_expired");
+    const archivePath = join(archiveDir, `${safe}.json`);
+    if (!existsSync(archivePath)) return null;
+    try {
+      const raw = readFileSync(archivePath, "utf-8");
+      const parsed = JSON.parse(raw) as Session & { _checksum?: string };
+      const { _checksum: _ignored, ...sessionData } = parsed;
+      void _ignored;
+      const activePath = this.sessionPath(sessionKey);
+      renameSync(archivePath, activePath);
+      return sessionData as Session;
+    } catch (err) {
+      log.warn(`[session] restoreFromArchive 失敗 ${sessionKey}：${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
   }
 
   get(sessionKey: string): Session | undefined {
@@ -190,18 +223,30 @@ export class SessionManager {
     return count;
   }
 
-  /** 清除所有過期 session，回傳清除數量 */
+  /** 清除所有過期 session（archive 而非 unlink），回傳處理數量 */
   purgeExpired(): number {
     const ttlMs = (this.cfg.ttlHours ?? 168) * 3600_000;
     const cutoff = Date.now() - ttlMs;
+    const archiveDir = join(this.persistDir, "_expired");
+    try { mkdirSync(archiveDir, { recursive: true }); } catch { /* 靜默 */ }
     let count = 0;
     for (const [key, session] of this.sessions) {
       if (session.lastActiveAt < cutoff) {
+        // delete() 會 unlink 原檔；這裡先 copy 出去 archive 副本，確保歷史可還原
+        try {
+          const safe = key.replace(/[^a-zA-Z0-9_-]/g, "_");
+          const src = this.sessionPath(key);
+          const dst = join(archiveDir, `${safe}.json`);
+          if (existsSync(src)) {
+            if (existsSync(dst)) unlinkSync(dst);
+            copyFileSync(src, dst);
+          }
+        } catch { /* 靜默；delete 還是會跑 */ }
         this.delete(key);
         count++;
       }
     }
-    // 同時清理磁碟上的孤兒檔案
+    // 同時 archive 磁碟上的孤兒檔案
     try {
       const files = readdirSync(this.persistDir).filter(f => f.endsWith(".json") && !f.startsWith("_"));
       for (const f of files) {
@@ -210,13 +255,19 @@ export class SessionManager {
           const raw = readFileSync(filePath, "utf-8");
           const { lastActiveAt, sessionKey } = JSON.parse(raw) as Session;
           if (lastActiveAt < cutoff && !this.sessions.has(sessionKey)) {
-            unlinkSync(filePath);
-            count++;
+            const archivePath = join(archiveDir, f);
+            try {
+              if (existsSync(archivePath)) unlinkSync(archivePath);
+              renameSync(filePath, archivePath);
+              count++;
+            } catch { /* 靜默 */ }
           }
-        } catch { try { unlinkSync(filePath); count++; } catch { /* 靜默 */ } }
+        } catch { /* 損壞，移到 _expired 留檔 */
+          try { renameSync(filePath, join(archiveDir, `_corrupt_${Date.now()}_${f}`)); count++; } catch { /* 靜默 */ }
+        }
       }
     } catch { /* 靜默 */ }
-    log.info(`[session] purgeExpired：清除 ${count} 個`);
+    log.info(`[session] purgeExpired：archive ${count} 個`);
     return count;
   }
 
@@ -367,7 +418,9 @@ export class SessionManager {
   private cleanExpired(): void {
     const ttlMs = (this.cfg.ttlHours ?? 168) * 3600_000;
     const cutoff = Date.now() - ttlMs;
+    const archiveDir = join(this.persistDir, "_expired");
     try {
+      mkdirSync(archiveDir, { recursive: true });
       const files = readdirSync(this.persistDir).filter(f => f.endsWith(".json"));
       for (const f of files) {
         const filePath = join(this.persistDir, f);
@@ -375,12 +428,20 @@ export class SessionManager {
           const raw = readFileSync(filePath, "utf-8");
           const { lastActiveAt, sessionKey } = JSON.parse(raw) as Session;
           if (lastActiveAt < cutoff) {
-            unlinkSync(filePath);
-            log.debug(`[session] 清除過期 ${f}`);
+            // 過期 session 改 archive 到 _expired/（不再直接 unlink），
+            // 下次同 sessionKey 重新對話時，getOrCreate → tryRestoreFromArchive 把它接回來
+            const archivePath = join(archiveDir, f);
+            try {
+              if (existsSync(archivePath)) unlinkSync(archivePath);
+              renameSync(filePath, archivePath);
+              log.debug(`[session] 過期 archive ${f}`);
+            } catch (e) {
+              log.warn(`[session] archive 失敗 ${f}：${e instanceof Error ? e.message : String(e)}`);
+            }
             this.eventBus?.emit("session:end", sessionKey);
           }
-        } catch { /* 損壞，刪除 */
-          try { unlinkSync(filePath); } catch { /* 靜默 */ }
+        } catch { /* 損壞檔，移到 _expired 由人工檢視，不直接刪 */
+          try { renameSync(filePath, join(archiveDir, `_corrupt_${Date.now()}_${f}`)); } catch { /* 靜默 */ }
         }
       }
     } catch { /* 靜默 */ }
