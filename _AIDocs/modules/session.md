@@ -7,7 +7,8 @@
 
 - Session key 格式：`{platform}:ch:{channelId}`（群組）或 `{platform}:dm:{accountId}:{channelId}`（DM）
 - 持久化：atomic write（先寫 `.tmp` 再 `rename`），含 SHA-256 checksum 驗證
-- TTL 清理：啟動時 `cleanExpired()` 掃描刪除過期 session
+- TTL 清理：啟動時 `cleanExpired()` 掃描，**過期 session 改 rename 到 `_expired/` archive 不直接 unlink**；下次同 sessionKey 對話時 `getOrCreate` 會自動還原
+- Archive GC：啟動時 `purgeArchive(30)` 二級清理 `_expired/` 超過 30 天的封存（總保留期 ≈ 7 天 active TTL + 30 天 archive ≈ 37 天）
 - Turn Queue：per-session FIFO 佇列，max depth 5，排隊超時自動移出
 - 全域單例模式：`initSessionManager()` / `getSessionManager()`
 
@@ -47,8 +48,9 @@ export interface TurnRequest {
 | `getHistory(sessionKey)` | 取得對話歷史 `Message[]` |
 | `replaceMessages(sessionKey, messages)` | CE 壓縮後寫回精簡版 messages（備份原始至 `_ce_backups/`，保留最近 3 份） |
 | `clearMessages(sessionKey)` | 清空訊息（保留 session 殼），回傳被清除數 |
-| `delete(sessionKey)` | 刪除 session（記憶體 + 磁碟），觸發 `session:end` event |
-| `purgeExpired()` | 批次清除過期 session（含磁碟孤兒檔案），回傳清除數 |
+| `delete(sessionKey)` | 刪除 session（記憶體 + 磁碟，**不 archive**），觸發 `session:end` event |
+| `purgeExpired()` | 批次處理過期 session（archive 到 `_expired/`），回傳處理數 |
+| `purgeArchive(maxAgeDays=30)` | 二級 GC：刪除 `_expired/` 中 mtime 超過 N 天的封存，回傳刪除數 |
 | `list()` | 回傳所有 session 陣列 |
 
 ## Turn Queue API
@@ -83,9 +85,31 @@ export interface TurnRequest {
 | 操作 | 方法 | 效果 |
 |------|------|------|
 | LLM tool `clear_session` | `clearMessages()` | 清空 messages + 重置 turnCount，session 殼保留 |
-| Slash command `/reset-session` | `delete()` | 完整刪除 session（記憶體 + JSON 檔） |
+| Slash command `/reset-session` | `delete()` | 完整刪除 session（記憶體 + JSON 檔，**不 archive**） |
 | Dashboard Clear 按鈕 | `clearMessages()` | 同 LLM tool |
 | Dashboard Delete 按鈕 | `delete()` | 同 slash command |
+| TTL 過期（自動） | `cleanExpired()` / `purgeExpired()` | **archive 到 `_expired/`**，下次對話可還原 |
+| 損壞檔（JSON 解析失敗） | 同上 | rename 成 `_corrupt_{ts}_{name}.json`，留人工檢視，不直接刪 |
+
+> 設計意圖：**「使用者明確 delete」≠「TTL 自動過期」**。前者代表「我要丟掉」→ 直接 unlink；後者代表「沒活動」→ 留 archive 副本，方便回頭重啟對話。
+
+## 過期與封存（`_expired/` 機制）
+
+```
+{persistDir}/
+├── discord_ch_xxxxx.json          ← active session
+├── _ce_backups/                   ← CE 壓縮前的備份（保留最近 3 份）
+└── _expired/                      ← TTL 過期的封存
+    ├── discord_ch_yyyyy.json      ← 過期 archive，下次同 key 對話會還原
+    └── _corrupt_1716...json       ← 損壞檔保留人工檢視
+```
+
+**流程**：
+
+1. **過期觸發**（`cleanExpired` on init / `purgeExpired` 手動）：lastActiveAt < cutoff → `renameSync` 到 `_expired/`，從 active 區消失但檔案保留
+2. **下次對話**（同 sessionKey）：`getOrCreate` 找不到記憶體 → `tryRestoreFromArchive` 把 `_expired/{safe_key}.json` rename 回 active 區，messages/turnCount 完整接續
+3. **archive GC**（`purgeArchive` on init）：`_expired/` 中 mtime > 30 天的檔被 unlink（mtime ≈ 該 session 最後活躍時間，因為 `rename` 不改 mtime）
+4. **手動 delete**（`/reset-session` / Dashboard）：仍是直接 unlink，**不進 archive**（語意：使用者要丟掉）
 
 ## Dashboard API 端點
 

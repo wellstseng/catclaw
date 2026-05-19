@@ -12,7 +12,7 @@
  * - Turn Queue 規則：max depth 5，排隊超時 60s，自動移出
  */
 
-import { writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync, mkdirSync, renameSync, copyFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync, mkdirSync, renameSync, copyFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
@@ -72,6 +72,7 @@ export class SessionManager {
   async init(): Promise<void> {
     mkdirSync(this.persistDir, { recursive: true });
     this.cleanExpired();
+    this.purgeArchive();
     this.loadAll();
     log.info(`[session] 初始化完成，已載入 ${this.sessions.size} 個 session`);
   }
@@ -268,6 +269,35 @@ export class SessionManager {
       }
     } catch { /* 靜默 */ }
     log.info(`[session] purgeExpired：archive ${count} 個`);
+    return count;
+  }
+
+  /**
+   * 清理 _expired/ archive 目錄中超過 maxAgeDays 的舊封存檔（second-level GC）。
+   * rename 不改 mtime，所以這裡用 mtime ≈「上次活躍時間」當判定基準。
+   * @param maxAgeDays 預設 30 天（archive 之外再加 TTL 168h ≈ 7 天，合計上限約 37 天）
+   * @returns 真正刪除的檔案數
+   */
+  purgeArchive(maxAgeDays = 30): number {
+    const archiveDir = join(this.persistDir, "_expired");
+    if (!existsSync(archiveDir)) return 0;
+    const cutoff = Date.now() - maxAgeDays * 24 * 3600_000;
+    let count = 0;
+    try {
+      const files = readdirSync(archiveDir);
+      for (const f of files) {
+        const filePath = join(archiveDir, f);
+        try {
+          const st = statSync(filePath);
+          if (!st.isFile()) continue;
+          if (st.mtimeMs < cutoff) {
+            unlinkSync(filePath);
+            count++;
+          }
+        } catch { /* 靜默：個別檔失敗不擋其餘 */ }
+      }
+    } catch { /* 靜默：archiveDir 讀不到視為空 */ }
+    if (count > 0) log.info(`[session] purgeArchive：刪除 ${count} 個超過 ${maxAgeDays} 天的 archive`);
     return count;
   }
 
