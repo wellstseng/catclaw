@@ -379,7 +379,7 @@ export const tool: Tool = {
       mode:       { type: "string",  description: "run（預設，one-shot）| session（持久，需搭配 keepSession:true）" },
       allowNestedSpawn: { type: "boolean", description: "opt-in 允許子 agent 再 spawn（最多 3 層，預設 false）" },
       agent:      { type: "string",  description: "Agent ID（對應 ~/.catclaw/workspace/agents/{id}/），自動載入設定、deterministic session、保留歷史" },
-      model:      { type: "string",  description: "模型 alias 或 provider/model（覆蓋預設）" },
+      model:      { type: "string",  description: "模型 alias 或 provider/model（覆蓋預設）。⚠️ 想用 Gemini / Claude / GPT 等特定模型必須在此欄位設定 — 在 task 內寫『你是 Gemini ...』只是 system prompt，不會自動切 model。" },
       workspaceDir: { type: "string", description: "工作目錄（覆蓋預設）" },
       isolation:  { type: "string",  description: "worktree = git worktree 隔離分支工作（完成後由 parent 決定 merge 或丟棄）" },
       inputFrom:    { type: "string",  description: "等待指定 runId 的子 agent 完成，以其 result 作為本次 task 的前置輸入（pipeline 模式）" },
@@ -444,6 +444,14 @@ export const tool: Tool = {
     const attachments = Array.isArray(params["attachments"]) ? params["attachments"] : [];
 
     if (!task) return { result: { status: "error", error: "task 不能為空" } };
+
+    // task 文字提及特定模型但未設 model 參數 → warn（routing 不變、只提醒人類看 log）
+    if (!modelParam && !agentConfig?.model) {
+      const m = task.match(/你是\s*(Gemini|GPT|OpenAI|Claude|Sonnet|Opus|Haiku|Codex|DeepSeek|Qwen|Llama|Mistral|Gemma)/i);
+      if (m) {
+        log.warn(`[spawn_subagent] task 提及「${m[1]}」但未設 model 參數，將沿用預設 provider（task 文字不會自動切 model，請顯式設 model: 欄位）`);
+      }
+    }
 
     // inputFrom：等待前置子 agent 完成，將 result 注入 task
     let resolvedTask = task;
