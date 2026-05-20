@@ -337,6 +337,28 @@ export class CodexOAuthProvider implements LLMProvider {
       opts.abortSignal.addEventListener("abort", () => controller.abort());
     }
 
+    // Stream idle watchdog：stream 階段 N 秒沒收到 event 就主動 abort，由 callWithRetry 接手 retry。
+    // 解決「Codex Responses API 收下 request 但 stream 從未 yield」（rate-limit 軟卡 / 連線僵死）
+    // 造成 LLM 錯誤不回覆、turn 卡住一直等待的情境。對齊 claude-api 60s 設定。
+    // 在 response.ok 後才啟動，避免 fetch 階段早於 stream 觸發 / 失敗路徑漏 clearInterval。
+    const STREAM_IDLE_MS = 60_000;
+    let lastEventMs = 0;
+    let idledOut = false;
+    let watchdog: NodeJS.Timeout | null = null;
+    const startWatchdog = (): void => {
+      lastEventMs = Date.now();
+      watchdog = setInterval(() => {
+        if (Date.now() - lastEventMs > STREAM_IDLE_MS) {
+          log.warn(`[codex-oauth:${this.id}] stream idle ${STREAM_IDLE_MS}ms 無事件，主動 abort 讓上層 retry`);
+          idledOut = true;
+          controller.abort();
+        }
+      }, 5000);
+    };
+    const stopWatchdog = (): void => {
+      if (watchdog) { clearInterval(watchdog); watchdog = null; }
+    };
+
     // 轉換 Anthropic 格式 → Responses API input 格式
     const input = convertToResponsesInput(messages);
 
@@ -430,18 +452,29 @@ export class CodexOAuthProvider implements LLMProvider {
     const parsedUsage: { input: number; output: number; totalTokens: number }[] = [];
     const toolCalls: ToolCall[] = [];
 
-    await parseResponsesApiStream(response.body, (chunk) => {
-      const event = processResponsesChunk(chunk, toolCalls);
-      if (event) {
-        events.push(event);
-        if (event.type === "text_delta") finalText += event.text;
-        if (event.type === "done") {
-          finalStopReason = event.stopReason;
-          const u = (event as Extract<ProviderEvent, { type: "done" }>).usage;
-          if (u) parsedUsage.push({ input: u.input, output: u.output, totalTokens: u.totalTokens });
+    startWatchdog();
+    try {
+      await parseResponsesApiStream(response.body, (chunk) => {
+        lastEventMs = Date.now();
+        const event = processResponsesChunk(chunk, toolCalls);
+        if (event) {
+          events.push(event);
+          if (event.type === "text_delta") finalText += event.text;
+          if (event.type === "done") {
+            finalStopReason = event.stopReason;
+            const u = (event as Extract<ProviderEvent, { type: "done" }>).usage;
+            if (u) parsedUsage.push({ input: u.input, output: u.output, totalTokens: u.totalTokens });
+          }
         }
+      });
+    } catch (err) {
+      if (idledOut) {
+        throw new Error(`[codex-oauth:${this.id}] stream idle timeout (${STREAM_IDLE_MS}ms 無事件)`);
       }
-    });
+      throw err;
+    } finally {
+      stopWatchdog();
+    }
 
     if (toolCalls.length > 0) finalStopReason = "tool_use";
 
