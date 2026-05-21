@@ -450,6 +450,12 @@ export interface SafetyConfig {
   /** 連續工具錯誤達上限自動中止 turn（任一工具成功即清零；預設 5）。
    *  防 buggy 死循環當 LLM 輪換工具卻全錯時仍不停。密集失敗的場景（如 SDK debug）可拉到 10。 */
   maxConsecutiveToolErrors?: number;
+  /** Skill 執行後 LLM 自省提案開關（預設 true）。
+   *  env CATCLAW_SKILL_SELF_REFLECT=false 亦可關閉（兩者任一關就關）。 */
+  skillSelfReflectEnabled?: boolean;
+  /** Skill 自省最小字數門檻（args+result 合計，預設 30）。
+   *  低於此值跳過 LLM judge（過濾 /status 之類超短 skill）。拉高 = 更保守，更低 = 更多提案。 */
+  skillSelfReflectMinChars?: number;
 }
 
 /** Prompt Assembler 設定 */

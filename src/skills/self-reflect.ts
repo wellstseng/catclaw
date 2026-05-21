@@ -22,7 +22,10 @@
  */
 
 import { log } from "../logger.js";
+import { config } from "../core/config.js";
 import type { Skill, SkillContext, SkillResult } from "./types.js";
+
+const DEFAULT_MIN_CHARS = 30;
 
 interface SelfReflectionResult {
   needPropose: boolean;
@@ -36,10 +39,12 @@ export async function selfReflectSkill(
   durationMs: number,
 ): Promise<void> {
   if (process.env["CATCLAW_SKILL_SELF_REFLECT"] === "false") return;
+  if (config.safety?.skillSelfReflectEnabled === false) return;
   if (ctx.channelId.startsWith("cron:") || ctx.channelId.startsWith("api:")) return;
-  // 短路：簡單 skill（如 /status / /think on）通常結果簡短，不值得 judge
+  // 短路：超短輸入+輸出（如 /status / /think on）不值得 judge；門檻設低讓多數 skill 都能進判官
+  const minChars = config.safety?.skillSelfReflectMinChars ?? DEFAULT_MIN_CHARS;
   const combined = (ctx.args?.length ?? 0) + (result.text?.length ?? 0);
-  if (combined < 100) return;
+  if (combined < minChars) return;
 
   let provider;
   try {
