@@ -458,6 +458,7 @@ label.cfg-toggle { min-width: 36px; }
   <div class="tab" onclick="switchTab('guardian',this)">Guardian</div>
   <div class="tab" onclick="switchTab('insights',this)">洞察</div>
   <div class="tab" onclick="switchTab('improvements',this)">提案</div>
+  <div class="tab" onclick="switchTab('candidates',this)">技能候選</div>
   <div class="tab" onclick="switchTab('tasks',this)">任務</div>
   <div class="tab" onclick="switchTab('auth',this)">憑證</div>
   <div class="tab" onclick="switchTab('config',this)">設定</div>
@@ -672,6 +673,18 @@ label.cfg-toggle { min-width: 36px; }
     </h2>
     <div id="improvements-summary" style="font-size:0.82rem;color:#ccc;margin-bottom:8px"></div>
     <div id="improvements-list" style="font-size:0.82rem;color:#ccc">載入中...</div>
+  </div>
+</div>
+
+<!-- Skill Candidates（hermes 自動學習 a）-->
+<div id="pane-candidates" class="pane">
+  <div class="card">
+    <h2>技能候選提案
+      <span style="font-size:0.78rem;color:var(--fg2);margin-left:8px">LLM 判官從近期對話提案的新 skill — Accept 會啟動 agent 自動寫 SKILL.md</span>
+      <button class="btn btn-sm" style="float:right" onclick="loadSkillCandidates()">↻ 重新載入</button>
+    </h2>
+    <div id="candidates-summary" style="font-size:0.82rem;color:#ccc;margin-bottom:8px"></div>
+    <div id="candidates-list" style="font-size:0.82rem;color:#ccc">載入中...</div>
   </div>
 </div>
 
@@ -1089,6 +1102,7 @@ function switchTab(id, el) {
   if (id === 'guardian') { loadGuardianHits(); }
   if (id === 'insights') { loadInsights(); }
   if (id === 'improvements') { loadSkillImprovements(); }
+  if (id === 'candidates') { loadSkillCandidates(); }
   if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
   if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 5000); }
   if (id === 'cron') loadCron();
@@ -1118,6 +1132,7 @@ function refreshAll() {
     case 'guardian': loadGuardianHits(); break;
     case 'insights': loadInsights(); break;
     case 'improvements': loadSkillImprovements(); break;
+    case 'candidates': loadSkillCandidates(); break;
     case 'auth': loadModelsConfig(); loadAuthProfiles(); loadModelsJson(); break;
     case 'traces': loadTraces(); break;
     case 'cron': loadCron(); break;
@@ -2421,6 +2436,10 @@ const CFG_SCHEMA = [
     {k:'safety.maxConsecutiveToolErrors',t:'num',l:'Max Consecutive Tool Errors',d:'連續工具錯誤達上限自動中止 turn（任一工具成功即清零；預設 5）。防 buggy 死循環當 LLM 輪換工具卻全錯時仍不停。密集失敗場景（SDK debug 等）可拉到 10。'},
     {k:'safety.skillSelfReflectEnabled',t:'bool',l:'Skill Self-Reflect',d:'Skill 執行後 LLM 自省提案（hermes 自動學習核心）。env CATCLAW_SKILL_SELF_REFLECT=false 亦可關閉。'},
     {k:'safety.skillSelfReflectMinChars',t:'num',l:'Skill Self-Reflect Min Chars',d:'args+result 合計低於此值跳過 LLM judge（預設 30）。低=更多提案、高=更保守。'},
+    {k:'safety.skillCandidate.enabled',t:'bool',l:'Skill Candidate',d:'啟用對話脈絡 LLM 判官 → 新 skill 提案（hermes 自動學習 a 部分）。env CATCLAW_SKILL_CANDIDATE=false 亦可關。'},
+    {k:'safety.skillCandidate.everyNTurns',t:'num',l:'Skill Candidate · Every N Turns',d:'每 N turn 觸發判官（預設 5；0=關閉 turn-base trigger）'},
+    {k:'safety.skillCandidate.idleMinutes',t:'num',l:'Skill Candidate · Idle Minutes',d:'Session idle 超過此分鐘觸發判官（預設 20；0=關閉 idle trigger）'},
+    {k:'safety.skillCandidate.cooldownHours',t:'num',l:'Skill Candidate · Cooldown Hours',d:'同 slug 提案冷卻時數（預設 24）'},
   ], sub:[
     {k:'safety.execApproval',l:'Exec Approval',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'高風險指令執行前需要 owner DM 核准'},
@@ -3361,6 +3380,100 @@ async function discardSkillImprovement(fileName, btn) {
       btn.parentElement.parentElement.style.opacity = '0.4';
       btn.parentElement.innerHTML = '<span style="color:#f88">🗑 Discarded</span>';
       setTimeout(loadSkillImprovements, 500);
+    } else {
+      const j = await r.json().catch(() => ({}));
+      alert('Discard 失敗：' + (j.error || r.statusText));
+    }
+  } catch (err) { alert('Discard 失敗：' + err); }
+}
+
+// ── Skill Candidates（hermes 自動學習 a）────────────────────────────────────
+let _cachedAgentList = null;
+async function getAgentListCached() {
+  if (_cachedAgentList) return _cachedAgentList;
+  try {
+    const arr = await authFetch('/api/agents').then(r => r.json());
+    _cachedAgentList = Array.isArray(arr) ? arr : [];
+  } catch { _cachedAgentList = []; }
+  return _cachedAgentList;
+}
+
+async function loadSkillCandidates() {
+  const list = document.getElementById('candidates-list');
+  const sum = document.getElementById('candidates-summary');
+  list.innerHTML = '載入中...';
+  try {
+    const [d, agents] = await Promise.all([
+      authFetch('/api/skill-candidates').then(r => r.json()),
+      getAgentListCached(),
+    ]);
+    const entries = d.entries || [];
+    if (entries.length === 0) {
+      list.innerHTML = '<p style="color:#888">_staging/skill-candidates/ 目前無待審核提案</p>';
+      sum.innerHTML = '';
+      return;
+    }
+    sum.innerHTML = '待審核 <b>' + entries.length + '</b> 筆';
+    const agentOptions = agents.map(a => '<option value="' + a.id + '">' + a.id + (a.label ? ' (' + a.label + ')' : '') + '</option>').join('');
+    let html = '';
+    for (const e of entries) {
+      const ts = e.createdAt ? new Date(e.createdAt).toLocaleString() : '?';
+      const escaped = (e.rawText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      const defaultAgent = e.agentId || 'default';
+      html += '<div style="border:1px solid #333;border-radius:4px;padding:8px;margin-bottom:8px">';
+      html += '<div><b>' + (e.slug || '?') + '</b> <span style="color:#888;font-size:0.78rem">[' + (e.triggeredBy || '?') + ']</span> <span style="color:#888;font-size:0.78rem;margin-left:6px">' + ts + '</span></div>';
+      html += '<div style="font-size:0.82rem;color:#ccc;margin:4px 0">' + (e.description || '(無描述)') + '</div>';
+      html += '<div style="font-size:0.78rem;color:#888">channel: ' + (e.channelId || '-') + ' | proposed agent: ' + (e.agentId || '-') + '</div>';
+      html += '<details style="margin:4px 0"><summary style="cursor:pointer;color:#4fc3f7">展開內容</summary><pre style="background:#0e0e0e;padding:6px;font-size:0.72rem;overflow-x:auto;max-height:400px">' + escaped + '</pre></details>';
+      html += '<div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+      html += '<label style="font-size:0.78rem;color:#aaa">目標 agent：</label>';
+      html += '<select data-cand="' + e.fileName + '" style="background:#222;color:#ddd;border:1px solid #444;padding:2px 4px;font-size:0.78rem">';
+      html += agentOptions.replace('value="' + defaultAgent + '"', 'value="' + defaultAgent + '" selected');
+      html += '</select>';
+      html += '<button class="btn btn-sm" onclick="acceptSkillCandidate(\\'' + e.fileName + '\\',this)">✅ Accept (Spawn Author)</button> ';
+      html += '<button class="btn btn-sm" style="background:#a44" onclick="discardSkillCandidate(\\'' + e.fileName + '\\',this)">🗑 Discard</button>';
+      html += '</div></div>';
+    }
+    list.innerHTML = html;
+  } catch (err) {
+    list.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
+  }
+}
+
+async function acceptSkillCandidate(fileName, btn) {
+  const sel = document.querySelector('select[data-cand="' + fileName + '"]');
+  const targetAgentId = sel ? sel.value : 'default';
+  if (!confirm('Accept 後會啟動 ' + targetAgentId + ' agent 自動撰寫 SKILL.md（非同步，請到子代理分頁追蹤進度）。確定？')) return;
+  try {
+    const r = await authFetch('/api/skill-candidates/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName, targetAgentId }),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      btn.parentElement.parentElement.style.opacity = '0.4';
+      btn.parentElement.innerHTML = '<span style="color:#8f8">✅ Spawned author agent (runId=' + (j.runId || '?') + '，目標：' + targetAgentId + ')</span>';
+      setTimeout(loadSkillCandidates, 1000);
+    } else {
+      const j = await r.json().catch(() => ({}));
+      alert('Accept 失敗：' + (j.error || r.statusText));
+    }
+  } catch (err) { alert('Accept 失敗：' + err); }
+}
+
+async function discardSkillCandidate(fileName, btn) {
+  if (!confirm('確定刪除此提案？')) return;
+  try {
+    const r = await authFetch('/api/skill-candidates/discard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName }),
+    });
+    if (r.ok) {
+      btn.parentElement.parentElement.style.opacity = '0.4';
+      btn.parentElement.innerHTML = '<span style="color:#f88">🗑 Discarded</span>';
+      setTimeout(loadSkillCandidates, 500);
     } else {
       const j = await r.json().catch(() => ({}));
       alert('Discard 失敗：' + (j.error || r.statusText));
@@ -6737,6 +6850,140 @@ export class DashboardServer {
               } else {
                 res.writeHead(404); res.end(JSON.stringify({ error: "找不到 fileName 或無法推 skillName" }));
               }
+            } catch (err) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: String(err) }));
+            }
+          })();
+        });
+        return;
+      }
+
+      // GET /api/skill-candidates — 列 _staging/skill-candidates/ 內提案
+      if (url === "/api/skill-candidates" && method === "GET") {
+        void (async () => {
+          const { listSkillCandidates } = await import("../memory/skill-candidate-store.js");
+          const entries = listSkillCandidates();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ entries }));
+        })().catch(err => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        });
+        return;
+      }
+
+      // POST /api/skill-candidates/accept body { fileName, targetAgentId } — 啟動 spawn_subagent 自寫 SKILL.md
+      if (url === "/api/skill-candidates/accept" && method === "POST") {
+        let body = "";
+        req.on("data", (c: Buffer) => { body += c.toString(); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { fileName, targetAgentId } = JSON.parse(body) as { fileName: string; targetAgentId?: string };
+              if (typeof fileName !== "string" || !fileName) {
+                res.writeHead(400); res.end(JSON.stringify({ error: "fileName 不能為空" })); return;
+              }
+              const agentId = (targetAgentId && targetAgentId.trim()) || "default";
+
+              const { readSkillCandidate, markCandidateAccepted } = await import("../memory/skill-candidate-store.js");
+              const candidate = readSkillCandidate(fileName);
+              if (!candidate) {
+                res.writeHead(404); res.end(JSON.stringify({ error: "找不到 candidate" })); return;
+              }
+
+              // 撞名檢查
+              const { loadAgentSkills } = await import("./agent-skill-loader.js");
+              const existing = loadAgentSkills(agentId).map(s => s.name.toLowerCase());
+              const slugLower = candidate.slug.toLowerCase();
+              if (existing.includes(slugLower)) {
+                res.writeHead(409); res.end(JSON.stringify({ error: `Skill 名稱 "${candidate.slug}" 已存在於 agent ${agentId}，請先 rename 或改 discard` })); return;
+              }
+
+              // 標記已 accept（給 audit trail）
+              markCandidateAccepted(fileName, agentId);
+
+              const { resolveAgentDataDir } = await import("./agent-loader.js");
+              const targetPath = join(resolveAgentDataDir(agentId), "skills", `${candidate.slug}.md`);
+              const existingList = existing.length > 0 ? existing.join(", ") : "(無)";
+
+              const authorPrompt =
+                `任務：根據以下技能候選提案，創建新的 skill 檔案。\n\n` +
+                `**提案內容**：\n` +
+                `- slug：\`${candidate.slug}\`\n` +
+                `- description：${candidate.description}\n` +
+                (candidate.rawText.includes("## 何時使用") ? `- whenToUse / sampleWorkflow / reason 詳見原始提案：\n\n${candidate.rawText}\n\n` : "") +
+                `**現有 ${agentId} skill 清單**（避免重疊或撞名）：${existingList}\n\n` +
+                `**目標檔案路徑**：\n\`${targetPath}\`\n\n` +
+                `**Skill 檔案格式**（frontmatter + body）：\n` +
+                `\`\`\`markdown\n` +
+                `---\n` +
+                `name: ${candidate.slug}\n` +
+                `description: 一句話 invocation hint\n` +
+                `userInvocable: true\n` +
+                `---\n\n` +
+                `# /${candidate.slug} — 標題\n\n` +
+                `## 何時使用\n（給 LLM 看的 trigger）\n\n` +
+                `## 執行步驟\n1. ...\n2. ...\n\n` +
+                `## 注意事項\n- ...\n\`\`\`\n\n` +
+                `**請按以下流程**：\n` +
+                `1. 用 \`read_file\` 確認目標路徑檔案不存在\n` +
+                `2. 用 \`write_file\` 創建檔案，frontmatter description 要精準（會出現在 LLM 的 tool list）\n` +
+                `3. 用 \`read_file\` 驗證寫入內容\n` +
+                `4. 簡短回報：「已建立 ${candidate.slug}.md，重點是 …」\n\n` +
+                `不要做以外的事（不要重構別的 skill / 不要修 config）。`;
+
+              // 程式化呼叫 spawn_subagent — 透過 toolRegistry
+              const { getPlatformToolRegistry } = await import("./platform.js");
+              const { eventBus } = await import("./event-bus.js");
+              const toolRegistry = getPlatformToolRegistry();
+              const spawnTool = toolRegistry.all().find(t => t.name === "spawn_subagent");
+              if (!spawnTool) {
+                res.writeHead(500); res.end(JSON.stringify({ error: "spawn_subagent tool 未註冊" })); return;
+              }
+              const toolCtx = {
+                accountId: "dashboard-system",
+                sessionId: `dashboard-skill-author-${Date.now()}`,
+                channelId: "dashboard",
+                eventBus,
+              } as Parameters<typeof spawnTool.execute>[1];
+
+              const spawnResult = await spawnTool.execute({
+                task: authorPrompt,
+                label: `author skill ${candidate.slug}`,
+                agent: agentId,
+                async: true,
+                maxTurns: 8,
+                timeoutMs: 5 * 60_000,
+              }, toolCtx);
+
+              if ((spawnResult as { error?: string }).error) {
+                res.writeHead(500); res.end(JSON.stringify({ error: (spawnResult as { error?: string }).error })); return;
+              }
+              const runId = (spawnResult as { result?: { runId?: string } }).result?.runId ?? null;
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ spawned: true, runId, targetAgentId: agentId, targetPath }));
+            } catch (err) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+            }
+          })();
+        });
+        return;
+      }
+
+      // POST /api/skill-candidates/discard body { fileName }
+      if (url === "/api/skill-candidates/discard" && method === "POST") {
+        let body = "";
+        req.on("data", (c: Buffer) => { body += c.toString(); });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const { fileName } = JSON.parse(body) as { fileName: string };
+              const { discardSkillCandidate } = await import("../memory/skill-candidate-store.js");
+              const ok = discardSkillCandidate(fileName);
+              res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(ok ? { discarded: 1 } : { error: "找不到 fileName" }));
             } catch (err) {
               res.writeHead(500, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ error: String(err) }));

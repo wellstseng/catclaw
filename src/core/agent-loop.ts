@@ -20,7 +20,7 @@ import { homedir } from "node:os";
 import { log } from "../logger.js";
 import { makeToolResultMessage } from "../providers/base.js";
 import type { LLMProvider, Message, ProviderEvent, ImageBlock, ContentBlock } from "../providers/base.js";
-import type { SessionManager } from "./session.js";
+import type { Session, SessionManager } from "./session.js";
 import type { PermissionGate } from "../accounts/permission-gate.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { SafetyGuard } from "../safety/guard.js";
@@ -29,7 +29,8 @@ import { getSubagentRegistry } from "./subagent-registry.js";
 type EventBus = typeof _eventBusInstance;
 import type { ToolContext } from "../tools/types.js";
 import { getContextEngine, repairToolPairing, estimateTokens, estimateSchemaTokens, selectToolsToEvict } from "./context-engine.js";
-import { getToolLogStore, ToolLogStore } from "./tool-log-store.js";
+import { getToolLogStore, ToolLogStore, readToolLog } from "./tool-log-store.js";
+import { loadAgentSkills } from "./agent-skill-loader.js";
 import { getSessionSnapshotStore } from "./session-snapshot.js";
 import { registerTurnAbort, clearTurnAbort } from "../skills/builtin/stop.js";
 import type { MemoryEngine } from "../memory/engine.js";
@@ -859,6 +860,55 @@ async function runPostToolUseHook(
     sessionKey: ctx.sessionKey,
     channelId: ctx.channelId,
   });
+}
+
+// ── Skill Candidate trigger helpers ─────────────────────────────────────────
+// 給 post-turn / idle trigger 用。從 session messages + tool-log-store 重組成
+// judge 看得懂的 turn 摘要。本 turn 的 tool 直接從 TurnTracker 拿，避免重讀 disk。
+
+export function buildRecentTurnsForJudge(
+  sessionKey: string,
+  session: Session,
+  currentTurnIdx: number,
+  currentTracker: TurnTracker | null,
+  everyN: number,
+): import("../skills/skill-candidate-judge.js").RecentTurnSummary[] {
+  const out: import("../skills/skill-candidate-judge.js").RecentTurnSummary[] = [];
+  const fromTurn = Math.max(0, currentTurnIdx - everyN + 1);
+  for (let t = fromTurn; t <= currentTurnIdx; t++) {
+    const userMsg = session.messages.find(m => m.turnIndex === t && m.role === "user");
+    const assistantMsg = session.messages.find(m => m.turnIndex === t && m.role === "assistant");
+    let toolNames: string[] = [];
+    let hadError = false;
+    if (currentTracker && t === currentTurnIdx) {
+      toolNames = currentTracker.toolCalls.map(tc => tc.name);
+      hadError = currentTracker.toolCalls.some(tc => isFailingResult(tc.result, tc.error));
+    } else {
+      try {
+        const tl = readToolLog(sessionKey, t);
+        if (tl) {
+          toolNames = tl.tools.map(e => e.name);
+          hadError = tl.tools.some(e => isFailingResult(e.result, e.error));
+        }
+      } catch { /* 靜默；老 session 可能沒 log */ }
+    }
+    out.push({
+      turnIndex: t,
+      userPrompt: typeof userMsg?.content === "string" ? userMsg.content : "",
+      assistantResponse: typeof assistantMsg?.content === "string" ? assistantMsg.content : "",
+      toolNames,
+      hadError,
+    });
+  }
+  return out;
+}
+
+export function loadAgentSkillNamesSafe(agentId: string): string[] {
+  try {
+    return loadAgentSkills(agentId).map(s => s.name);
+  } catch {
+    return [];
+  }
 }
 
 // ── Agent Loop（主函式）────────────────────────────────────────────────────────
@@ -2787,6 +2837,30 @@ export async function* agentLoop(
       }
     }
   } catch { /* ignore */ }
+
+  // ── Skill Candidate Judge：每 N turn 觸發（fire-and-forget，不擋 yield done）──
+  // hermes 自動學習 (a)：從近期對話脈絡判斷有無值得抽成新 skill 的 workflow。
+  // 早退條件全在 judgeSkillCandidate() 內處理（含 cooldown、minTurns、cron channel）。
+  try {
+    const everyN = config.safety?.skillCandidate?.everyNTurns ?? 5;
+    if (everyN > 0 && session.turnCount > 0 && session.turnCount % everyN === 0) {
+      const currentTurnIdx = session.turnCount - 1;
+      const recentTurns = buildRecentTurnsForJudge(sessionKey, session, currentTurnIdx, tracker, everyN);
+      const judgeAgentId = opts.agentId ?? "default";
+      const existingSkills = loadAgentSkillNamesSafe(judgeAgentId);
+      void (async () => {
+        const { judgeSkillCandidate } = await import("../skills/skill-candidate-judge.js");
+        await judgeSkillCandidate({
+          channelId, agentId: judgeAgentId, sessionKey,
+          triggeredBy: "turn-base",
+          recentTurns,
+          existingSkillNames: existingSkills,
+        });
+      })().catch(err => log.debug(`[skill-candidate] turn-base judge 失敗（靜默）：${err instanceof Error ? err.message : String(err)}`));
+    }
+  } catch (err) {
+    log.debug(`[skill-candidate] trigger 失敗（靜默）：${err instanceof Error ? err.message : String(err)}`);
+  }
 
   _finalFullResponseForAck = fullResponse;  // ACK scan 用（finally 內可訪問）
   yield { type: "done", text: fullResponse, turnCount: loopCount, directDiscordReplySent };

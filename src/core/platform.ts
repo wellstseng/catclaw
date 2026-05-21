@@ -536,6 +536,56 @@ export async function initPlatform(
     log.warn(`[platform] Skill improvement TTL purge 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // ── 12.9 Skill Candidate 提案 TTL 清理 + idle 掃描（hermes 自動學習 a）─────
+  try {
+    const { purgeStaleSkillCandidates } = await import("../memory/skill-candidate-store.js");
+    purgeStaleSkillCandidates(14);
+  } catch (err) {
+    log.warn(`[platform] Skill candidate TTL purge 失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+  // Idle 掃描：每 5 分鐘掃 active sessions，超過 idleMinutes 沒動作 → 觸發判官一次
+  {
+    const idleMinutes = config.safety?.skillCandidate?.idleMinutes ?? 20;
+    if (idleMinutes > 0) {
+      const idleMs = idleMinutes * 60_000;
+      const lastJudgedAt = new Map<string, number>();  // sessionKey → epoch ms（in-memory，程序重啟即重置）
+      setInterval(() => {
+        const enabled = config.safety?.skillCandidate?.enabled !== false;
+        if (!enabled) return;
+        const now = Date.now();
+        const everyN = config.safety?.skillCandidate?.everyNTurns ?? 5;
+        for (const session of _sessionManager!.list()) {
+          if (now - session.lastActiveAt < idleMs) continue;
+          const judgedAt = lastJudgedAt.get(session.sessionKey);
+          if (judgedAt && judgedAt >= session.lastActiveAt) continue;  // 已為這段 idle 跑過
+          if (session.turnCount === 0) continue;
+          lastJudgedAt.set(session.sessionKey, now);
+          void (async () => {
+            try {
+              const { buildRecentTurnsForJudge, loadAgentSkillNamesSafe } = await import("./agent-loop.js");
+              const { judgeSkillCandidate } = await import("../skills/skill-candidate-judge.js");
+              const currentTurnIdx = session.turnCount - 1;
+              const recentTurns = buildRecentTurnsForJudge(session.sessionKey, session, currentTurnIdx, null, everyN);
+              // Agent ID 在 session 沒直接記錄 — 用 channel-derived default fallback
+              // （未來如要精準，可在 Session 加 lastAgentId 欄位）
+              const agentId = "default";
+              const existing = loadAgentSkillNamesSafe(agentId);
+              await judgeSkillCandidate({
+                channelId: session.channelId, agentId, sessionKey: session.sessionKey,
+                triggeredBy: "idle",
+                recentTurns,
+                existingSkillNames: existing,
+              });
+            } catch (err) {
+              log.debug(`[skill-candidate] idle judge 失敗（靜默）：${err instanceof Error ? err.message : String(err)}`);
+            }
+          })();
+        }
+      }, 5 * 60_000).unref();
+      log.info(`[platform] Skill candidate idle 掃描已啟動（idleMinutes=${idleMinutes}）`);
+    }
+  }
+
   // ── 13. 工具 + Skill 摘要注入（延遲 2s 等 MCP server 連線完成）────────────
   setTimeout(async () => {
     try {

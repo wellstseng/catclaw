@@ -456,6 +456,19 @@ export interface SafetyConfig {
   /** Skill 自省最小字數門檻（args+result 合計，預設 30）。
    *  低於此值跳過 LLM judge（過濾 /status 之類超短 skill）。拉高 = 更保守，更低 = 更多提案。 */
   skillSelfReflectMinChars?: number;
+  /** Skill candidate（新 skill 自動提案）— LLM 判官從對話脈絡發現新 workflow 提案，hermes 自動學習 (a) 部分 */
+  skillCandidate?: {
+    /** 開關（預設 true）。env CATCLAW_SKILL_CANDIDATE=false 亦可關。 */
+    enabled?: boolean;
+    /** 每 N turn 跑一次判官（預設 5；0 = 關閉 turn-base trigger）。 */
+    everyNTurns?: number;
+    /** Session idle 超過此分鐘觸發判官（預設 20；0 = 關閉 idle trigger）。 */
+    idleMinutes?: number;
+    /** 同 slug 提案冷卻時數（預設 24）。 */
+    cooldownHours?: number;
+    /** 判官最少看幾個 turn 才動（預設 3）。 */
+    minTurnsForJudge?: number;
+  };
 }
 
 /** Prompt Assembler 設定 */
@@ -1443,6 +1456,15 @@ function loadConfig(): BridgeConfig {
       reversibility:  raw.safety?.reversibility,
       maxSameToolPerTurn: raw.safety?.maxSameToolPerTurn ?? 5,
       maxConsecutiveToolErrors: raw.safety?.maxConsecutiveToolErrors ?? 5,
+      skillSelfReflectEnabled: raw.safety?.skillSelfReflectEnabled ?? true,
+      skillSelfReflectMinChars: raw.safety?.skillSelfReflectMinChars ?? 30,
+      skillCandidate: {
+        enabled:          raw.safety?.skillCandidate?.enabled          ?? true,
+        everyNTurns:      raw.safety?.skillCandidate?.everyNTurns      ?? 5,
+        idleMinutes:      raw.safety?.skillCandidate?.idleMinutes      ?? 20,
+        cooldownHours:    raw.safety?.skillCandidate?.cooldownHours    ?? 24,
+        minTurnsForJudge: raw.safety?.skillCandidate?.minTurnsForJudge ?? 3,
+      },
     },
     workflow: {
       guardian:       raw.workflow?.guardian       ?? { enabled: true, syncReminder: true, fileTracking: true },
