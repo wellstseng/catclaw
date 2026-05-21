@@ -127,16 +127,19 @@ function recordBlockedToolCall(
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
-// 自適應 loop cap：
-//   - BASE 是基礎預算（正常對話綽綽有餘）
-//   - 接近 cap 時，若近 5 輪「全成功、tool_search 沒超過 2 次」→ 延長一階（+STEP）
-//   - CEILING 是絕對天花板（擋失控成本）
-// 理由：Playwright MCP 之類一連串 30-50 工具呼叫的任務，固定 20 做不完；
-//       但無條件放寬會讓 buggy loop 吃掉成本。進展健康才准擴展是折衷。
-const BASE_LOOPS = 50;
-const LOOP_EXTEND_STEP = 10;
-const LOOP_CAP_CEILING = 80;
-// Tool-call timeout 自適應延長（與 loopCap 同哲學：健康進展才放寬，buggy 案例照砍）
+// Loop 終止策略（Claude Code 對齊）：
+//   無 per-turn 迭代天花板 — 只要 LLM 持續回 stop_reason="tool_use" 就繼續執行工具。
+//   依靠下列既有安全網收尾：
+//     - LLM 自然 end_turn / max_tokens / refusal（正常退出）
+//     - callWithRetry 耗盡（429/網路錯誤 → throw 出 turn = 「跑到 rate limit 自動收」）
+//     - MAX_EMPTY_TOOL_USE（連續空 tool_use 3 次）
+//     - MAX_DEFERRED_NUDGES（tool_search 後空回應 3 次）
+//     - ZERO_PROGRESS_BAIL（連 5 輪 0 工具 + 短文本）
+//     - safety.maxSameToolPerTurn（同工具連 5 次）
+//     - safety.maxConsecutiveToolErrors（連續工具錯誤上限，預設 5，新增）
+//     - Abort 訊號（/stop、turn timeout、tool timeout、grace exhausted）
+const MAX_CONSECUTIVE_TOOL_ERRORS_DEFAULT = 5;  // 連續工具錯誤上限預設值（任一工具成功即清零）
+// Tool-call timeout 自適應延長（健康進展才放寬，buggy 案例照砍）
 const TIMEOUT_TOOL_EXTEND_STEP_MS = 4 * 60_000;       // 每次延長 4 min
 const TIMEOUT_TOOL_CEILING_MS = 30 * 60_000;          // 上限 30 min（防無限）
 const TIMEOUT_TOOL_NEAR_THRESHOLD_MS = 60_000;        // 距 deadline ≤60s 才考慮延長
@@ -1420,7 +1423,9 @@ export async function* agentLoop(
 
   const tracker = new TurnTracker();
   let loopCount = 0;
-  let loopCap = BASE_LOOPS;  // 自適應：進展健康時會被延長（見迴圈尾巴的 cap extend 邏輯）
+  const maxConsecutiveToolErrors = config.safety?.maxConsecutiveToolErrors ?? MAX_CONSECUTIVE_TOOL_ERRORS_DEFAULT;
+  let consecutiveToolErrors = 0;             // 連續工具錯誤計數（任一工具成功清零；達上限中止 turn）
+  let consecutiveToolErrorsExhausted = false; // 達上限 → post-loop notice 分支
   let continuationCount = 0;  // Output Token Recovery 續接計數
   // Deferred Tool Nudge：tool_search 後 LLM 空回應 end_turn 時自動注入續接提示
   let deferredJustActivated: string[] = [];   // 本 iteration 剛活化的 deferred tool 名稱
@@ -1571,7 +1576,8 @@ export async function* agentLoop(
   log.debug(`[agent-loop] ── turn 開始 ── sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
 
   try {
-    while (loopCount++ < loopCap) {
+    while (true) {
+      loopCount++;
       // 把「本 iter 剛活化」移到「上一 iter 活化」槽，供本 iter end_turn 判斷
       prevIterDeferredActivated = deferredJustActivated;
       deferredJustActivated = [];
@@ -1953,7 +1959,6 @@ export async function* agentLoop(
       if (streamResult.toolCalls.length === 0) {
         // 空 tool_use iteration：模型宣告要用工具但沒給 toolCalls（Claude API 偶見 quirk）
         // 不直接 break，給模型再一次機會，但累計到 MAX_EMPTY_TOOL_USE 就強制中止避免死循環。
-        // loopCount 仍由 while 條件遞增，loopCap 防護不變。
         emptyToolUseCount++;
         log.warn(`[agent-loop] [loop=${loopCount}] 空 tool_use iteration（${emptyToolUseCount}/${MAX_EMPTY_TOOL_USE}）`);
         if (emptyToolUseCount >= MAX_EMPTY_TOOL_USE) {
@@ -2445,6 +2450,22 @@ export async function* agentLoop(
       // 把 tool results 加入 messages
       messages.push(makeToolResultMessage(toolResults));
 
+      // ── 連續工具錯誤偵測：本 iter 工具結果全失敗 → 累計；任一成功 → 清零 ──────
+      //   防 buggy 死循環（LLM 輪換工具全錯卻不停）；Claude Code 沒有這個，純多一層防呆網。
+      if (toolResults.length > 0) {
+        const anySuccess = toolResults.some(r => r.is_error !== true);
+        if (anySuccess) {
+          consecutiveToolErrors = 0;
+        } else {
+          consecutiveToolErrors += toolResults.length;
+          if (consecutiveToolErrors >= maxConsecutiveToolErrors) {
+            log.warn(`[agent-loop] [loop=${loopCount}] 連續工具錯誤 ${consecutiveToolErrors}/${maxConsecutiveToolErrors}，自動中止本輪`);
+            consecutiveToolErrorsExhausted = true;
+            break;
+          }
+        }
+      }
+
       // ── 0-progress 偵測（C）：連續 N iter「0 tool + 短文本」→ 中止 turn ──────
       //   trace a1cfb101 的 loops 11-21 連續 11 個 LLM call、0 tool、output 都 18 token —
       //   模型卡在乾打草稿，沒實質進展。早一點停止比讓它跑完 cap 省 token。
@@ -2461,19 +2482,8 @@ export async function* agentLoop(
         zeroProgressIters = 0;
       }
 
-      // ── 自適應 loop cap：接近上限 + 進展健康 → 延長 ─────────────────────────
-      //   「接近」：剩 ≤2 輪時判斷（避免太早擴展讓 buggy case 也被放寬）
-      //   「健康」：近 5 輪全部成功 + tool_search 不超過 2 次（tool_search 多 = 空轉訊號）
-      if (loopCount >= loopCap - 2 && loopCap < LOOP_CAP_CEILING) {
-        if (isHealthyProgress(tracker.toolCalls)) {
-          const oldCap = loopCap;
-          loopCap = Math.min(LOOP_CAP_CEILING, loopCap + LOOP_EXTEND_STEP);
-          log.info(`[agent-loop] [loop=${loopCount}] 自適應延長 cap ${oldCap} → ${loopCap}（近 5 輪健康進展）`);
-        }
-      }
-
       // ── 自適應 tool-call timeout：距 deadline ≤60s + 健康 → 延長 4 min（上限 30 min）──
-      // 跟 loopCap 同哲學。漫畫翻譯之類的批次工作 8 min 可能不夠，但 buggy 死循環也要砍。
+      // 漫畫翻譯之類的批次工作 8 min 可能不夠，但 buggy 死循環也要砍 — 健康才放寬。
       if (toolTimeoutSwitched && currentToolDeadlineMs > 0 && currentToolDeadlineMs < turnStartMs + TIMEOUT_TOOL_CEILING_MS) {
         const remainingToTimeout = currentToolDeadlineMs - Date.now();
         if (remainingToTimeout < TIMEOUT_TOOL_NEAR_THRESHOLD_MS && isHealthyProgress(tracker.toolCalls)) {
@@ -2490,9 +2500,8 @@ export async function* agentLoop(
   }
 
   // ── 6. Turn 結束 ────────────────────────────────────────────────────────────
-  // 觸頂判斷：post-increment 讓自然退出時 loopCount === loopCap+1；break 則 ≤ loopCap
+  // 自然退出 = LLM 回非 tool_use 的 stop_reason；其餘退出走各自 break + flag。
   // 不讓使用者以為 bot 消失 — 把現況補進 response，讓 Discord 端至少有訊息、可用「繼續」追
-  const maxLoopsReached = loopCount > loopCap;
   const wasAborted = controller.signal.aborted;
   let fullResponse = tracker.getFullResponse();
   // 關鍵：reply-handler 從 text_delta 事件串流累積 Discord 訊息，不讀 done.text
@@ -2527,20 +2536,13 @@ export async function* agentLoop(
     log.info(`[agent-loop] turn 被中斷：sessionKey=${sessionKey} reason=${reason} tools=${toolsRun}`);
   } else if (emptyToolUseExhausted) {
     // 模型連續產出「空 tool_use」（stopReason=tool_use 但 toolCalls=[]）→ 強制中止
-    // 先於 maxLoopsReached 判斷：若同時觸頂兩者，emptyToolUseCount 才是真正的根因
     bailNotice = `\n\n⚠️ 模型連續 ${MAX_EMPTY_TOOL_USE} 次產出空 tool_use（宣告要用工具但 toolCalls 為空），自動中止本輪。若要繼續請回覆「繼續」。`;
     log.warn(`[agent-loop] empty tool_use 觸頂：sessionKey=${sessionKey} count=${emptyToolUseCount}`);
-  } else if (maxLoopsReached) {
+  } else if (consecutiveToolErrorsExhausted) {
     const toolsRun = tracker.toolCalls.length;
     const lastTools = tracker.toolCalls.slice(-3).map(tc => tc.name).join(" → ") || "（無）";
-    const extended = loopCap > BASE_LOOPS ? `（已自適應延長到 ${loopCap}）` : "";
-    // 名實分流：toolsRun 真的吃滿 cap → 「工具呼叫上限」；否則是 iteration 被空轉/續接吃掉 → 「對話輪次上限」
-    if (toolsRun >= loopCap) {
-      bailNotice = `\n\n⚠️ 已達工具呼叫上限 ${loopCap} 輪${extended}（執行了 ${toolsRun} 個工具，最後 3 個：${lastTools}），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」或補充指示。`;
-    } else {
-      bailNotice = `\n\n⚠️ 已達對話輪次上限 ${loopCap} 輪${extended}（執行了 ${toolsRun} 個工具，最後 3 個：${lastTools}），自動中止本輪。任務可能未完成 — 若要繼續請回覆「繼續」或補充指示。`;
-    }
-    log.warn(`[agent-loop] loop cap 觸頂：sessionKey=${sessionKey} cap=${loopCap} tools=${toolsRun}`);
+    bailNotice = `\n\n⚠️ 連續 ${consecutiveToolErrors} 次工具呼叫失敗（上限 ${maxConsecutiveToolErrors}），自動中止本輪。已執行 ${toolsRun} 個工具，最後 3 個：${lastTools}。請檢查環境（指令、權限、依賴）或重述需求再試。`;
+    log.warn(`[agent-loop] 連續工具錯誤觸頂：sessionKey=${sessionKey} errors=${consecutiveToolErrors}/${maxConsecutiveToolErrors} tools=${toolsRun}`);
   } else if (deferredNudgeExhausted) {
     // 不是 loop cap 觸頂，而是 Anthropic API 在 tool_search 後連續空回應 end_turn
     // nudge 已經注入 3 次還是沒用 → 提醒使用者，不讓模型看起來裝死

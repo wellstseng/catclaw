@@ -447,6 +447,9 @@ export interface SafetyConfig {
   /** 同一 tool 連續呼叫上限（中間穿插別 tool 即清零；防卡死在同一工具，預設 5）。
    *  批次操作（grep 多目錄、處理多檔等）建議拉到 10-20。 */
   maxSameToolPerTurn?: number;
+  /** 連續工具錯誤達上限自動中止 turn（任一工具成功即清零；預設 5）。
+   *  防 buggy 死循環當 LLM 輪換工具卻全錯時仍不停。密集失敗的場景（如 SDK debug）可拉到 10。 */
+  maxConsecutiveToolErrors?: number;
 }
 
 /** Prompt Assembler 設定 */
@@ -1433,6 +1436,7 @@ function loadConfig(): BridgeConfig {
       collabConflict: raw.safety?.collabConflict,
       reversibility:  raw.safety?.reversibility,
       maxSameToolPerTurn: raw.safety?.maxSameToolPerTurn ?? 5,
+      maxConsecutiveToolErrors: raw.safety?.maxConsecutiveToolErrors ?? 5,
     },
     workflow: {
       guardian:       raw.workflow?.guardian       ?? { enabled: true, syncReminder: true, fileTracking: true },
