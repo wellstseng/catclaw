@@ -2418,6 +2418,9 @@ const CFG_SCHEMA = [
     {k:'safety.filesystem.protectedPaths',t:'list',l:'Protected Paths (軟擋)',d:'受保護路徑，寫入/bash 操作需 Exec Approval 授權（未啟用 Approval 時為硬擋）',defaults:${JSON.stringify(PROTECTED_WRITE_PATHS_DEFAULT)}},
     {k:'safety.filesystem.credentialPatterns',t:'list',l:'Credential Patterns (硬擋)',d:'憑證檔案模式（正則），匹配的檔案永遠禁止存取，不可授權'},
     {k:'safety.maxSameToolPerTurn',t:'num',l:'Max Same Tool / Turn',d:'同一 tool 連續呼叫上限（中間穿插別 tool 即清零；預設 5）。批次操作（如漫畫翻譯一次跑多個 vision_file/write_file）建議拉到 10-20，太低會被擋。'},
+    {k:'safety.maxConsecutiveToolErrors',t:'num',l:'Max Consecutive Tool Errors',d:'連續工具錯誤達上限自動中止 turn（任一工具成功即清零；預設 5）。防 buggy 死循環當 LLM 輪換工具卻全錯時仍不停。密集失敗場景（SDK debug 等）可拉到 10。'},
+    {k:'safety.skillSelfReflectEnabled',t:'bool',l:'Skill Self-Reflect',d:'Skill 執行後 LLM 自省提案（hermes 自動學習核心）。env CATCLAW_SKILL_SELF_REFLECT=false 亦可關閉。'},
+    {k:'safety.skillSelfReflectMinChars',t:'num',l:'Skill Self-Reflect Min Chars',d:'args+result 合計低於此值跳過 LLM judge（預設 30）。低=更多提案、高=更保守。'},
   ], sub:[
     {k:'safety.execApproval',l:'Exec Approval',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'高風險指令執行前需要 owner DM 核准'},
