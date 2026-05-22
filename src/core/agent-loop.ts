@@ -384,7 +384,12 @@ export interface AgentLoopOpts {
   signal?: AbortSignal;
   /** 無 tool call 時的 turn timeout 毫秒（預設無限）。一旦本 turn 出現 tool call，會切換為 turnTimeoutToolCallMs。 */
   turnTimeoutMs?: number;
-  /** 含 tool call 的 turn timeout 毫秒（預設等同 turnTimeoutMs）。出現第一個 tool call 後接管計時，從 turnStart 算起。 */
+  /**
+   * 含 tool call 的 turn timeout 毫秒。
+   * - `0` 或未提供：第一個 tool call 出現後**取消** turn timeout（對齊 Claude Code），靠 per-tool timeoutMs + stream idle watchdog 兜底。
+   * - `> turnTimeoutMs`：接管計時，從 turnStart 算起；可被「健康進展」自適應延長至 30 min 上限。
+   * - `<= turnTimeoutMs`：原 turn timeout 繼續生效（罕見配置）。
+   */
   turnTimeoutToolCallMs?: number;
   /** 是否顯示 tool calls（summary / all / none） */
   showToolCalls?: "all" | "summary" | "none";
@@ -2020,17 +2025,24 @@ export async function* agentLoop(
       // 有實際 tool 呼叫 → 重置空回應計數（避免偶發 1 次空回應後永久卡計數）
       emptyToolUseCount = 0;
 
-      // ── 第一個 tool call 出現 → 切換 timeout 為含工具的長 timeout（從 turnStart 算起的剩餘額度）──
-      if (!toolTimeoutSwitched && opts.turnTimeoutToolCallMs && opts.turnTimeoutToolCallMs > (opts.turnTimeoutMs ?? 0)) {
+      // ── 第一個 tool call 出現 → 切換 timeout 行為 ────────────────────────
+      // 預設 turnTimeoutToolCallMs=0：取消 turn timeout，靠 per-tool timeoutMs (≤10min) + stream idle watchdog 兜底（對齊 Claude Code）。
+      // turnTimeoutToolCallMs>turnTimeoutMs：接管計時、可自適應延長至 30min 上限（健康進展才放寬）。
+      if (!toolTimeoutSwitched) {
         toolTimeoutSwitched = true;
-        const elapsed = Date.now() - turnStartMs;
-        const remaining = opts.turnTimeoutToolCallMs - elapsed;
-        currentToolDeadlineMs = turnStartMs + opts.turnTimeoutToolCallMs;
-        if (remaining > 0) {
-          armTimeout(remaining, "timeout-with-tool");
-          log.info(`[agent-loop] turn timeout 切換到 tool-call mode：剩餘 ${remaining}ms（總上限 ${opts.turnTimeoutToolCallMs}ms）`);
-        } else {
-          controller.abort("timeout-with-tool");
+        if (!opts.turnTimeoutToolCallMs || opts.turnTimeoutToolCallMs <= 0) {
+          if (timeoutHandle) { clearTimeout(timeoutHandle); timeoutHandle = undefined; }
+          log.info(`[agent-loop] tool-call mode：turnTimeoutToolCallMs=0 → 取消 turn timeout（per-tool timeoutMs + stream idle watchdog 兜底）`);
+        } else if (opts.turnTimeoutToolCallMs > (opts.turnTimeoutMs ?? 0)) {
+          const elapsed = Date.now() - turnStartMs;
+          const remaining = opts.turnTimeoutToolCallMs - elapsed;
+          currentToolDeadlineMs = turnStartMs + opts.turnTimeoutToolCallMs;
+          if (remaining > 0) {
+            armTimeout(remaining, "timeout-with-tool");
+            log.info(`[agent-loop] turn timeout 切換到 tool-call mode：剩餘 ${remaining}ms（總上限 ${opts.turnTimeoutToolCallMs}ms）`);
+          } else {
+            controller.abort("timeout-with-tool");
+          }
         }
       }
 

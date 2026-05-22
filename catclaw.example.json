@@ -44,8 +44,8 @@
   },
 
   // ── 全域基本設定 ───────────────────────────────────────────────
-  "turnTimeoutMs": 300000,            // 單回合逾時（毫秒），預設 5 分鐘
-  "turnTimeoutToolCallMs": 480000,    // tool_call 時延長逾時（毫秒），預設 8 分鐘
+  "turnTimeoutMs": 300000,            // 單回合逾時（毫秒），預設 5 分鐘（無 tool call 才生效；防純文字串流卡住）
+  "turnTimeoutToolCallMs": 0,         // tool_call 出現後是否仍有 turn 上限（毫秒）；0=無上限（預設，對齊 Claude Code），靠 per-tool timeoutMs + stream idle watchdog 兜底
   "showToolCalls": "none",            // all / summary / none
   "showThinking": false,
   "debounceMs": 500,

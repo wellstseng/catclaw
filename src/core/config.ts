@@ -1364,7 +1364,9 @@ function loadConfig(): BridgeConfig {
     },
     admin: { allowedUserIds: (raw.admin?.allowedUserIds ?? []).map(String) },
     turnTimeoutMs,
-    turnTimeoutToolCallMs: raw.turnTimeoutToolCallMs ?? Math.round(turnTimeoutMs * 1.6),
+    // 0 = 無上限（預設）：tool-call 出現後不再計時，靠 per-tool timeoutMs(<=10min) + stream idle watchdog 兜底。
+    // 對齊 Claude Code 行為；歷史相容：使用者顯式設為正整數仍會在 agent-loop 第一個 tool call 出現時切換。
+    turnTimeoutToolCallMs: raw.turnTimeoutToolCallMs ?? 0,
     showToolCalls: parseShowToolCalls(raw.showToolCalls),
     showThinking: raw.showThinking ?? false,
     interimMode: raw.interimMode ?? "summary",

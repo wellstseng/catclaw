@@ -507,6 +507,7 @@ async function execSubagent(action: {
     accountId,
     provider,
     turnTimeoutMs: action.timeoutMs ?? 300_000,
+    // cron task 顯式 timeoutMs：放寬 1.6× 給 tool-call；否則沿用全域 config（預設 0=無上限）
     turnTimeoutToolCallMs: action.timeoutMs ? Math.round(action.timeoutMs * 1.6) : config.turnTimeoutToolCallMs,
     allowSpawn: false,
     _sessionKeyOverride: sessionKey,
