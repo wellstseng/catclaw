@@ -37,8 +37,7 @@ import type { MemoryEngine } from "../memory/engine.js";
 import { createApproval, sendApprovalDm, isCommandAllowed } from "./exec-approval.js";
 import { getSessionNote, checkAndSaveNote } from "../memory/session-memory.js";
 import { config } from "./config.js";
-import type { MessageTrace } from "./message-trace.js";
-import { getTraceStore } from "./message-trace.js";
+import { MessageTrace, getTraceStore } from "./message-trace.js";
 import { isPlanMode, PLAN_MODE_BLOCKED_TOOLS } from "../skills/builtin/plan.js";
 import { externalizeToolOutput, shouldExternalizeToolOutput, type ExternalizedToolOutput } from "./tool-output-store.js";
 
@@ -964,7 +963,17 @@ export async function* agentLoop(
   try {
     await sessionManager.enqueueTurn({ sessionKey, accountId, prompt, signal: opts.signal });
   } catch (err) {
-    yield { type: "error", message: `session 佇列：${err instanceof Error ? err.message : String(err)}` };
+    const msg = err instanceof Error ? err.message : String(err);
+    yield { type: "error", message: `session 佇列：${msg}` };
+    // 早退路徑也要兜底 trace（否則 BUSY/TIMEOUT 拒絕時 trace 變孤兒 → 訊息黑洞）
+    try {
+      if (trace && MessageTrace.isLive(trace.traceId)) {
+        trace.recordError(`enqueueTurn rejected: ${msg}`);
+        const ts = getTraceStore();
+        if (ts) ts.append(trace.finalize());
+        log.warn(`[agent-loop] trace 兜底（enqueue 失敗）：traceId=${trace.traceId.slice(0, 8)} sessionKey=${sessionKey} reason=${msg}`);
+      }
+    } catch { /* ignore */ }
     return;
   }
 
@@ -2898,6 +2907,20 @@ export async function* agentLoop(
     sessionManager.dequeueTurn(sessionKey);
     // 清掉 interrupt queue（避免下一 turn 收到上一 turn 殘留的插話）
     unregisterInterruptQueue(sessionKey);
+
+    // ── Trace 孤兒兜底 ──────────────────────────────────────────────────────
+    // 正常路徑會在 post-process 走 trace.finalize（line ~2776）。
+    // 但若主 try 在 finalize 之前 throw → trace 留在 _liveTraces，traces.jsonl 不會有這一筆 → 訊息黑洞。
+    // 觀察到的案例：a5ccccbb / f5526ed1（2026-05-22 17:24, 17:28）只進 messages.ndjson 但無 trace。
+    // 此處兜底：若 trace 還活著就補 finalize（recordError 標明非正常結束）。
+    try {
+      if (trace && MessageTrace.isLive(trace.traceId)) {
+        trace.recordError("agent-loop terminated before reaching finalize（可能是 fatalErr throw 或主路徑提前退出）");
+        const traceStore = getTraceStore();
+        if (traceStore) traceStore.append(trace.finalize());
+        log.warn(`[agent-loop] trace 孤兒兜底：traceId=${trace.traceId.slice(0, 8)} sessionKey=${sessionKey}`);
+      }
+    } catch (e) { log.warn(`[agent-loop] trace 兜底失敗：${e instanceof Error ? e.message : String(e)}`); }
 
     // ── ACK Scan：補救 LLM silent end_turn ───────────────────────────────────
     // 場景：bg-job/subagent 完成 → listener 接住注入 LLM messages → LLM 看到了

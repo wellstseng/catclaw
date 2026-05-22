@@ -12,6 +12,13 @@ import { getPlatformSessionManager, getPlatformPermissionGate, getPlatformToolRe
 import { log } from "../../logger.js";
 import { MessageTrace } from "../../core/message-trace.js";
 
+// 防 LLM 瘋狂輪詢 running subagent：對同一 runId 連續 status 查詢計數，第 2 次起在 result 注 warning。
+// 觀察到的真實 case：async spawn 後 LLM 每輪 `subagents(status)` + 「還在跑、繼續等、還沒」，吃光 turn 額度。
+// status 變動或 5 min 無查詢自動清掉。
+const POLL_WARN_THRESHOLD = 2;
+const POLL_TTL_MS = 5 * 60_000;
+const _statusPollCount = new Map<string, { count: number; lastTs: number }>();
+
 export const tool: Tool = {
   name: "subagents",
   description: "管理子 agent：list / kill / steer（轉向 running agent）/ wait / status / resume（喚醒 keepSession agent）/ send_message（續接已完成的 agent，注入後續指令並背景執行）",
@@ -218,6 +225,22 @@ export const tool: Tool = {
         const durationMs = record.endedAt
           ? record.endedAt - record.createdAt
           : Date.now() - record.createdAt;
+
+        let pollWarning: string | undefined;
+        if (record.status === "running") {
+          const now = Date.now();
+          const prev = _statusPollCount.get(runId);
+          const stale = prev && (now - prev.lastTs > POLL_TTL_MS);
+          const nextCount = (prev && !stale ? prev.count : 0) + 1;
+          _statusPollCount.set(runId, { count: nextCount, lastTs: now });
+          if (nextCount >= POLL_WARN_THRESHOLD) {
+            pollWarning = `已是第 ${nextCount} 次查詢同一 runId 的 running 狀態。${record.async ? "async " : ""}subagent 完成時平台會自動 wake parent agent 並注入結果到下一輪 — 請**停止輪詢**，end_turn 或處理其他事，背景任務不會丟失。`;
+            log.info(`[subagents:status] 偵測到輪詢 runId=${runId} count=${nextCount} → 注入 pollWarning`);
+          }
+        } else {
+          _statusPollCount.delete(runId);
+        }
+
         return {
           result: {
             runId: record.runId,
@@ -230,6 +253,7 @@ export const tool: Tool = {
             endedAt: record.endedAt,
             durationMs,
             childSessionKey: record.childSessionKey,
+            ...(pollWarning ? { warning: pollWarning } : {}),
           },
         };
       }

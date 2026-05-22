@@ -53,6 +53,10 @@ const TURN_QUEUE_MAX_DEPTH  = 5;
 // 佇列排隊超時：至少 120s，但不超過 turnTimeoutMs（預設 300s）
 const TURN_QUEUE_TIMEOUT_MS_DEFAULT = 120_000;
 const MAX_HISTORY_TURNS_DEFAULT = 50;
+// 位置 0（執行中）超過此時間還沒 dequeue → log warn（觀測 stuck turn，不強制中止）
+// 多階段：30s 第一次 warn，之後每 60s 再 warn 一次，直到自然 dequeue
+const TURN_STUCK_WARN_AT_MS = 30_000;
+const TURN_STUCK_RECUR_MS = 60_000;
 
 export class SessionManager {
   private sessions = new Map<string, Session>();
@@ -343,9 +347,10 @@ export class SessionManager {
         }
       }, queueTimeoutMs);
 
-      // 若是第一個 → 立即 resolve（不等待）
+      // 若是第一個 → 立即 resolve（不等待）+ 啟動 stuck 觀測 watchdog
       if (queue.length === 1) {
         clearTimeout(timeoutId);
+        this._armStuckWatch(entry, sessionKey);
         resolve();
       } else {
         // 等待前一個 dequeue
@@ -354,10 +359,36 @@ export class SessionManager {
     });
   }
 
+  /**
+   * Stuck-turn observer：position 0 的 turn 若超過 30s 還沒 dequeue → log warn，之後每 60s 再警告。
+   * 5 分鐘後升級為 error log（更容易在 stderr/log aggregator 撈到）。
+   * 不強制中止（避免誤殺長任務）；提供可觀測性，便於下次「訊息黑洞」案例對照 trace。
+   */
+  private _armStuckWatch(entry: TurnRequest, sessionKey: string): void {
+    const startedAt = Date.now();
+    let warnCount = 0;
+    const ESCALATE_AT_MS = 5 * 60_000;
+    const tick = (): ReturnType<typeof setTimeout> => setTimeout(() => {
+      const elapsedMs = Date.now() - startedAt;
+      const elapsedSec = Math.round(elapsedMs / 1000);
+      warnCount++;
+      const msg = `[session] turn 執行中超過 ${elapsedSec}s 未 dequeue：sessionKey=${sessionKey} warnCount=${warnCount}（若 agent-loop finally 未跑 → 後續 inbound 會在 queue 卡 ${Math.round((config.turnTimeoutMs ?? 300_000) / 1000)}s 後拒絕；查 reply-handler 與 fire-and-forget rejection）`;
+      if (elapsedMs >= ESCALATE_AT_MS) log.error(msg); else log.warn(msg);
+      const handle = tick();
+      (entry as unknown as Record<string, unknown>)["_stuckHandle"] = handle;
+    }, warnCount === 0 ? TURN_STUCK_WARN_AT_MS : TURN_STUCK_RECUR_MS);
+    (entry as unknown as Record<string, unknown>)["_stuckHandle"] = tick();
+  }
+
   /** 前一個 turn 完成，讓下一個開始 */
   dequeueTurn(sessionKey: string): void {
     const queue = this.queues.get(sessionKey);
     if (!queue || queue.length === 0) return;
+
+    // 清理 stuck watcher（剛完成的 entry）
+    const completed = queue[0];
+    const completedStuck = (completed as unknown as Record<string, unknown>)["_stuckHandle"];
+    if (completedStuck) clearTimeout(completedStuck as ReturnType<typeof setTimeout>);
 
     queue.shift();  // 移除剛完成的
 
@@ -366,6 +397,8 @@ export class SessionManager {
       // 清理超時計時器
       const timeoutId = (next as unknown as Record<string, unknown>)["_timeoutId"];
       if (timeoutId) clearTimeout(timeoutId as ReturnType<typeof setTimeout>);
+      // 啟動新的 stuck watcher（next 變成 position 0）
+      this._armStuckWatch(next, sessionKey);
       next.resolve();  // 讓下一個 turn 開始
     } else {
       this.queues.delete(sessionKey);

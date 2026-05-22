@@ -416,6 +416,11 @@ export class MessageTrace {
     MessageTrace._liveTraces.delete(this.traceId);
   }
 
+  /** 檢查指定 traceId 是否仍在 _liveTraces（未 finalize / 未 discard） */
+  static isLive(traceId: string): boolean {
+    return MessageTrace._liveTraces.has(traceId);
+  }
+
   /** 把「turn 進行中插入」的訊息追加到 active trace（不另起新 trace） */
   recordInsertedInbound(text: string): void {
     if (!this.entry.workflowEvents) this.entry.workflowEvents = [];

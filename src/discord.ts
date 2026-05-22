@@ -1001,7 +1001,14 @@ async function handleMessage(
         }
       }
 
-      void handleAgentLoopReply(withAckReactions(gen), firstMessage, config, replyThread ? { threadChannel: replyThread } : undefined);
+      // 不 await（不阻塞 debounce callback），但補 .catch 把 silent rejection 撈出 log
+      // 之前是純 void → handleAgentLoopReply 內部任何 throw 都會變 unhandledRejection，
+      // 無 log、無 trace finalize、可能讓 turn queue 卡死。
+      handleAgentLoopReply(withAckReactions(gen), firstMessage, config, replyThread ? { threadChannel: replyThread } : undefined)
+        .catch(err => {
+          log.error(`[discord] handleAgentLoopReply 失敗 channel=${firstMessage.channelId}：${err instanceof Error ? err.message : String(err)}`);
+          void firstMessage.react("❌").catch(() => {});
+        });
     }
   } catch (err) {
     log.error(`[discord] debounce handler 未預期錯誤：${err instanceof Error ? err.message : String(err)}`);
