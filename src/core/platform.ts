@@ -384,10 +384,10 @@ export async function initPlatform(
       }, 300);
     },
   });
-  // Startup Recovery：補救 catclaw crash 在 onComplete 觸發前的漏洞 — 重啟後掃
-  // 1h 內結束但 acked=false 的 records，重觸發 onComplete/onFail handler 走 wake
-  bgRegistry.runStartupRecovery();
-  log.info("[platform] BackgroundJobRegistry 初始化完成");
+  // Startup Recovery：deferred 到 Discord clientReady 後才呼叫（見 discord.ts:clientReady listener）。
+  // 之前在這裡同步呼叫，但 Discord client 還沒 authenticate → wake-agent 收到 client=null 直接 bail，
+  // fallback sendBgJobNotification 也因 client=null bail → 訊息黑洞（觀察案例：jobId 03bb6aa2）。
+  log.info("[platform] BackgroundJobRegistry 初始化完成（runStartupRecovery 將於 Discord clientReady 後執行）");
 
   // ── 9.66 Collab Conflict Detector ─────────────────────────────────────────
   if (config.safety?.collabConflict?.enabled !== false) {
