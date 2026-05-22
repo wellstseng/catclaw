@@ -18,6 +18,9 @@ import { log } from "../logger.js";
 const PERSIST_PATH = join(homedir(), ".catclaw", "workspace", "data", "jobs", "registry.json");
 const MAX_RETAINED_JOBS = 200;
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
+// 「process 活著 + output 已到」分支的穩定門檻：output 非空且 mtime ≥ 5s 沒變才算完成。
+// 防 `cmd > out.md` 開頭立即建 0-byte 檔被誤判 completed（bug case：jobId 03bb6aa2，startedAt+636ms 誤判）。
+const OUTPUT_STABLE_MS = 5_000;
 
 export type JobStatus = "running" | "completed" | "failed" | "killed" | "timeout" | "stale";
 
@@ -75,6 +78,29 @@ function allExpectedOutputsExist(paths: string[] | undefined): boolean {
     }
     try {
       statSync(p);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 「process 還活著 + output 已到」分支用的穩定性判斷。
+ * 修 false-positive：`cmd > out.md` 一啟動 shell 就立刻建立 0-byte out.md，
+ * 純 existence 檢查會在 poll 第一輪就誤判 completed（startedAt+636ms case 已觀察到）。
+ *
+ * 條件：所有 expected output 都 (a) 存在 (b) size > 0 (c) mtime 至少 stableForMs 沒變
+ */
+function allExpectedOutputsStable(paths: string[] | undefined, stableForMs: number): boolean {
+  if (!paths || paths.length === 0) return false;
+  const now = Date.now();
+  for (const p of paths) {
+    if (p.includes("*") || p.includes("?")) return false;
+    try {
+      const s = statSync(p);
+      if (s.size === 0) return false;
+      if (now - s.mtimeMs < stableForMs) return false;
     } catch {
       return false;
     }
@@ -258,7 +284,8 @@ export class BackgroundJobRegistry {
 
       // 4. process 死 + 預期輸出齊 → completed
       // 5. process 死 + 預期輸出不齊 → failed
-      // 6. process 活 + 輸出齊 → 視為完成（程式可能還沒收尾但結果已到）
+      // 6. process 活 + 輸出齊（穩定）→ 視為完成（程式可能還沒收尾但結果已到）
+      //    穩定條件 = 非空 + mtime ≥ 5s 沒變；防 `cmd > file.md` 開頭立即建空檔誤判 completed
       if (!alive) {
         if (outputsOk || !r.expectedOutputs?.length) {
           // 沒有 expectedOutputs 約定時，僅靠 process 死視為完成（exitCode 不可知，標 null）
@@ -266,7 +293,7 @@ export class BackgroundJobRegistry {
         } else {
           this.fail(r.jobId, "process exited but expected outputs missing", null);
         }
-      } else if (outputsOk && r.expectedOutputs?.length) {
+      } else if (r.expectedOutputs?.length && allExpectedOutputsStable(r.expectedOutputs, OUTPUT_STABLE_MS)) {
         this.complete(r.jobId, null);
       }
     }
