@@ -213,9 +213,9 @@ catclaw/                          <- 程式碼
 **流程**：Session 載入 → Context 壓縮 → Memory Recall → System Prompt 組裝 → LLM 呼叫迴圈 → 後處理
 
 **關鍵常數**：
-- `MAX_LOOPS = 20`：單次 turn 最大 tool 迴圈數
+- ~~`MAX_LOOPS`~~：已移除（b70785b），靠 LLM stop_reason + 多層安全網自然收尾
 - `MAX_CONTINUATIONS = 3`：Output Token Recovery 自動續接次數
-- Turn timeout：基礎 5 分鐘，tool_call 延長至 8 分鐘
+- Turn timeout：無 tool call 時 `turnTimeoutMs`（預設 5 分鐘）；出現 tool call 後 `turnTimeoutToolCallMs`（預設 0=無上限，對齊 Claude Code）
 
 **事件型別**（AsyncGenerator）：`text_delta` / `thinking` / `tool_start` / `tool_blocked` / `done` / `error`
 

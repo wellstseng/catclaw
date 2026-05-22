@@ -20,30 +20,30 @@
 
 | 常數 | 值 | 說明 |
 |------|-----|------|
-| `BASE_LOOPS` | 50 | 單次 turn 起始 LLM 迴圈數（自適應可延長至 `LOOP_CAP_CEILING`） |
-| `LOOP_CAP_CEILING` | 80 | 自適應延長的絕對天花板 |
+| `MAX_CONSECUTIVE_TOOL_ERRORS_DEFAULT` | 5 | 連續工具錯誤上限（任一成功清零；可由 `safety.maxConsecutiveToolErrors` 覆寫） |
 | `MAX_CONTINUATIONS` | 3 | Output Token Recovery 最大續接次數 |
 | `MAX_DEFERRED_NUDGES` | 3 | Deferred tool 活化後空回應的續接提示上限 |
 | `MAX_EMPTY_TOOL_USE` | 3 | 連續空 tool_use iteration 上限（`stopReason=tool_use` 但 `toolCalls=[]`） |
+| `ZERO_PROGRESS_BAIL` | 5 | 連續 N iter「0 tool + 短文本」→ 中止 turn（防乾打草稿） |
+| `MAX_SAME_TOOL_PER_TURN_DEFAULT` | 5 | 同 tool 連續呼叫上限（中間穿插別 tool 即清零；可由 `safety.maxSameToolPerTurn` 覆寫） |
+| `TIMEOUT_TOOL_CEILING_MS` | 30 × 60_000 | tool-call timeout 自適應延長的絕對天花板（僅在 `turnTimeoutToolCallMs > 0` 才生效） |
 | `DEFAULT_RESULT_TOKEN_CAP` | 0 | Tool result 預設不截斷（per-tool resultTokenCap 仍生效）；**error 訊息永遠不截斷** |
 
-### 空 tool_use 防護（2026-04-29 新增）
+> **2026-05-21 變更**：移除 `BASE_LOOPS=50` / `LOOP_CAP_CEILING=80` 硬迭代上限（commit b70785b），主迴圈改 `while(true)`，靠 LLM stop_reason + 下列既有安全網自然收尾（見檔頭 130-141 行註解）：
+> empty tool_use / deferred nudge / zero-progress / maxSameToolPerTurn / maxConsecutiveToolErrors / callWithRetry 耗盡 / abort signal。
+
+### 空 tool_use 防護
 
 模型偶爾會產出 `stopReason==="tool_use"` 但 `toolCalls=[]` 的「空 tool_use iteration」（Claude API quirk）。
-舊行為：第一次空 tool_use 直接 `break`，但觸頂訊息一律寫「工具呼叫上限」名實不符。
-新行為：
 - 空 tool_use → `emptyToolUseCount++`、`continue`，給模型再一次機會
 - 累計到 `MAX_EMPTY_TOOL_USE` 則設 `emptyToolUseExhausted=true` 後 break
 - 偵測到實際 tool 呼叫即重置計數
-- `loopCount` 仍由 while 條件遞增，死循環防護不變
 
-### 觸頂訊息分流
+### 自然收尾通知分流
 
-`maxLoopsReached` 內部按實際 tool 執行數分流：
-- `toolsRun >= loopCap` → 「已達工具呼叫上限」
-- `toolsRun < loopCap` → 「已達對話輪次上限」（iteration 被空轉/續接吃掉）
-
-`emptyToolUseExhausted` 分支獨立顯示「模型連續 N 次產出空 tool_use」，並排在 `maxLoopsReached` 之前判斷。
+按 abort/exhausted 來源分支送出 bailNotice：
+- `controller.signal.reason`：`timeout-no-tool` / `timeout-with-tool` / `timeout-grace-exhausted` / `stop` / 其他（插話）
+- `emptyToolUseExhausted` / `deferredNudgeExhausted` / `zeroProgressBailed` / `consecutiveToolErrorsExhausted`：各自獨立提示
 
 ## 主函式
 

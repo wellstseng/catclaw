@@ -154,10 +154,10 @@ Discord messageCreate
 | debounceMs | 500 | 訊息合併延遲（config 可調） |
 | typingInterval | 8000 | typing indicator 間隔 |
 | turnTimeoutMs | 300000 | 基礎回應超時 5 分鐘（頂層 config） |
-| turnTimeoutToolCallMs | turnTimeoutMs×1.6 | tool_call 延長超時 ~8 分鐘 |
+| turnTimeoutToolCallMs | 0（預設） | tool_call 出現後的 turn 上限；0=無上限（對齊 Claude Code） |
 | sessionTtlHours | 168 | Session 閒置 7 天 |
 | fileUploadThreshold | 4000 | 超過轉 .md 上傳 |
-| MAX_LOOPS | 20 | agentLoop 最大迴圈次數 |
+| ~~MAX_LOOPS~~ | 已移除 (b70785b) | 無硬迭代上限，靠 stop_reason + 多層安全網自然收尾 |
 | DEFAULT_RESULT_TOKEN_CAP | 8000 tokens | tool result 截斷上限（≈32000 chars） |
 | SIGTERM delay | 250ms | abort 後等待時間再 SIGKILL |
 
@@ -171,7 +171,7 @@ Discord messageCreate
     "guilds": { "<guildId>": { "allow": true, "requireMention": true, "allowBot": false, "allowFrom": [], "channels": {} } }
   },
   "turnTimeoutMs": 300000,
-  "turnTimeoutToolCallMs": 480000,
+  "turnTimeoutToolCallMs": 0,
   "sessionTtlHours": 168,
   "showToolCalls": "summary",
   "showThinking": false,

@@ -79,8 +79,8 @@ Prompt：`<displayName>: <text>`
 5. Turn timeout + AbortController（SIGTERM → 250ms → SIGKILL）
 
 ### Timeout 分層
-- 基礎：turnTimeoutMs（5 分鐘）
-- Tool call 偵測：延長至 turnTimeoutToolCallMs（~8 分鐘）
+- 基礎：turnTimeoutMs（5 分鐘，僅在「無 tool call」時生效）
+- Tool call 偵測：若 turnTimeoutToolCallMs=0（預設）→ 取消 turn timeout（對齊 Claude Code，靠 per-tool timeoutMs + stream idle watchdog 兜底）；若顯式設 >turnTimeoutMs → 切換至該值
 - 80% 警告：送 ⏳ 通知
 
 ### Crash Recovery
@@ -268,7 +268,7 @@ reset-session：讀 CATCLAW_WORKSPACE 定位 sessions.json，不需重啟
 ### core/agent-loop.ts — Tool Result 截斷
 - 預設上限 8000 tokens（≈32000 chars）
 - 超出：前 50 行 + 截斷通知 + 末 20 行
-- `MAX_LOOPS = 20` 防無限迴圈
+- 無硬迭代上限（b70785b 移除），靠 stop_reason + 多層安全網（連續工具錯誤、空 tool_use、zero-progress、deferred nudge、callWithRetry 耗盡、abort）
 
 ## providers/ — LLM Provider 系統
 

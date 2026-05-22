@@ -238,10 +238,10 @@ src/
 | `debounceMs` | 500ms（預設） | 多則訊息合併等待時間，config 可調 | discord.ts / core/config.ts |
 | `typingInterval` | 8000ms | Typing indicator 重發間隔（Discord 約 10s 自動消失） | core/reply-handler.ts |
 | `turnTimeoutMs` | 300000ms（預設） | 基礎回應超時（5分鐘），config 可調 | core/config.ts |
-| `turnTimeoutToolCallMs` | turnTimeoutMs×1.6（預設） | tool_call 延長超時（預設 8 分鐘），config 可調 | core/config.ts |
+| `turnTimeoutToolCallMs` | `0`（預設，無上限） | 含 tool call 的 turn 上限；0 對齊 Claude Code，靠 per-tool timeout + stream idle watchdog 兜底 | core/config.ts |
 | `session.ttlHours` | 168h（預設） | Session 閒置超時（7天），config 可調 | core/config.ts |
 | `fileUploadThreshold` | 4000（預設） | 超過此字數上傳為 .md，0=停用，config 可調 | core/config.ts |
-| `MAX_LOOPS` | 20 | Agent Loop 單次 turn 最大 tool 迴圈數 | core/agent-loop.ts |
+| ~~`MAX_LOOPS`~~ | 已移除 (b70785b) | Agent Loop 無硬迭代上限，靠 LLM stop_reason + 多層安全網自然收尾 | core/agent-loop.ts |
 | `MAX_CONTINUATIONS` | 3 | Output Token Recovery 最多自動續接次數 | core/agent-loop.ts |
 | `MIN_TIMER_MS` | 2000ms | cron timer 最短間隔 | cron.ts |
 | `MAX_TIMER_MS` | 60000ms | cron timer 最長間隔 | cron.ts |
@@ -271,7 +271,7 @@ src/
 | `discord.guilds[id].channels[chId].allowBot` | boolean | guild預設 | — | per-channel 覆寫 allowBot |
 | `discord.guilds[id].channels[chId].allowFrom` | string[] | guild預設 | — | per-channel 覆寫 allowFrom |
 | `turnTimeoutMs` | number | `300000` | — | 回應超時毫秒（5分鐘），頂層欄位 |
-| `turnTimeoutToolCallMs` | number | `turnTimeoutMs×1.6` | — | tool_call 延長超時（預設 8 分鐘） |
+| `turnTimeoutToolCallMs` | number | `0` | — | 含 tool call 的 turn 上限；0=無上限（預設，對齊 Claude Code） |
 | `showToolCalls` | "all"/"summary"/"none" | `"all"` | — | 工具呼叫顯示模式（舊版 boolean 相容） |
 | `showThinking` | boolean | `false` | — | 顯示 Claude 推理過程 |
 | `debounceMs` | number | `500` | — | 訊息合併等待毫秒 |

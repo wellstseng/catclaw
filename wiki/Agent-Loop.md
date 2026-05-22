@@ -36,11 +36,12 @@ flowchart TD
 
 ### LLM Stream Loop
 
-- 最大輪數：`MAX_LOOPS = 20`
+- 無硬迭代上限（b70785b 移除），靠 LLM stop_reason + 多層安全網自然收尾
 - 每輪呼叫 `provider.stream()` 取得 LLM 回應
 - 遇到 `tool_use` → 執行工具 → 結果送回下一輪
 - 遇到 `end_turn` → 結束迴圈
 - 遇到 `max_tokens` → 觸發 Output Token Recovery
+- 安全網：空 tool_use / deferred nudge / zero-progress / maxSameToolPerTurn / maxConsecutiveToolErrors / callWithRetry 耗盡 / abort（含 turn timeout）
 
 ### Output Token Recovery
 

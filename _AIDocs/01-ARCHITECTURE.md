@@ -174,7 +174,7 @@ providers/
 
 | 詞彙 | 說明 |
 |------|------|
-| **Agent Loop** | CatClaw 自有的 LLM 對話迴圈（一軌制），控制 tool 執行，LLM 只負責思考。MAX_LOOPS=20 |
+| **Agent Loop** | CatClaw 自有的 LLM 對話迴圈（一軌制），控制 tool 執行，LLM 只負責思考。無硬迭代上限（移除於 b70785b），靠 stop_reason + 多層安全網收尾 |
 | **Provider** | LLM 供應商抽象（claude-api / ollama / openai-compat / codex-oauth），實作 LLMProvider 介面 |
 | **ProviderRegistry** | Provider 註冊表，依路由規則解析出當前 channel/project/role 應使用的 provider |
 | **models.json** | Model 設定唯一真相來源（V2 per-agent）：primary / fallback / aliases / routing |
@@ -446,7 +446,7 @@ providers/
 | `providers` | object | — | — | Provider 設定區塊（啟用時走 V2 Agent Loop 路徑） |
 | `admin.allowedUserIds` | string[] | `[]` | — | Platform-owner 身份的 Discord User ID |
 | `turnTimeoutMs` | number | `300000` | — | 基礎回應超時毫秒（5分鐘） |
-| `turnTimeoutToolCallMs` | number | `turnTimeoutMs×1.6` | — | tool_call 偵測後延長至此值（預設 8 分鐘） |
+| `turnTimeoutToolCallMs` | number | `0` | — | 含 tool call 的 turn 上限；0=無上限（預設，對齊 Claude Code） |
 | `sessionTtlHours` | number | `168` | — | Session 閒置超時小時（7天） |
 | `showToolCalls` | "all"/"summary"/"none" | `"all"` | — | 工具呼叫顯示模式 |
 | `showThinking` | boolean | `false` | — | 顯示 LLM 推理過程 |
@@ -492,7 +492,8 @@ index.ts ready 事件 → 讀 signal/RESTART
 
 | 常數 | 值 | 說明 | 所在檔案 |
 |------|-----|------|---------|
-| `MAX_LOOPS` | 20 | Agent Loop 單次 turn 最大迴圈數 | agent-loop.ts |
+| ~~`MAX_LOOPS`~~ | 已移除 (b70785b) | 無硬迭代上限，靠 LLM stop_reason + 多層安全網自然收尾 | agent-loop.ts |
+| `MAX_CONSECUTIVE_TOOL_ERRORS_DEFAULT` | 5 | 連續工具錯誤上限（取代舊 MAX_LOOPS 角色，任一成功清零） | agent-loop.ts |
 | `MAX_CONTINUATIONS` | 3 | Output Token Recovery 最多自動續接次數 | agent-loop.ts |
 | `DEFAULT_RESULT_TOKEN_CAP` | 8000 | Tool result 截斷 token 上限（≈32000 chars） | agent-loop.ts |
 | `TEXT_LIMIT` | 2000 | Discord 訊息字數硬上限 | reply-handler.ts |
@@ -500,7 +501,7 @@ index.ts ready 事件 → 讀 signal/RESTART
 | `EDIT_INTERVAL_MS` | 800ms | streaming 模式最快 edit 間隔 | reply-handler.ts |
 | `debounceMs` | 500ms（預設） | 多則訊息合併等待，config 可調 | discord.ts/config.ts |
 | `turnTimeoutMs` | 300000ms（預設） | 基礎回應超時（5分鐘），config 可調 | config.ts |
-| `turnTimeoutToolCallMs` | turnTimeoutMs×1.6（預設） | tool_call 延長超時（預設 8 分鐘），config 可調 | config.ts |
+| `turnTimeoutToolCallMs` | `0`（預設，無上限） | 含 tool call 的 turn 上限；對齊 Claude Code，靠 per-tool timeout + stream idle watchdog 兜底 | config.ts |
 | `sessionTtlHours` | 168h（預設） | Session 閒置超時（7天），config 可調 | config.ts |
 | `fileUploadThreshold` | 4000（預設） | 超過此字數上傳 .md，0=停用，config 可調 | config.ts |
 | `MIN_TIMER_MS` | 2000ms | cron timer 最短間隔 | cron.ts |

@@ -110,7 +110,7 @@ Discord 連線與權限設定。
 | 欄位 | 型別 | 預設值 | 說明 |
 |------|------|--------|------|
 | `turnTimeoutMs` | number | `300000` | 單次回應超時（毫秒），5 分鐘 |
-| `turnTimeoutToolCallMs` | number | `turnTimeoutMs × 1.6` | tool_call 時延長超時（預設 480000） |
+| `turnTimeoutToolCallMs` | number | `0` | 含 tool call 的 turn 上限；0=無上限（預設，對齊 Claude Code），靠 per-tool timeoutMs + stream idle watchdog 兜底 |
 | `sessionTtlHours` | number | `168` | Session 閒置超時（小時），7 天 |
 | `showToolCalls` | string | `"all"` | 工具呼叫顯示：`"all"` / `"summary"` / `"none"` |
 | `showThinking` | boolean | `false` | 是否顯示推理過程（thinking block） |
@@ -811,7 +811,7 @@ File Watcher 設定（監聽外部檔案變更）。
 |------|--------|------|
 | `discord.dm.enabled` | `true` | DM 預設啟用 |
 | `turnTimeoutMs` | `300000` | 5 分鐘 |
-| `turnTimeoutToolCallMs` | `turnTimeoutMs × 1.6` | 預設 480000 |
+| `turnTimeoutToolCallMs` | `0` | 無上限（預設） |
 | `sessionTtlHours` | `168` | 7 天 |
 | `showToolCalls` | `"all"` | 完整顯示 |
 | `showThinking` | `false` | |

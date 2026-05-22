@@ -31,7 +31,7 @@ export 所有型別定義（包括 cron.ts 使用的 `CronSchedule` / `CronActio
 | `discord.guilds` | `Record<string, GuildConfig>` | `{}` | — | per-guild 設定，空物件=全部允許 |
 | `admin.allowedUserIds` | `string[]` | `[]` | — | 管理員 User ID 白名單（JSON 中若為 number 會自動轉 string） |
 | `turnTimeoutMs` | `number` | `300000` | — | 基礎回應超時毫秒（5 分鐘），頂層欄位 |
-| `turnTimeoutToolCallMs` | `number` | `turnTimeoutMs×1.6` | — | tool_call 延長超時（預設 8 分鐘） |
+| `turnTimeoutToolCallMs` | `number` | `0` | — | 含 tool call 的 turn 上限；0=無上限（預設，對齊 Claude Code，靠 per-tool timeout + stream idle watchdog 兜底） |
 | `showToolCalls` | `"all" \| "summary" \| "none"` | `"all"` | — | 工具呼叫顯示模式 |
 | `showThinking` | `boolean` | `false` | — | 是否顯示 Claude 推理過程 |
 | `debounceMs` | `number` | `500` | — | 訊息合併等待毫秒 |
