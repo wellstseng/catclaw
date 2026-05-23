@@ -159,7 +159,7 @@ Edit `~/.catclaw/catclaw.json` to set your Discord Bot Token, then:
 
 ### catclaw.json
 
-Main configuration file in JSONC format (supports `//` comments). Key sections:
+Main configuration file in JSONC format. **No longer holds conversation LLM settings** (V2: `models-config.json` is the source of truth). Key sections:
 
 ```jsonc
 {
@@ -176,16 +176,54 @@ Main configuration file in JSONC format (supports `//` comments). Key sections:
   "admin": {
     "allowedUserIds": ["<your Discord user ID>"]
   },
-  "agentDefaults": {
-    "model": {
-      "primary": "sonnet",
-      "fallbacks": ["anthropic/claude-opus-4-6"]
+  "ollama": {
+    // Local Ollama for memory pipeline (embedding/extraction); decoupled from conversation LLM
+    "enabled": true,
+    "primary": { "host": "http://localhost:11434", "model": "qwen3:14b", "embeddingModel": "qwen3-embedding:8b" },
+    "failover": false,
+    "thinkMode": false,
+    "numPredict": 512,
+    "timeout": 600000
+  }
+}
+```
+
+> ⚠ Legacy `provider` / `providers` / `providerRouting` and deprecated `agentDefaults` blocks are removed.  
+> On startup, `migrate-v2` automatically detects and moves them to `models-config.json` (with `.bak.{timestamp}` backup).  
+> Manual: `./catclaw migrate-v2 [--dry-run]`.
+
+See `catclaw.example.json` for all available options.
+
+### models-config.json (Conversation LLM Source of Truth)
+
+Located at `~/.catclaw/models-config.json`. **The single source of truth for conversation LLM settings**:
+
+```jsonc
+{
+  "mode": "merge",
+  "primary": "sonnet",
+  "fallbacks": [],
+  "aliases": {
+    "sonnet": "anthropic/claude-sonnet-4-6",
+    "haiku":  "anthropic/claude-haiku-4-5-20251001",
+    "heretic": "ollama-remote/juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m"
+  },
+  "providers": {
+    "ollama-remote": {
+      "baseUrl": "http://192.168.88.22:11434",
+      "api": "ollama",
+      "models": [
+        { "id": "juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m", "contextWindow": 32768, ... }
+      ]
     }
   }
 }
 ```
 
-See `catclaw.example.json` for all available options.
+**Edit via** (any of):
+- **Dashboard**: Auth tab → "Models Config" panel (GUI switch / add provider)
+- **`/configure` skill**: switch model via Discord command
+- **Manual JSON edit**, then `./catclaw restart` (provider registry is not hot-reloaded)
 
 ### auth-profile.json
 
@@ -207,25 +245,40 @@ LLM provider credentials, located at `~/.catclaw/workspace/agents/default/auth-p
 }
 ```
 
+> Ollama providers don't need auth-profile entries (local/intranet, no credentials).
+
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CATCLAW_CONFIG_DIR` | `~/.catclaw` | catclaw.json location |
-| `CATCLAW_WORKSPACE` | `~/.catclaw/workspace` | Agent working directory |
+| `CATCLAW_CONFIG_DIR` | `~/.catclaw` | catclaw.json + models-config.json location |
+| `CATCLAW_WORKSPACE` | `~/.catclaw/workspace` | Agent working directory (auth-profile / sessions / data) |
 
 ## CLI Commands
 
 ```bash
-./catclaw start                    # Compile + PM2 start
-./catclaw stop                     # Stop
-./catclaw restart                  # Recompile + restart
-./catclaw build                    # Build only (no start)
-./catclaw logs                     # Live logs
-./catclaw status                   # Process status
-./catclaw reset-session            # Clear all sessions
-./catclaw reset-session <channel>  # Clear specific channel
+./catclaw start                      # Compile + PM2 start
+./catclaw stop                       # Stop
+./catclaw restart                    # Recompile + restart
+./catclaw build                      # Build only (no start)
+./catclaw logs                       # Live logs
+./catclaw status                     # Process status
+./catclaw reset-session              # Clear all sessions
+./catclaw reset-session <channel>    # Clear specific channel
+./catclaw migrate-v2 [--dry-run]     # Migrate legacy provider/providers/agentDefaults to models-config.json
 ```
+
+## Upgrading from V1
+
+If your `catclaw.json` contains legacy `provider` / `providers` / `providerRouting` / `agentDefaults` blocks, the platform auto-detects them on startup and migrates to `models-config.json` (with backup). Manual:
+
+```bash
+./catclaw migrate-v2 --dry-run       # Preview changes (no writes)
+./catclaw migrate-v2                  # Run (creates catclaw.json.bak.{ts} + models-config.json.bak.{ts})
+./catclaw restart
+```
+
+Migration is idempotent (re-running returns `already_v2`). V1 providers with `token`/`password` are flagged for manual review — move them to `auth-profile.json`.
 
 > On Windows, use `catclaw` instead of `./catclaw` (auto-resolves to `catclaw.cmd`)
 

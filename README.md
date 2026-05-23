@@ -159,7 +159,7 @@ pnpm build
 
 ### catclaw.json
 
-主設定檔，JSONC 格式（支援 `//` 註解）。重要欄位：
+主設定檔，JSONC 格式（支援 `//` 註解）。**不再包含對話 LLM 設定**（V2：對話 LLM 真相源是 `models-config.json`）。重要欄位：
 
 ```jsonc
 {
@@ -176,16 +176,54 @@ pnpm build
   "admin": {
     "allowedUserIds": ["<你的 Discord User ID>"]
   },
-  "agentDefaults": {
-    "model": {
-      "primary": "sonnet",
-      "fallbacks": ["anthropic/claude-opus-4-6"]
+  "ollama": {
+    // Memory pipeline 用的本地 Ollama（embedding/extraction），跟對話 LLM 解耦
+    "enabled": true,
+    "primary": { "host": "http://localhost:11434", "model": "qwen3:14b", "embeddingModel": "qwen3-embedding:8b" },
+    "failover": false,
+    "thinkMode": false,
+    "numPredict": 512,
+    "timeout": 600000
+  }
+}
+```
+
+> ⚠ V1 欄位 `provider` / `providers` / `providerRouting` 與 V2-deprecated `agentDefaults` 區塊已廢棄。  
+> 升級時 platform 啟動會自動跑 `migrate-v2` 把這些搬到 `models-config.json`（備份 `.bak.{timestamp}`）。  
+> 也可手動跑 `./catclaw migrate-v2 [--dry-run]`。
+
+完整範例參考 `catclaw.example.json`。
+
+### models-config.json（對話 LLM 真相源）
+
+位於 `~/.catclaw/models-config.json`。**對話 LLM 主設定的唯一真相源**：
+
+```jsonc
+{
+  "mode": "merge",                  // 與內建 provider catalog 合併
+  "primary": "sonnet",              // 當前模型（alias 或 "provider/model"）
+  "fallbacks": [],
+  "aliases": {
+    "sonnet": "anthropic/claude-sonnet-4-6",
+    "haiku":  "anthropic/claude-haiku-4-5-20251001",
+    "heretic": "ollama-remote/juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m"
+  },
+  "providers": {
+    "ollama-remote": {              // 自訂 provider（如遠端 Ollama）
+      "baseUrl": "http://192.168.88.22:11434",
+      "api": "ollama",
+      "models": [
+        { "id": "juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m", "contextWindow": 32768, ... }
+      ]
     }
   }
 }
 ```
 
-完整設定參考 `catclaw.example.json`。
+**編輯方式**（任選一種）：
+- **Dashboard**：Auth 分頁「模型設定」面板（圖形化切換 / 加 provider）
+- **`/configure` skill**：Discord 指令切模型
+- **手動編輯**：直接改 JSON，**之後 `./catclaw restart`**（provider registry 不熱重載）
 
 ### auth-profile.json
 
@@ -207,25 +245,40 @@ LLM Provider 憑證，位於 `~/.catclaw/workspace/agents/default/auth-profile.j
 }
 ```
 
+> Ollama 系列不需 auth-profile（本地連線無憑證）。Dashboard 模型設定面板會自動列出。
+
 ### 環境變數
 
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
-| `CATCLAW_CONFIG_DIR` | `~/.catclaw` | catclaw.json 所在目錄 |
-| `CATCLAW_WORKSPACE` | `~/.catclaw/workspace` | Agent 工作目錄 |
+| `CATCLAW_CONFIG_DIR` | `~/.catclaw` | catclaw.json + models-config.json 所在目錄 |
+| `CATCLAW_WORKSPACE` | `~/.catclaw/workspace` | Agent 工作目錄（auth-profile / sessions / data） |
 
 ## CLI 指令
 
 ```bash
-./catclaw start                    # 編譯 + PM2 啟動
-./catclaw stop                     # 停止
-./catclaw restart                  # 重新編譯 + 重啟
-./catclaw build                    # 僅編譯（不啟動）
-./catclaw logs                     # 即時 log
-./catclaw status                   # 狀態
-./catclaw reset-session            # 清除所有 session
-./catclaw reset-session <channel>  # 清除指定 channel
+./catclaw start                      # 編譯 + PM2 啟動
+./catclaw stop                       # 停止
+./catclaw restart                    # 重新編譯 + 重啟
+./catclaw build                      # 僅編譯（不啟動）
+./catclaw logs                       # 即時 log
+./catclaw status                     # 狀態
+./catclaw reset-session              # 清除所有 session
+./catclaw reset-session <channel>    # 清除指定 channel
+./catclaw migrate-v2 [--dry-run]     # V1 設定（provider/providers/agentDefaults）遷移到 models-config.json
 ```
+
+## 從 V1 升級
+
+舊版 `catclaw.json` 內若有 `provider` / `providers` / `providerRouting` / `agentDefaults` 區塊，啟動時會自動偵測並搬到 `models-config.json` + 備份原檔。手動執行：
+
+```bash
+./catclaw migrate-v2 --dry-run       # 預覽變動（不寫檔）
+./catclaw migrate-v2                  # 實跑（自動產 catclaw.json.bak.{ts} + models-config.json.bak.{ts}）
+./catclaw restart
+```
+
+migration 冪等（重跑回 `already_v2`）。涉及 token/password 的 V1 provider 會列入 `requiresManualReview`，需手動移到 auth-profile.json。
 
 > Windows 使用 `catclaw` 取代 `./catclaw`（自動找到 `catclaw.cmd`）
 
