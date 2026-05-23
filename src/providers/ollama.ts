@@ -103,6 +103,28 @@ export class OllamaProvider implements LLMProvider {
     }
   }
 
+  /**
+   * Startup health check：驗證 host 可達 + 指定 model 存在
+   * 走 /api/show（同 init 用的端點）— 拒絕代表 model 不存在；連線失敗代表 host 不通
+   */
+  async verify(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const resp = await fetch(`${this.host}/api/show`, {
+        method: "POST",
+        headers: this._headers(),
+        body: JSON.stringify({ name: this.modelId }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => "");
+        return { ok: false, error: `model "${this.modelId}" @ ${this.host}：HTTP ${resp.status}${txt ? ` ${txt.slice(0, 100)}` : ""}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: `${this.host} 無法連線：${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
   private _headers(): Record<string, string> {
     const h: Record<string, string> = { "content-type": "application/json" };
     if (this.authHeader) h["Authorization"] = this.authHeader;

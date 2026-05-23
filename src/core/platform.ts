@@ -13,6 +13,7 @@
  *   - 其餘 → guest（暫用 discord:{platformId} 作為 accountId）
  */
 
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
@@ -117,12 +118,16 @@ export async function initPlatform(
   _safetyGuard = initSafetyGuard(config.safety, catclawDir);
 
   // ── 5. Provider Registry ───────────────────────────────────────────────────
-  // V2：三層分離（agentDefaults + models.json + auth-profile）— 唯一正規路徑
-  // 偵測純 V1 → 自動 migrate（feedback-no-legacy-by-default：不留並存）
-  if (!config.agentDefaults?.model?.primary && config.provider && Object.keys(config.providers ?? {}).length > 0) {
-    log.info("[platform] 偵測到 V1 設定，自動 migrate 到 V2...");
+  // V2 三層分離 — 對話 LLM 真相源在 models-config.json（B 方案）
+  // 偵測 catclaw.json 殘留 legacy（V1 provider/providers 或 V2-deprecated agentDefaults）→ 自動 migrate
+  // 條件：catclaw.json 有 legacy 區塊，**且** models-config.json 沒對齊（避免每次都跑）
+  const { resolveConfigPath, reloadConfigNow } = await import("./config.js");
+  let rawCfgForCheck: Record<string, unknown> = {};
+  try { rawCfgForCheck = JSON.parse(readFileSync(resolveConfigPath(), "utf-8")); } catch { /* ignore */ }
+  const hasLegacy = !!rawCfgForCheck["provider"] || !!rawCfgForCheck["providers"] || !!rawCfgForCheck["providerRouting"] || !!rawCfgForCheck["agentDefaults"];
+  if (hasLegacy) {
+    log.info("[platform] 偵測到 catclaw.json 內 legacy 區塊（provider/providers/providerRouting/agentDefaults），自動 migrate...");
     const { migrateV1ToV2 } = await import("../migration/v1-to-v2-provider.js");
-    const { resolveConfigPath, reloadConfigNow } = await import("./config.js");
     const mr = await migrateV1ToV2({ configPath: resolveConfigPath(), workspaceDir: wsDir });
     log.info(`[platform] migrate-v2 status=${mr.status}; 變動 ${mr.changes.length} 項${mr.backupPath ? `；備份 ${mr.backupPath}` : ""}`);
     if (mr.requiresManualReview?.length) {
@@ -131,7 +136,7 @@ export async function initPlatform(
     if (mr.status === "migrated") reloadConfigNow();
   }
   if (!config.agentDefaults?.model?.primary) {
-    throw new Error("[platform] 缺少 agentDefaults.model.primary（V1 migration 失敗或未設定）— 請執行 `./catclaw migrate-v2` 或手動配置");
+    throw new Error("[platform] models-config.json 缺少 primary（對話 LLM 未設定）— 請至 dashboard Auth 分頁設定，或執行 `./catclaw migrate-v2`");
   }
   log.info("[platform] V2 provider 設定（三層分離）");
   ensureModelsJson(wsDir, config.modelsConfig);
@@ -703,6 +708,34 @@ async function runStartupHealthCheck(config: BridgeConfig): Promise<void> {
         detail: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // 對話 LLM provider verify — 遍歷 ProviderRegistry 內所有實作 verify() 的 provider
+  // 走 LLMProvider.verify? 介面（base.ts），目前 OllamaProvider 有實作；其他 provider 可漸進補
+  try {
+    const { getProviderRegistry } = await import("../providers/registry.js");
+    const reg = getProviderRegistry();
+    const providers = reg.listProviders();
+    for (const p of providers) {
+      if (typeof p.verify !== "function") continue;
+      try {
+        const r = await p.verify();
+        const model = p.modelId ?? "(no model)";
+        items.push({
+          name: `llm:${p.id}/${model}`,
+          ok: r.ok,
+          detail: r.ok ? `${p.name}：reachable` : (r.error ?? "verify 失敗"),
+        });
+      } catch (err) {
+        items.push({
+          name: `llm:${p.id}`,
+          ok: false,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  } catch (err) {
+    log.debug(`[startup-health] LLM provider verify 跳過：${err instanceof Error ? err.message : String(err)}`);
   }
 
   reportStartupSummary(items);

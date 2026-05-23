@@ -1,20 +1,24 @@
 /**
  * @file migration/v1-to-v2-provider.ts
- * @description V1 → V2 Provider 設定遷移
+ * @description 對話 LLM 設定遷移到 models-config.json
  *
- * V1：catclaw.json 內含 `provider` + `providers.{id}.{type,host,model,...}` + `providerRouting`
- * V2：catclaw.json 內 `agentDefaults.model.primary` + `agentDefaults.models.{ref}`
- *     models-config.json 內 `providers.{name}.{baseUrl,api,models[]}`
+ * 偵測兩種 legacy source：
+ * - V1：catclaw.json 內 `provider` + `providers.{id}.{type,host,model,...}` + `providerRouting`
+ * - V2-deprecated：catclaw.json 內 `agentDefaults` 區塊（Phase 4 廢棄；B 方案下 source-of-truth 改為 models-config.json）
  *
- * 冪等：偵測到 `agentDefaults.model.primary` 已存在 → 回 already_v2，不動任何檔案
+ * 寫出目標（B 方案）：
+ * - `models-config.json`：`primary` + `aliases` + `providers.{name}.{baseUrl,api,models[]}`（merge，不覆蓋既有）
+ * - `catclaw.json`：拔 `provider` / `providers` / `providerRouting` / `agentDefaults` 四項
+ *
+ * 冪等：偵測到 catclaw.json 已無 legacy 結構 → 回 already_v2
  *
  * 觸發點：
- * 1. platform.ts 啟動時偵測 V1 自動跑（見 platform.ts:initPlatform）
+ * 1. platform.ts 啟動時偵測 → 自動跑（migrate 完用 reloadConfigNow）
  * 2. 手動：`./catclaw migrate-v2 [--dry-run]`
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { log } from "../logger.js";
 
 // V1 type → V2 api 對應（apiToProviderType 反推；providers/registry.ts:129-144）
@@ -57,6 +61,11 @@ interface V1ProviderRouting {
   projects?: Record<string, string>;
 }
 
+interface V2DeprecatedAgentDefaults {
+  model?: { primary?: string; fallbacks?: string[] };
+  models?: Record<string, { alias?: string }>;
+}
+
 export interface MigrateV1ToV2Options {
   configPath: string;
   workspaceDir: string;
@@ -67,6 +76,7 @@ export interface MigrateV1ToV2Result {
   status: "already_v2" | "migrated" | "skipped" | "error";
   changes: string[];
   backupPath?: string;
+  modelsConfigBackupPath?: string;
   requiresManualReview?: string[];
 }
 
@@ -89,72 +99,72 @@ export async function migrateV1ToV2(opts: MigrateV1ToV2Options): Promise<Migrate
     return result;
   }
 
-  // 1. 冪等檢查：已是 V2 → 直接回
-  const agentDefaults = raw["agentDefaults"] as { model?: { primary?: string } } | undefined;
-  if (agentDefaults?.model?.primary) {
-    result.status = "already_v2";
-    result.changes.push(`agentDefaults.model.primary 已存在（${agentDefaults.model.primary}）`);
-    return result;
-  }
-
-  // 2. 確認 V1 結構存在
+  // 1. 偵測 legacy source
   const v1Provider = raw["provider"] as string | undefined;
-  const v1Providers = raw["providers"] as Record<string, V1ProviderEntry> | undefined;
-  if (!v1Provider || !v1Providers || Object.keys(v1Providers).length === 0) {
-    result.status = "skipped";
-    result.changes.push("既無 V2 也無 V1 結構，無事可做");
+  const v1Providers = (raw["providers"] as Record<string, V1ProviderEntry> | undefined) ?? {};
+  const v2DepAgentDefaults = raw["agentDefaults"] as V2DeprecatedAgentDefaults | undefined;
+  const hasV1 = !!v1Provider && Object.keys(v1Providers).length > 0;
+  const hasV2Dep = !!v2DepAgentDefaults?.model?.primary;
+  const hasProviderRouting = !!raw["providerRouting"];
+
+  if (!hasV1 && !hasV2Dep && !hasProviderRouting) {
+    result.status = "already_v2";
+    result.changes.push("catclaw.json 已無 legacy 結構（provider / providers / providerRouting / agentDefaults）");
     return result;
   }
 
-  const primaryEntry = v1Providers[v1Provider];
-  if (!primaryEntry) {
-    result.status = "error";
-    result.changes.push(`provider="${v1Provider}" 但 providers.${v1Provider} 不存在`);
-    return result;
-  }
-
-  // 3. 推導 primary model ref
-  const primaryType = primaryEntry.type || "ollama";
-  const primaryModel = primaryEntry.model || V1_TYPE_DEFAULT_MODEL[primaryType] || "unknown";
-  const primaryRef = `${v1Provider}/${primaryModel}`;
-  result.changes.push(`推導 primary model = ${primaryRef}（V1 type=${primaryType}）`);
-
-  // 4. 備份 catclaw.json
-  const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
-  const backupPath = `${configPath}.bak.${ts}`;
-  if (!dryRun) {
-    writeFileSync(backupPath, readFileSync(configPath, "utf-8"), "utf-8");
-  }
-  result.backupPath = backupPath;
-  result.changes.push(`${dryRun ? "[dryRun] " : ""}備份 catclaw.json → ${backupPath}`);
-
-  // 5. 建構 V2 agentDefaults
-  const newModels: Record<string, { alias?: string }> = {};
-  for (const [providerId, entry] of Object.entries(v1Providers)) {
-    const t = entry.type || "ollama";
-    const m = entry.model || V1_TYPE_DEFAULT_MODEL[t] || "unknown";
-    const ref = `${providerId}/${m}`;
-    newModels[ref] = {}; // alias 留空給使用者手動命名
-  }
-  const newAgentDefaults: Record<string, unknown> = {
-    model: { primary: primaryRef },
-    models: newModels,
+  // 2. 載入 models-config.json（或初始化空殼）
+  // 真實位置：CATCLAW_CONFIG_DIR/models-config.json（跟 catclaw.json 同目錄；參考 config.ts:loadModelsConfigFile）
+  // 注意 workspaceDir 跟 configDir 不一樣，bug 修正：用 dirname(configPath) 與 loadModelsConfigFile 同源
+  void workspaceDir; // 保留參數簽名 — 未來若改寫 auth-profile 之類會用到
+  const modelsConfigPath = join(dirname(configPath), "models-config.json");
+  type McJson = {
+    mode?: string;
+    primary?: string;
+    fallbacks?: string[];
+    aliases?: Record<string, string>;
+    providers?: Record<string, unknown>;
   };
-
-  // 6. 同步 models-config.json
-  const modelsConfigPath = join(workspaceDir, "models-config.json");
-  const reviewNotes: string[] = [];
-  let mcJson: { providers?: Record<string, unknown>; mode?: string; aliases?: Record<string, string> } = {};
+  let mcJson: McJson = {};
   if (existsSync(modelsConfigPath)) {
     try {
-      mcJson = JSON.parse(readFileSync(modelsConfigPath, "utf-8")) as typeof mcJson;
+      mcJson = JSON.parse(readFileSync(modelsConfigPath, "utf-8")) as McJson;
     } catch {
       result.changes.push(`models-config.json 解析失敗，將另建`);
     }
   }
   mcJson.mode = mcJson.mode ?? "merge";
   mcJson.providers = mcJson.providers ?? {};
+  mcJson.aliases = mcJson.aliases ?? {};
 
+  const reviewNotes: string[] = [];
+
+  // 3. 推導 primary（優先 V2-deprecated agentDefaults.model.primary，否則 V1 推導）
+  let derivedPrimary: string | undefined;
+  if (hasV2Dep) {
+    derivedPrimary = v2DepAgentDefaults!.model!.primary;
+    result.changes.push(`primary 來自 catclaw.json agentDefaults（${derivedPrimary}）`);
+    // 順帶搬 alias 表
+    for (const [ref, entry] of Object.entries(v2DepAgentDefaults!.models ?? {})) {
+      if (entry?.alias) {
+        mcJson.aliases[entry.alias] = ref;
+        result.changes.push(`alias "${entry.alias}" → "${ref}" 寫入 models-config.json`);
+      }
+    }
+  } else if (hasV1) {
+    const primaryEntry = v1Providers[v1Provider!];
+    if (!primaryEntry) {
+      result.status = "error";
+      result.changes.push(`provider="${v1Provider}" 但 providers.${v1Provider} 不存在`);
+      return result;
+    }
+    const t = primaryEntry.type || "ollama";
+    const m = primaryEntry.model || V1_TYPE_DEFAULT_MODEL[t] || "unknown";
+    derivedPrimary = `${v1Provider}/${m}`;
+    result.changes.push(`推導 primary = ${derivedPrimary}（從 V1 provider type=${t}）`);
+  }
+
+  // 4. 從 V1 providers 補 models-config.json providers entry（merge，不覆蓋）
   for (const [providerId, entry] of Object.entries(v1Providers)) {
     const t = entry.type || "ollama";
     const api = V1_TYPE_TO_V2_API[t]; // 可能 undefined（cli-* 系列）
@@ -190,7 +200,6 @@ export async function migrateV1ToV2(opts: MigrateV1ToV2Options): Promise<Migrate
     };
     if (api) providerDef["api"] = api;
 
-    // 認證憑據警示（不複製 token 進 models-config — 走 auth-profile 另外處理）
     if (entry.token || entry.password) {
       reviewNotes.push(`provider "${providerId}" 帶有 token/password — 請手動移到 auth-profile.json（V2 憑證管理）`);
     }
@@ -199,22 +208,53 @@ export async function migrateV1ToV2(opts: MigrateV1ToV2Options): Promise<Migrate
     result.changes.push(`models-config.json 加 providers.${providerId}（baseUrl=${baseUrl}, api=${api ?? "(無)"}, model=${m}）`);
   }
 
-  // 7. 寫檔
-  raw["agentDefaults"] = newAgentDefaults;
-  delete raw["provider"];
-  delete raw["providers"];
-  // providerRouting：保留 channels/projects（V2 也用），但 roles 內若引用 V1 id 則記為 review
+  // 5. 寫 primary 到 models-config.json（覆蓋；這是真相源）
+  if (derivedPrimary) {
+    if (mcJson.primary && mcJson.primary !== derivedPrimary) {
+      result.changes.push(`models-config.json primary "${mcJson.primary}" 覆寫為 "${derivedPrimary}"`);
+    } else if (!mcJson.primary) {
+      result.changes.push(`models-config.json primary 設為 "${derivedPrimary}"`);
+    } else {
+      result.changes.push(`models-config.json primary "${mcJson.primary}" 已對齊，不動`);
+    }
+    mcJson.primary = derivedPrimary;
+  }
+
+  // 6. V1 providerRouting roles 引用 V1 ID 提示
   const oldRouting = raw["providerRouting"] as V1ProviderRouting | undefined;
   if (oldRouting?.roles) {
     const v1RolesUsed = Object.values(oldRouting.roles).filter(v => v1Providers[v]);
     if (v1RolesUsed.length > 0) {
-      reviewNotes.push(`providerRouting.roles 引用了 V1 provider ID（${v1RolesUsed.join(", ")}）— 請改寫成 V2 model ref（如 "${primaryRef}"）或刪除`);
+      reviewNotes.push(`providerRouting.roles 引用了 V1 provider ID（${v1RolesUsed.join(", ")}）— 已刪除整個 providerRouting；如需 channel/role routing 請在 models-config.json 加 routing 或 dashboard 設定`);
     }
   }
-  // V1 殘留全砍（feedback-no-legacy-by-default）
-  delete raw["providerRouting"];
-  result.changes.push("移除 V1 殘留：provider, providers, providerRouting");
 
+  // 7. 備份 catclaw.json + models-config.json
+  const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+  const backupPath = `${configPath}.bak.${ts}`;
+  result.backupPath = backupPath;
+  if (existsSync(modelsConfigPath)) {
+    result.modelsConfigBackupPath = `${modelsConfigPath}.bak.${ts}`;
+  }
+  if (!dryRun) {
+    writeFileSync(backupPath, readFileSync(configPath, "utf-8"), "utf-8");
+    if (result.modelsConfigBackupPath) {
+      writeFileSync(result.modelsConfigBackupPath, readFileSync(modelsConfigPath, "utf-8"), "utf-8");
+    }
+  }
+  result.changes.push(`${dryRun ? "[dryRun] " : ""}備份 catclaw.json → ${backupPath}`);
+  if (result.modelsConfigBackupPath) {
+    result.changes.push(`${dryRun ? "[dryRun] " : ""}備份 models-config.json → ${result.modelsConfigBackupPath}`);
+  }
+
+  // 8. 清掉 catclaw.json 內 legacy 區塊
+  const removed: string[] = [];
+  for (const key of ["provider", "providers", "providerRouting", "agentDefaults"]) {
+    if (key in raw) { delete raw[key]; removed.push(key); }
+  }
+  if (removed.length > 0) result.changes.push(`catclaw.json 移除：${removed.join(", ")}`);
+
+  // 9. 寫檔
   if (!dryRun) {
     writeFileSync(configPath, JSON.stringify(raw, null, 2), "utf-8");
     writeFileSync(modelsConfigPath, JSON.stringify(mcJson, null, 2), "utf-8");

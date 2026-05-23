@@ -160,6 +160,8 @@ export interface LLMProvider {
   init?(): Promise<void>;
   /** 可選：清理連線 */
   shutdown?(): Promise<void>;
+  /** 可選：啟動健康檢查（host 可達 + model 存在），給 runStartupHealthCheck 用 */
+  verify?(): Promise<{ ok: boolean; error?: string }>;
 }
 
 // ── Helper：從 content 提取純文字 ─────────────────────────────────────────────

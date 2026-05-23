@@ -924,8 +924,7 @@ interface RawConfig {
   logLevel?: string;
   cron?: { enabled?: boolean; maxConcurrentRuns?: number; defaultAccountId?: string; defaultProvider?: string; defaultAgentId?: string };
   history?: { enabled?: boolean };
-  // 平台擴充 — V2 三層分離
-  agentDefaults?: AgentDefaultsConfig;
+  // 平台擴充 — V2 三層分離（agentDefaults 廢棄於 Phase 4：對話 LLM 真相源改為 models-config.json）
   modelsConfig?: ModelsConfig;
   authConfig?: AuthConfig;
   // 平台擴充 — V1 相容
@@ -1413,25 +1412,16 @@ function loadConfig(): BridgeConfig {
   const mcfg = loadModelsConfigFile();
   if (mcfg) {
     const syn = synthesizeFromModelsConfig(mcfg);
+    resolvedAgentDefaults = syn.agentDefaults;
     resolvedModelsConfig = syn.modelsConfig;
     resolvedModelRouting = syn.modelRouting;
     if (!raw.ollama) ollamaRaw = syn.ollamaRaw as typeof raw.ollama;
-    // catclaw.json 的 raw.agentDefaults 優先；只在 catclaw.json 未設定時 fallback 到 models-config.json
-    // 合併 models 表（讓 catclaw.json 內 primary 也能解析來自 models-config.json aliases）
-    if (raw.agentDefaults?.model?.primary) {
-      resolvedAgentDefaults = {
-        model: raw.agentDefaults.model,
-        models: { ...(syn.agentDefaults.models ?? {}), ...(raw.agentDefaults.models ?? {}) },
-      };
-      log.info(`[config] 使用 catclaw.json agentDefaults（primary=${raw.agentDefaults.model.primary}）；alias 表合併自 models-config.json`);
-    } else {
-      resolvedAgentDefaults = syn.agentDefaults;
-      log.info(`[config] 從 models-config.json 合成 agentDefaults（primary=${syn.agentDefaults.model?.primary}）`);
-    }
-  } else if (raw.agentDefaults?.model?.primary) {
-    // 無 models-config.json，純走 catclaw.json
-    resolvedAgentDefaults = raw.agentDefaults;
-    log.info(`[config] 使用 catclaw.json agentDefaults（primary=${raw.agentDefaults.model.primary}）；無 models-config.json`);
+    log.info(`[config] 從 models-config.json 載入模型設定（primary=${syn.agentDefaults.model?.primary}）`);
+  }
+  // catclaw.json 內 agentDefaults 區塊已廢棄（Phase 4，B 方案）— 對話 LLM 唯一真相源為 models-config.json
+  // 殘留設定不會生效；提示使用者跑 migrate-v2 把它搬到 models-config.json
+  if ((raw as unknown as Record<string, unknown>)["agentDefaults"]) {
+    log.warn(`[config] catclaw.json 內 agentDefaults 已廢棄 — 對話 LLM 設定改放 models-config.json。請執行 ./catclaw migrate-v2 自動搬移`);
   }
 
   return {

@@ -95,6 +95,11 @@ export class ProviderRegistry {
     return this.providers.get(this.resolveId(id));
   }
 
+  /** 列出所有已註冊 provider（供 runStartupHealthCheck 跑 verify 用） */
+  listProviders(): LLMProvider[] {
+    return Array.from(this.providers.values());
+  }
+
   list(): LLMProvider[] {
     return Array.from(this.providers.values());
   }

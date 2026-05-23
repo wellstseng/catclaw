@@ -68,29 +68,21 @@
   },
 
   // ══════════════════════════════════════════════════════════════
-  // V2 三層分離設定（推薦）
-  // 格式：<provider>/<model>，如 "anthropic/claude-sonnet-4-6"
-  // 認證放 auth-profile.json，模型目錄自動從內建 + 自訂合併
+  // 對話 LLM 設定 — 不在 catclaw.json 內
+  //
+  // 真相源：~/.catclaw/models-config.json
+  //   - primary：當前模型（如 "sonnet" 或 "ollama/qwen3:14b"）
+  //   - aliases：模型短名對照表（如 sonnet → anthropic/claude-sonnet-4-6）
+  //   - providers：自訂 provider 目錄（baseUrl/api/models）
+  //
+  // 編輯方式：
+  //   - Dashboard Auth 分頁「模型設定」面板（圖形化）
+  //   - /configure skill
+  //   - 直接編輯 ~/.catclaw/models-config.json
+  //
+  // catclaw.json 內任何 agentDefaults / provider / providers / providerRouting 區塊
+  // 將被 platform 啟動時的 migrate-v2 自動搬到 models-config.json 並從本檔移除。
   // ══════════════════════════════════════════════════════════════
-
-  // ── Agent 預設模型 ────────────────────────────────────────────
-  "agentDefaults": {
-    "model": {
-      "primary": "sonnet"
-    },
-    // 模型對照表：key = "provider/model"，alias = 簡短名
-    "models": {
-      "anthropic/claude-opus-4-6":            { "alias": "opus" },
-      "anthropic/claude-sonnet-4-6":          { "alias": "sonnet" },
-      "anthropic/claude-haiku-4-5-20251001":  { "alias": "haiku" },
-      "ollama/qwen3:14b":                     { "alias": "qwen3" },
-      "ollama/gemma4:latest":                 { "alias": "gemma" },
-      "openai-codex/gpt-5.4":                 { "alias": "codex" },
-      "openai/gpt-4o":                        { "alias": "gpt4o" },
-      "cli-claude/claude":                    { "alias": "cli-claude" },
-      "cli-gemini/gemini":                    { "alias": "cli-gemini" }
-    }
-  },
 
   // ── 自訂 Provider 目錄（與內建合併）─────────────────────────
   // 內建：anthropic、openai、openai-codex（自動載入）
