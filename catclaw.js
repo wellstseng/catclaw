@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * catclaw 跨平台管理腳本
- * 用法：node catclaw.js [init|build|start [-f]|stop|restart|logs|status|reset-session [channelId]]
+ * 用法：node catclaw.js [init|build|start [-f]|stop|restart|logs|status|reset-session [channelId]|migrate-v2 [--dry-run]]
  *
  * 重啟機制：
  * - start 使用 ecosystem.config.cjs，PM2 監聽 signal/ 目錄
@@ -329,6 +329,35 @@ switch (cmd) {
     break;
   }
 
+  case "migrate-v2": {
+    // V1 → V2 provider 設定遷移（手動觸發；platform.ts 啟動時也會自動跑）
+    if (!process.env.CATCLAW_CONFIG_DIR) { console.error("❌ 環境變數 CATCLAW_CONFIG_DIR 未設定"); process.exit(1); }
+    if (!process.env.CATCLAW_WORKSPACE)  { console.error("❌ 環境變數 CATCLAW_WORKSPACE 未設定"); process.exit(1); }
+    const configPath = resolve(process.env.CATCLAW_CONFIG_DIR, "catclaw.json");
+    const workspaceDir = resolve(process.env.CATCLAW_WORKSPACE);
+    const dryRun = process.argv.includes("--dry-run");
+
+    // 確保已 build 過（不重 build 以免覆蓋 dist 內 user 的修改）
+    if (!existsSync(resolve(__dirname, "dist/migration/v1-to-v2-provider.js"))) {
+      console.log("ℹ️ 缺 dist，先 build...");
+      run("npx pnpm build");
+    }
+
+    (async () => {
+      const { migrateV1ToV2 } = await import("./dist/migration/v1-to-v2-provider.js");
+      const r = await migrateV1ToV2({ configPath, workspaceDir, dryRun });
+      console.log(`\n[migrate-v2] status=${r.status}${dryRun ? "（DRY RUN，未寫檔）" : ""}`);
+      for (const c of r.changes) console.log(`  - ${c}`);
+      if (r.backupPath) console.log(`  備份: ${r.backupPath}`);
+      if (r.requiresManualReview?.length) {
+        console.log("\n⚠ 需手動確認：");
+        for (const item of r.requiresManualReview) console.log(`  - ${item}`);
+      }
+      process.exit(r.status === "error" ? 1 : 0);
+    })().catch(err => { console.error("❌ migrate-v2 失敗:", err.message); process.exit(1); });
+    break;
+  }
+
   case "help":
   case "-h":
   case "--help":
@@ -347,6 +376,7 @@ switch (cmd) {
   logs [-c]                  即時 log（-c 清除後再顯示）
   status                     PM2 狀態
   reset-session [channelId]  清除 session（全部或指定頻道）
+  migrate-v2 [--dry-run]     V1→V2 設定遷移（catclaw.json 內 provider/providers 改為 agentDefaults）
   help                       顯示此說明
 
 環境變數：

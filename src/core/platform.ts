@@ -24,7 +24,7 @@ import { PermissionGate, initPermissionGate } from "../accounts/permission-gate.
 import { SafetyGuard, initSafetyGuard } from "../safety/guard.js";
 import { SessionManager, initSessionManager } from "./session.js";
 import { eventBus } from "./event-bus.js";
-import { buildProviderRegistry, buildProviderRegistryV2, initProviderRegistry } from "../providers/registry.js";
+import { buildProviderRegistryV2, initProviderRegistry } from "../providers/registry.js";
 import { ensureModelsJson, loadModelsJson } from "../providers/models-config.js";
 import { initAuthProfileStore, getAuthProfileStore } from "../providers/auth-profile-store.js";
 import { initWorkflow } from "../workflow/bootstrap.js";
@@ -117,32 +117,35 @@ export async function initPlatform(
   _safetyGuard = initSafetyGuard(config.safety, catclawDir);
 
   // ── 5. Provider Registry ───────────────────────────────────────────────────
-  // V2：三層分離（agentDefaults + models.json + auth-profile）
-  // V1：舊格式（providers entries）
-  if (config.agentDefaults?.model?.primary) {
-    // V2 路徑
-    log.info("[platform] V2 provider 設定（三層分離）");
-    ensureModelsJson(wsDir, config.modelsConfig);
-    const modelsJson = loadModelsJson(wsDir);
-    const authProfilePath = join(wsDir, "agents", "default", "auth-profile.json");
-    initAuthProfileStore(authProfilePath);
-    const authStore = getAuthProfileStore();
-    const providerRegistry = await buildProviderRegistryV2(
-      config.agentDefaults,
-      modelsJson,
-      authStore,
-      config.providerRouting ?? {},
-    );
-    initProviderRegistry(providerRegistry);
-  } else {
-    // V1 路徑（舊格式相容）
-    const providerRegistry = await buildProviderRegistry(
-      config.provider ?? Object.keys(config.providers)[0]!,
-      config.providers,
-      config.providerRouting ?? {},
-    );
-    initProviderRegistry(providerRegistry);
+  // V2：三層分離（agentDefaults + models.json + auth-profile）— 唯一正規路徑
+  // 偵測純 V1 → 自動 migrate（feedback-no-legacy-by-default：不留並存）
+  if (!config.agentDefaults?.model?.primary && config.provider && Object.keys(config.providers ?? {}).length > 0) {
+    log.info("[platform] 偵測到 V1 設定，自動 migrate 到 V2...");
+    const { migrateV1ToV2 } = await import("../migration/v1-to-v2-provider.js");
+    const { resolveConfigPath, reloadConfigNow } = await import("./config.js");
+    const mr = await migrateV1ToV2({ configPath: resolveConfigPath(), workspaceDir: wsDir });
+    log.info(`[platform] migrate-v2 status=${mr.status}; 變動 ${mr.changes.length} 項${mr.backupPath ? `；備份 ${mr.backupPath}` : ""}`);
+    if (mr.requiresManualReview?.length) {
+      for (const note of mr.requiresManualReview) log.warn(`[platform] migrate-v2 需手動確認：${note}`);
+    }
+    if (mr.status === "migrated") reloadConfigNow();
   }
+  if (!config.agentDefaults?.model?.primary) {
+    throw new Error("[platform] 缺少 agentDefaults.model.primary（V1 migration 失敗或未設定）— 請執行 `./catclaw migrate-v2` 或手動配置");
+  }
+  log.info("[platform] V2 provider 設定（三層分離）");
+  ensureModelsJson(wsDir, config.modelsConfig);
+  const modelsJson = loadModelsJson(wsDir);
+  const authProfilePath = join(wsDir, "agents", "default", "auth-profile.json");
+  initAuthProfileStore(authProfilePath);
+  const authStore = getAuthProfileStore();
+  const providerRegistry = await buildProviderRegistryV2(
+    config.agentDefaults,
+    modelsJson,
+    authStore,
+    config.providerRouting ?? {},
+  );
+  initProviderRegistry(providerRegistry);
 
   // ── 6. Session Manager ─────────────────────────────────────────────────────
   const sessionCfg = config.session ?? {
@@ -510,7 +513,7 @@ export async function initPlatform(
   await runStartupHealthCheck(config);
 
   _ready = true;
-  log.info(`[platform] 初始化完成 providers=${Object.keys(config.providers).join(",")}`);
+  log.info(`[platform] 初始化完成 primary=${config.agentDefaults?.model?.primary ?? "(未設定)"}`);
 
   // ── 12.6 Tool Output Cleanup（項目 6）：startup 一次性 TTL 清理 ───────────
   try {

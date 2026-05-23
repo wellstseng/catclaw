@@ -770,12 +770,12 @@ export interface BridgeConfig {
   /** 認證設定 */
   authConfig?: AuthConfig;
 
-  // ── V1 相容欄位（過渡期保留）──
+  // ── V1 相容欄位（過渡期保留；migrateV1ToV2 啟動時自動轉換 → V2 agentDefaults）──
   /** @deprecated V1 — 預設 provider ID */
-  provider: string;
+  provider?: string;
   /** @deprecated V1 — Provider 設定表 */
   providers: Record<string, ProviderEntry>;
-  /** Provider 路由規則（舊版，modelRouting 優先） */
+  /** Provider 路由規則（V2 仍用 channels/projects，roles 内 V1 ID 由 migration 標 review） */
   providerRouting: ProviderRoutingConfig;
   /** 統一模型路由（優先於 providerRouting） */
   modelRouting?: ModelRoutingConfig;
@@ -1413,11 +1413,25 @@ function loadConfig(): BridgeConfig {
   const mcfg = loadModelsConfigFile();
   if (mcfg) {
     const syn = synthesizeFromModelsConfig(mcfg);
-    resolvedAgentDefaults = syn.agentDefaults;
     resolvedModelsConfig = syn.modelsConfig;
     resolvedModelRouting = syn.modelRouting;
     if (!raw.ollama) ollamaRaw = syn.ollamaRaw as typeof raw.ollama;
-    log.info(`[config] 從 models-config.json 載入模型設定（primary=${syn.agentDefaults.model?.primary}）`);
+    // catclaw.json 的 raw.agentDefaults 優先；只在 catclaw.json 未設定時 fallback 到 models-config.json
+    // 合併 models 表（讓 catclaw.json 內 primary 也能解析來自 models-config.json aliases）
+    if (raw.agentDefaults?.model?.primary) {
+      resolvedAgentDefaults = {
+        model: raw.agentDefaults.model,
+        models: { ...(syn.agentDefaults.models ?? {}), ...(raw.agentDefaults.models ?? {}) },
+      };
+      log.info(`[config] 使用 catclaw.json agentDefaults（primary=${raw.agentDefaults.model.primary}）；alias 表合併自 models-config.json`);
+    } else {
+      resolvedAgentDefaults = syn.agentDefaults;
+      log.info(`[config] 從 models-config.json 合成 agentDefaults（primary=${syn.agentDefaults.model?.primary}）`);
+    }
+  } else if (raw.agentDefaults?.model?.primary) {
+    // 無 models-config.json，純走 catclaw.json
+    resolvedAgentDefaults = raw.agentDefaults;
+    log.info(`[config] 使用 catclaw.json agentDefaults（primary=${raw.agentDefaults.model.primary}）；無 models-config.json`);
   }
 
   return {
@@ -1456,28 +1470,13 @@ function loadConfig(): BridgeConfig {
     modelsConfig: resolvedModelsConfig,
     authConfig: raw.authConfig,
 
-    // V1 相容（provider/providers 已廢棄，保留 fallback 以免啟動失敗）
-    provider: raw.provider ?? (process.env["ANTHROPIC_TOKEN"] ? "claude-oauth" : "ollama-local"),
-    providers: raw.providers ?? (process.env["ANTHROPIC_TOKEN"]
-      ? {
-          "claude-oauth": {
-            type: "claude-oauth" as const,
-            token: process.env["ANTHROPIC_TOKEN"],
-            model: "claude-sonnet-4-6",
-          },
-        }
-      : {
-          "ollama-local": {
-            type: "ollama" as const,
-            host: "http://localhost:11434",
-            model: "qwen3:1.7b",
-          },
-        }),
+    // V1 殘留欄位若存在，原樣 pass-through；V1 fallback shim 已移除（由 migration tool 接管）
+    // 啟動序列偵測 agentDefaults.model.primary 不存在但有 V1 結構 → migrateV1ToV2 自動轉換
+    provider: raw.provider,
+    providers: (raw.providers ?? {}) as Record<string, ProviderEntry>,
     providerRouting: {
       channels: raw.providerRouting?.channels ?? {},
-      roles: raw.providerRouting?.roles ?? {
-        default: process.env["ANTHROPIC_TOKEN"] ? "claude-oauth" : "ollama-local",
-      },
+      roles: raw.providerRouting?.roles ?? {},
       projects: raw.providerRouting?.projects ?? {},
       failoverChain: raw.providerRouting?.failoverChain,
       circuitBreaker: raw.providerRouting?.circuitBreaker,
@@ -1677,17 +1676,28 @@ export function resolveProvider(opts: {
     return mr.roles?.["default"] ?? mr.default;
   }
 
-  // 舊版 providerRouting（向後相容）
+  // 舊版 providerRouting（V2 也用 channels/projects/roles，但回退到 agentDefaults primary）
   const routing = config.providerRouting;
   if (channelAccess?.provider) return channelAccess.provider;
   if (role && routing.roles?.[role]) return routing.roles[role];
   if (projectId && routing.projects?.[projectId]) return routing.projects[projectId];
-  return routing.roles?.["default"] ?? config.provider;
+  return routing.roles?.["default"] ?? config.agentDefaults?.model?.primary ?? config.provider ?? "";
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export let config: BridgeConfig = loadConfig();
+
+/**
+ * 強制同步重新讀 catclaw.json 並 assign 給 config singleton。
+ * 給 migrate-v2 等啟動序列「剛改完 catclaw.json，立即生效」用 — 不走 watcher 的 500ms debounce。
+ * 不觸發 reloadConfig 的 diff 邏輯（因為 migration 後 platform 還沒 init 完，CE/Hooks 都還沒起來）。
+ */
+export function reloadConfigNow(): void {
+  config = loadConfig();
+  setLogLevel(config.logLevel);
+  log.info("[config] reloadConfigNow 完成（同步）");
+}
 
 // ── Hot-Reload ────────────────────────────────────────────────────────────────
 

@@ -3002,6 +3002,12 @@ async function loadModelsConfig() {
       const ap = await authFetch('/api/auth-profiles').then(r => r.json());
       activeProviders = Object.keys((ap && ap.statuses) || {});
     } catch (apErr) { /* auth profiles 讀失敗 → 空陣列 → 下面 fallback */ }
+    // 補充：不需 auth-profile 憑證的 provider（api==="ollama" 或 cli-* 前綴）
+    // 否則 ollama/ollama-remote 在 statuses 拿不到，UI 看不到（dashboard bug）
+    for (const [pid, prov] of Object.entries(providers)) {
+      const isLocal = prov && (prov.api === 'ollama' || pid.startsWith('cli-'));
+      if (isLocal && !activeProviders.includes(pid)) activeProviders.push(pid);
+    }
 
     // 反查表：provider/modelId → alias（顯示 alias 簡稱比較好認）
     const refToAlias = {};

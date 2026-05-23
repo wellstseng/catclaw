@@ -158,25 +158,13 @@
     }
   },
 
-  // ══════════════════════════════════════════════════════════════
-  // V1 舊格式（保留相容，若有 agentDefaults 則以 V2 優先）
-  // ══════════════════════════════════════════════════════════════
-  "provider": "ollama-local",
-  "providers": {
-    "ollama-local": {
-      "type": "ollama",
-      "host": "http://localhost:11434",
-      "model": "qwen3:1.7b"
-    }
-  },
-
   // ── Provider / Model 路由 ──────────────────────────────────────
   // 優先序：channels > projects > roles > default
+  // V1 provider/providers 已淘汰（migrate-v2 自動轉成 agentDefaults，見上方）
+  // providerRouting 由 V2 沿用：channels / projects / roles 內值需是 V2 model ref（"provider/model"）
   "providerRouting": {
     "channels": {},
-    "roles": {
-      "default": "ollama-local"
-    },
+    "roles": {},
     "projects": {}
   },
   "modelRouting": {
