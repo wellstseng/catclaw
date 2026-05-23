@@ -4589,12 +4589,10 @@ async function loadPipeline() {
   if (pipeline.config) {
     const e = pipeline.config.embedding || {};
     const x = pipeline.config.extraction || {};
-    const r = pipeline.config.reranker || {};
     cfgEl.innerHTML =
       '<table style="font-size:0.82rem;width:100%"><tbody>' +
       '<tr><td style="padding:2px 8px 2px 0;color:var(--fg2)">Embedding</td><td><strong>' + (e.provider||'-') + '</strong> / ' + (e.model||'-') + '</td></tr>' +
       '<tr><td style="padding:2px 8px 2px 0;color:var(--fg2)">Extraction</td><td><strong>' + (x.provider||'-') + '</strong> / ' + (x.model||'-') + '</td></tr>' +
-      '<tr><td style="padding:2px 8px 2px 0;color:var(--fg2)">Reranker</td><td><strong>' + (r.provider||'-') + '</strong> / ' + (r.model||'-') + '</td></tr>' +
       '<tr><td style="padding:2px 8px 2px 0;color:var(--fg2)">維度</td><td>' + (pipeline.embeddingDim || '-') + 'd</td></tr>' +
       '</tbody></table>';
     if (pipeline.activeProvider) {

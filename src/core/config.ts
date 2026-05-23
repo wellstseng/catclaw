@@ -28,8 +28,6 @@ export interface ChannelConfig {
   allowFrom?: string[];
   /** 綁定專案（該頻道只用此專案） */
   boundProject?: string;
-  /** 頻道層級 provider 覆寫 */
-  provider?: string;
   /** 封鎖 @here / @everyone 群組廣播觸發（預設由 guild 層級繼承） */
   blockGroupMentions?: boolean;
   /**
@@ -409,7 +407,6 @@ export function validateOllamaConfig(cfg: unknown): { ok: boolean; errors: strin
 /** 記憶管線設定（provider 抽象層） */
 export type EmbeddingProviderType = "ollama" | "google" | "openai" | "voyage";
 export type ExtractionProviderType = "ollama" | "anthropic" | "openai";
-export type RerankerProviderType = "ollama" | "cohere" | "none";
 
 /**
  * 記憶管線設定
@@ -419,6 +416,7 @@ export type RerankerProviderType = "ollama" | "cohere" | "none";
  *   實際走 getOllamaClient() 讀 ollama.primary.host；其他 provider 也不收 host）
  * - model 在 ollama 路徑下：強制從 ollama.primary.{embeddingModel, model} 取，
  *   使用者填了會被 buildMemoryPipelineConfig 忽略並 warn
+ * - reranker：placeholder 從未實作，已拔（Phase 5 audit）
  */
 export interface MemoryPipelineConfig {
   embedding: {
@@ -430,11 +428,6 @@ export interface MemoryPipelineConfig {
   extraction: {
     provider: ExtractionProviderType;
     model?: string;       // ollama 路徑 optional（從 ollama.primary.model 取）；非 ollama 必填
-    apiKey?: string;
-  };
-  reranker: {
-    provider: RerankerProviderType;
-    model?: string;       // placeholder（reranker 未實作）
     apiKey?: string;
   };
 }
@@ -770,12 +763,7 @@ export interface BridgeConfig {
   /** 認證設定 */
   authConfig?: AuthConfig;
 
-  // ── V1 相容欄位（過渡期保留；migrateV1ToV2 啟動時自動轉換 → V2 agentDefaults）──
-  /** @deprecated V1 — 預設 provider ID */
-  provider?: string;
-  /** @deprecated V1 — Provider 設定表 */
-  providers: Record<string, ProviderEntry>;
-  /** Provider 路由規則（V2 仍用 channels/projects，roles 内 V1 ID 由 migration 標 review） */
+  /** Provider 路由規則（V2 channels/projects/roles 內值是 model ref；空表示不路由，走 agentDefaults primary） */
   providerRouting: ProviderRoutingConfig;
   /** 統一模型路由（優先於 providerRouting） */
   modelRouting?: ModelRoutingConfig;
@@ -1323,11 +1311,6 @@ function buildMemoryPipelineConfig(
         model:    extractionModel,
         apiKey:   extractionApiKey,
       },
-      reranker: {
-        provider: raw.reranker?.provider ?? "none",
-        model:    raw.reranker?.model,
-        apiKey:   raw.reranker?.apiKey,
-      },
     };
   }
   // fallback：未設定 memoryPipeline 時，從 ollama config 全部推導
@@ -1340,9 +1323,6 @@ function buildMemoryPipelineConfig(
       extraction: {
         provider: "ollama",
         model:    ollamaRaw.primary.model ?? "qwen3:8b",
-      },
-      reranker: {
-        provider: "none",
       },
     };
   }
@@ -1460,10 +1440,6 @@ function loadConfig(): BridgeConfig {
     modelsConfig: resolvedModelsConfig,
     authConfig: raw.authConfig,
 
-    // V1 殘留欄位若存在，原樣 pass-through；V1 fallback shim 已移除（由 migration tool 接管）
-    // 啟動序列偵測 agentDefaults.model.primary 不存在但有 V1 結構 → migrateV1ToV2 自動轉換
-    provider: raw.provider,
-    providers: (raw.providers ?? {}) as Record<string, ProviderEntry>,
     providerRouting: {
       channels: raw.providerRouting?.channels ?? {},
       roles: raw.providerRouting?.roles ?? {},
@@ -1578,8 +1554,6 @@ export interface ChannelAccess {
   allowFrom: string[];
   /** 封鎖 @here / @everyone 群組廣播觸發 */
   blockGroupMentions: boolean;
-  /** 頻道綁定的 provider（undefined = 使用預設） */
-  provider?: string;
   /** 頻道綁定的專案（undefined = 無限制） */
   boundProject?: string;
   /** 每條使用者訊息自動建立 Discord Thread（預設 false） */
@@ -1639,7 +1613,6 @@ export function getChannelAccess(
     allowFrom:              channelCfg?.allowFrom                ?? parentCfg?.allowFrom                ?? guildDefaults.allowFrom,
     blockGroupMentions:     channelCfg?.blockGroupMentions       ?? parentCfg?.blockGroupMentions       ?? guildDefaults.blockGroupMentions,
     autoThread:             channelCfg?.autoThread               ?? parentCfg?.autoThread               ?? guildDefaults.autoThread,
-    provider:               channelCfg?.provider                 ?? parentCfg?.provider,
     boundProject:           channelCfg?.boundProject             ?? parentCfg?.boundProject,
   };
 }
@@ -1657,21 +1630,20 @@ export function resolveProvider(opts: {
   const { channelAccess, channelId, role, projectId } = opts;
   const mr = config.modelRouting;
 
-  // 新版 modelRouting（優先）：channel > project > role > default
+  // modelRouting（優先）：channel > project > role > default
   if (mr) {
     if (channelId && mr.channels?.[channelId]) return mr.channels[channelId];
-    if (channelAccess?.provider) return channelAccess.provider;
     if (projectId && mr.projects?.[projectId]) return mr.projects[projectId];
     if (role && mr.roles?.[role]) return mr.roles[role];
     return mr.roles?.["default"] ?? mr.default;
   }
 
-  // 舊版 providerRouting（V2 也用 channels/projects/roles，但回退到 agentDefaults primary）
+  // 回退：providerRouting (V2) → agentDefaults primary
+  void channelAccess; // ChannelAccess.provider 欄位已廢棄；如需 per-channel routing 改用 modelRouting.channels
   const routing = config.providerRouting;
-  if (channelAccess?.provider) return channelAccess.provider;
   if (role && routing.roles?.[role]) return routing.roles[role];
   if (projectId && routing.projects?.[projectId]) return routing.projects[projectId];
-  return routing.roles?.["default"] ?? config.agentDefaults?.model?.primary ?? config.provider ?? "";
+  return routing.roles?.["default"] ?? config.agentDefaults?.model?.primary ?? "";
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────

@@ -3,8 +3,8 @@
  * @description Provider 註冊表 — 初始化、解析路由、取得 Provider 實例
  *
  * 支援兩種建立方式：
- *   V1（舊）：buildProviderRegistry(defaultId, entries, routing)
- *   V2（新）：buildProviderRegistryV2(agentDefaults, modelsJson, authStore, routing)
+ *   buildProviderRegistryV2(agentDefaults, modelsJson, authStore, routing)
+ *   （V1 buildProviderRegistry 已於 Phase 5 audit 刪除）
  *
  * 路由優先序：
  *   1. 頻道綁定（channels.{channelId}）
@@ -318,78 +318,6 @@ export async function buildProviderRegistryV2(
       const failover = buildFailoverProvider("failover", chainProviders, routing.circuitBreaker);
       registry.register(failover);
       log.info(`[provider-registry-v2] 已建立 failover 鏈：${chainProviders.map(p => p.id).join("→")}`);
-    }
-  }
-
-  return registry;
-}
-
-// ── V1 工廠：從 config 建立 ProviderRegistry（舊格式相容）────────────────────
-
-export async function buildProviderRegistry(
-  defaultId: string,
-  entries: Record<string, ProviderEntry>,
-  routing: ProviderRoutingConfig
-): Promise<ProviderRegistry> {
-  const registry = new ProviderRegistry(defaultId, routing);
-
-  for (const [id, entry] of Object.entries(entries)) {
-    let provider: LLMProvider | null = null;
-
-    // 型別解析優先序：entry.type > wsUrl > id heuristic > field heuristic
-    let providerType: "claude-oauth" | "openai-compat" | "codex-oauth" | "openclaw" | "ollama" | "cli-claude" | "cli-gemini" | "cli-codex" | null = null;
-    if (entry.type === "claude")        providerType = "claude-oauth";
-    else if (entry.type === "openai")   providerType = "openai-compat";
-    else if (entry.type)                providerType = entry.type;
-    else if (entry.wsUrl)               providerType = "openclaw";
-    else if (id === "claude" || id === "claude-api" || id === "claude-oauth") providerType = "claude-oauth";
-    else if (id === "ollama" || id.startsWith("ollama-")) providerType = "ollama";
-    else if (id === "openai" || id.startsWith("gpt") || id.startsWith("openai-")) providerType = "openai-compat";
-    else if (entry.host || entry.baseUrl) providerType = "openai-compat";
-    else if (entry.token)               providerType = "claude-oauth";
-
-    if (providerType === "cli-claude" || providerType === "cli-gemini" || providerType === "cli-codex") {
-      const backend = providerType.replace("cli-", "") as "claude" | "gemini" | "codex";
-      const { CliProvider } = await import("./acp-cli.js");
-      provider = new CliProvider(id, {
-        backend,
-        command: entry.host ?? undefined,  // host 欄位可覆寫 CLI 路徑
-        cwd: entry.baseUrl ?? undefined,   // baseUrl 欄位可覆寫工作目錄
-      });
-    } else if (providerType === "codex-oauth") {
-      const { CodexOAuthProvider } = await import("./codex-oauth.js");
-      provider = new CodexOAuthProvider(id, entry);
-    } else if (providerType === "claude-oauth") {
-      const { ClaudeApiProvider } = await import("./claude-api.js");
-      provider = new ClaudeApiProvider(id, entry);
-    } else if (providerType === "ollama") {
-      const { OllamaProvider } = await import("./ollama.js");
-      provider = new OllamaProvider(id, entry);
-      if (provider.init) await provider.init();
-    } else if (providerType === "openai-compat") {
-      const { OpenAICompatProvider } = await import("./openai-compat.js");
-      provider = new OpenAICompatProvider(id, entry);
-      if (provider.init) await provider.init();
-    } else if (providerType === "openclaw") {
-      log.debug(`[provider-registry] openclaw provider ${id} 暫不初始化（S8 實作）`);
-    }
-
-    if (provider) registry.register(provider);
-  }
-
-  // Failover 鏈
-  const failoverChain = routing.failoverChain;
-  if (failoverChain && failoverChain.length > 0) {
-    const chainProviders: LLMProvider[] = [];
-    for (const id of failoverChain) {
-      const p = registry.get(id);
-      if (p) chainProviders.push(p);
-      else log.warn(`[provider-registry] failoverChain 中找不到 provider: ${id}，已略過`);
-    }
-    if (chainProviders.length > 0) {
-      const failover = buildFailoverProvider("failover", chainProviders, routing.circuitBreaker);
-      registry.register(failover);
-      log.info(`[provider-registry] 已建立 failover 鏈：${chainProviders.map(p => p.id).join("→")}`);
     }
   }
 

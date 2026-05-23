@@ -20,24 +20,13 @@ import { getProviderRegistry } from "../../providers/registry.js";
 
 // ── 設定檔路徑 ────────────────────────────────────────────────────────────────
 
-function getConfigPath(): string {
-  const dir = process.env.CATCLAW_CONFIG_DIR;
-  if (!dir) throw new Error("CATCLAW_CONFIG_DIR 未設定");
-  return resolve(dir, "catclaw.json");
-}
-
 function getModelsConfigPath(): string {
   const dir = process.env.CATCLAW_CONFIG_DIR;
   if (!dir) throw new Error("CATCLAW_CONFIG_DIR 未設定");
   return resolve(dir, "models-config.json");
 }
 
-// ── 讀寫設定檔 ───────────────────────────────────────────────────────────────
-
-function readRawConfig(): Record<string, unknown> {
-  const raw = readFileSync(getConfigPath(), "utf-8");
-  return JSON.parse(raw) as Record<string, unknown>;
-}
+// ── 讀寫設定檔（只動 models-config.json；catclaw.json 不再被 /configure 寫）─
 
 function readModelsConfig(): Record<string, unknown> {
   const raw = readFileSync(getModelsConfigPath(), "utf-8");
@@ -48,38 +37,26 @@ function writeModelsConfig(data: Record<string, unknown>): void {
   writeFileSync(getModelsConfigPath(), JSON.stringify(data, null, 2) + "\n", "utf-8");
 }
 
-function writeRawConfig(obj: Record<string, unknown>): void {
-  writeFileSync(getConfigPath(), JSON.stringify(obj, null, 2) + "\n", "utf-8");
-}
-
 // ── 子命令 ────────────────────────────────────────────────────────────────────
 
 function handleShow(): SkillResult {
   const lines: string[] = ["**目前 Provider 設定**"];
 
-  // V2：agentDefaults 存在時
-  if (config.agentDefaults?.model?.primary) {
-    const ad = config.agentDefaults;
-    lines.push(`模式：V2 三層分離`);
-    lines.push(`Primary：\`${ad.model!.primary}\``);
-    if (ad.model!.fallbacks?.length) {
-      lines.push(`Fallbacks：${ad.model!.fallbacks.map(f => `\`${f}\``).join(" → ")}`);
-    }
-    // 從 registry 列出已註冊的 provider
-    try {
-      const registry = getProviderRegistry();
-      for (const p of registry.list()) {
-        lines.push(`• \`${p.id}\`  model=${p.modelId ?? "(預設)"}`);
-      }
-    } catch { /* registry 未初始化 */ }
-  } else {
-    // V1
-    lines.push(`預設 provider：\`${config.provider}\``);
-    for (const [id, entry] of Object.entries(config.providers)) {
-      const active = id === config.provider ? " ◀ 預設" : "";
-      lines.push(`• \`${id}\`  type=${entry.type}  model=${entry.model ?? "(預設)"}${active}`);
-    }
+  if (!config.agentDefaults?.model?.primary) {
+    return { text: "❌ models-config.json 缺少 primary — 請至 Dashboard Auth 分頁設定，或執行 `./catclaw migrate-v2`", isError: true };
   }
+  const ad = config.agentDefaults;
+  lines.push(`Primary：\`${ad.model!.primary}\``);
+  if (ad.model!.fallbacks?.length) {
+    lines.push(`Fallbacks：${ad.model!.fallbacks.map(f => `\`${f}\``).join(" → ")}`);
+  }
+  // 從 registry 列出已註冊的 provider
+  try {
+    const registry = getProviderRegistry();
+    for (const p of registry.list()) {
+      lines.push(`• \`${p.id}\`  model=${p.modelId ?? "(預設)"}`);
+    }
+  } catch { /* registry 未初始化 */ }
 
   return { text: lines.join("\n") };
 }
@@ -121,26 +98,6 @@ function handleSetModel(args: string): SkillResult {
     writeModelsConfig(mcfg);
     log.info(`[configure] models-config.json primary → ${modelId}`);
     return { text: `✅ primary model 已設為 \`${modelId}\`（重啟後生效）` };
-  } catch (err) {
-    return { text: `❌ ${err instanceof Error ? err.message : String(err)}`, isError: true };
-  }
-}
-
-function handleSetProvider(args: string): SkillResult {
-  const providerId = args.trim().split(/\s+/)[0];
-  if (!providerId) {
-    return { text: "❌ 用法：`/configure provider <id>`", isError: true };
-  }
-  if (!config.providers[providerId]) {
-    return { text: `❌ Provider 不存在：${providerId}（可用：${Object.keys(config.providers).join(", ")}）`, isError: true };
-  }
-
-  try {
-    const raw = readRawConfig();
-    raw["provider"] = providerId;
-    writeRawConfig(raw);
-    log.info(`[configure] 預設 provider → ${providerId}`);
-    return { text: `✅ 預設 provider 已切換為 \`${providerId}\`（hot-reload 生效中）` };
   } catch (err) {
     return { text: `❌ ${err instanceof Error ? err.message : String(err)}`, isError: true };
   }
@@ -267,8 +224,6 @@ export const skill: Skill = {
         return handleShow();
       case "model":
         return handleSetModel(rest);
-      case "provider":
-        return handleSetProvider(rest);
       case "models":
         return handleListModels();
       case "login": {
@@ -284,7 +239,6 @@ export const skill: Skill = {
             "**`/configure` 子命令**",
             "• `show` — 顯示目前設定",
             "• `model <id> [--provider <id>]` — 更改 model",
-            "• `provider <id>` — 切換預設 provider",
             "• `models` — 列出可用模型",
             "• `login codex` — OpenAI Codex OAuth 登入",
           ].join("\n"),

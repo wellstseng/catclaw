@@ -215,7 +215,7 @@
     }
   },
 
-  // ── 記憶管線（embedding / extraction / reranker provider）────────
+  // ── 記憶管線（embedding / extraction provider）─────────────────
   //
   // 規則：
   //   provider="ollama"    → 不填 model（強制 inherit ollama.primary.{embeddingModel, model}）
@@ -225,10 +225,10 @@
   //   provider="google"    → 必填 model 與 apiKey（embedding 走 gemini-embedding-001 REST API）
   //
   // host 欄位已從 schema 移除（OllamaEmbedding/ExtractionProvider 不讀；其他 provider 也不收 host）。
+  // reranker 已從 schema 移除（placeholder 從未實作）。
   "memoryPipeline": {
     "embedding":  { "provider": "ollama" },
-    "extraction": { "provider": "ollama" },
-    "reranker":   { "provider": "none" }
+    "extraction": { "provider": "ollama" }
   },
 
   // ── Ollama 本地後端（記憶管線用，與對話 LLM 用途不同）──────
