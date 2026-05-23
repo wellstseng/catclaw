@@ -32,7 +32,7 @@ import { initRegistrationManager } from "../accounts/registration.js";
 import { initIdentityLinker } from "../accounts/identity-linker.js";
 import { initProjectManager, type ProjectManager } from "../projects/manager.js";
 import { initMemoryEngine, type MemoryEngine } from "../memory/engine.js";
-import { initOllamaClient, getOllamaClient } from "../ollama/client.js";
+import { initOllamaClient, getOllamaClient, swapOllamaClient, OllamaClient, buildBackendsFromConfig } from "../ollama/client.js";
 import { initEmbeddingProvider, hasEmbeddingProvider, getEmbeddingProvider } from "../vector/embedding-provider.js";
 import { initExtractionProvider, hasExtractionProvider, getExtractionProvider } from "../memory/extraction-provider.js";
 import { reportStartupSummary } from "./health-monitor.js";
@@ -802,5 +802,101 @@ export function ensureGuestAccount(accountId: string): void {
     } catch {
       // 已存在
     }
+  }
+}
+
+// ── Ollama Stack 熱重載 ───────────────────────────────────────────────────────
+//
+// 設計：reloadConfig() 偵測 ollama / memoryPipeline 變動時觸發；dashboard PUT 寫檔後
+// 靠 watcher 統一觸發（不自己呼叫，避免雙觸發 race）。
+//
+// 互斥：與 memory resync 互斥 — 避免換 embedding 模型時 seed 跑到一半 mid-stream
+// 維度錯亂（vector DB 前半寫舊維度、後半寫新維度，meta 卻標新 model）。
+let _ollamaReinitInProgress = false;
+let _memoryResyncInProgress = false;
+
+export function isOllamaReinitInProgress(): boolean {
+  return _ollamaReinitInProgress;
+}
+
+export function isMemoryResyncInProgress(): boolean {
+  return _memoryResyncInProgress;
+}
+
+/** Dashboard resync endpoint 用：包住 resync 流程，期間拒絕 ollama reinit */
+export async function withMemoryResyncLock<T>(fn: () => Promise<T>): Promise<T> {
+  if (_memoryResyncInProgress) throw new Error("另一個 memory resync 進行中");
+  _memoryResyncInProgress = true;
+  try {
+    return await fn();
+  } finally {
+    _memoryResyncInProgress = false;
+  }
+}
+
+export async function reinitOllamaStack(newCfg: BridgeConfig): Promise<{ ok: boolean; errors: string[] }> {
+  const errors: string[] = [];
+  if (!newCfg.ollama) {
+    return { ok: false, errors: ["config.ollama 不存在"] };
+  }
+  const { validateOllamaConfig } = await import("./config.js");
+  const v = validateOllamaConfig(newCfg.ollama);
+  if (!v.ok) {
+    log.warn(`[platform] reinitOllamaStack 拒絕：validator 失敗 — ${v.errors.join("; ")}`);
+    return v;
+  }
+
+  if (_memoryResyncInProgress) {
+    return { ok: false, errors: ["memory resync 進行中，請稍後再試（避免 mid-stream 維度錯亂）"] };
+  }
+  if (_ollamaReinitInProgress) {
+    return { ok: false, errors: ["另一個 Ollama reinit 進行中"] };
+  }
+  _ollamaReinitInProgress = true;
+  try {
+    // 1. 建新 OllamaClient → swap（不經過 _instance===null 窗口）
+    try {
+      const newClient = new OllamaClient(
+        buildBackendsFromConfig(newCfg.ollama),
+        { embedTimeoutMs: newCfg.ollama.timeout },
+      );
+      swapOllamaClient(newClient);
+      log.info(`[platform] OllamaClient swap 完成（host=${newCfg.ollama.primary.host}, model=${newCfg.ollama.primary.model}）`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`OllamaClient swap 失敗：${msg}`);
+      log.warn(`[platform] ${errors[errors.length - 1]}`);
+      // OllamaClient swap 失敗就不要動 embedding/extraction（它們依賴 getOllamaClient）
+      return { ok: false, errors };
+    }
+
+    // 2. EmbeddingProvider 重 init（內部已是 swap pattern：_provider = createEmbeddingProvider(...)）
+    if (newCfg.memoryPipeline?.embedding) {
+      try {
+        initEmbeddingProvider(newCfg.memoryPipeline.embedding);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`EmbeddingProvider 重 init 失敗：${msg}`);
+        log.warn(`[platform] ${errors[errors.length - 1]}`);
+      }
+    }
+
+    // 3. ExtractionProvider 重 init
+    if (newCfg.memoryPipeline?.extraction) {
+      try {
+        initExtractionProvider(newCfg.memoryPipeline.extraction);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`ExtractionProvider 重 init 失敗：${msg}`);
+        log.warn(`[platform] ${errors[errors.length - 1]}`);
+      }
+    }
+
+    if (errors.length === 0) {
+      log.info("[platform] Ollama stack 熱重載完成（注意：in-flight 請求仍走舊 backend，下次呼叫起套用新設定）");
+    }
+    return { ok: errors.length === 0, errors };
+  } finally {
+    _ollamaReinitInProgress = false;
   }
 }

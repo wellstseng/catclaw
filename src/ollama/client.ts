@@ -476,3 +476,12 @@ export function initOllamaClient(cfg: OllamaConfig): OllamaClient {
 export function resetOllamaClient(): void {
   _instance = null;
 }
+
+/**
+ * 直接替換 OllamaClient 實例（給熱重載用）
+ * Why: 改設定時若先 reset 再 init，中間會有 _instance===null 窗口；
+ * 此時並行請求拿到 null 會 throw。swap 就避開這個窗口。
+ */
+export function swapOllamaClient(newClient: OllamaClient): void {
+  _instance = newClient;
+}

@@ -362,29 +362,79 @@ export interface OllamaConfig {
   timeout: number;
 }
 
+/**
+ * 驗證 OllamaConfig（dashboard PUT / reinit 前用）
+ * 輕量手寫，不引入 zod/ajv — 維持 repo 風格（platform.ts 既有 cross-validate 也是手寫）
+ */
+export function validateOllamaConfig(cfg: unknown): { ok: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!cfg || typeof cfg !== "object") {
+    return { ok: false, errors: ["ollama config 必須是 object"] };
+  }
+  const c = cfg as Partial<OllamaConfig>;
+  if (typeof c.enabled !== "boolean") errors.push("enabled 必須是 boolean");
+  if (!c.primary || typeof c.primary !== "object") {
+    errors.push("primary 缺失");
+  } else {
+    if (!c.primary.host || typeof c.primary.host !== "string") {
+      errors.push("primary.host 必須是非空字串");
+    } else if (!/^https?:\/\/.+/.test(c.primary.host)) {
+      errors.push(`primary.host 必須是 http(s) URL（收到：${c.primary.host}）`);
+    }
+    if (!c.primary.model || typeof c.primary.model !== "string") {
+      errors.push("primary.model 必須是非空字串");
+    }
+    if (c.primary.embeddingModel !== undefined && typeof c.primary.embeddingModel !== "string") {
+      errors.push("primary.embeddingModel 必須是字串");
+    }
+  }
+  if (typeof c.failover !== "boolean") errors.push("failover 必須是 boolean");
+  if (c.failover === true) {
+    if (!c.fallback || !c.fallback.host || !c.fallback.model) {
+      errors.push("failover=true 時 fallback.host 與 fallback.model 必填");
+    } else if (!/^https?:\/\/.+/.test(c.fallback.host)) {
+      errors.push(`fallback.host 必須是 http(s) URL（收到：${c.fallback.host}）`);
+    }
+  }
+  if (typeof c.thinkMode !== "boolean") errors.push("thinkMode 必須是 boolean");
+  if (typeof c.numPredict !== "number" || c.numPredict < 256) {
+    errors.push("numPredict 必須是 number 且 ≥ 256");
+  }
+  if (typeof c.timeout !== "number" || c.timeout < 1000) {
+    errors.push("timeout 必須是 number 且 ≥ 1000（毫秒）");
+  }
+  return { ok: errors.length === 0, errors };
+}
+
 /** 記憶管線設定（provider 抽象層） */
 export type EmbeddingProviderType = "ollama" | "google" | "openai" | "voyage";
 export type ExtractionProviderType = "ollama" | "anthropic" | "openai";
 export type RerankerProviderType = "ollama" | "cohere" | "none";
 
+/**
+ * 記憶管線設定
+ *
+ * 拔掉的欄位（Phase 2 整合）：
+ * - host：100% dead config（OllamaEmbedding/ExtractionProvider 收了不用，
+ *   實際走 getOllamaClient() 讀 ollama.primary.host；其他 provider 也不收 host）
+ * - model 在 ollama 路徑下：強制從 ollama.primary.{embeddingModel, model} 取，
+ *   使用者填了會被 buildMemoryPipelineConfig 忽略並 warn
+ */
 export interface MemoryPipelineConfig {
   embedding: {
     provider: EmbeddingProviderType;
-    model: string;
-    host?: string;      // ollama 專用
-    apiKey?: string;     // 雲端專用
-    dimensions?: number; // 部分模型可指定降維
+    model?: string;       // ollama 路徑 optional（從 ollama.primary.embeddingModel 取）；非 ollama 必填
+    apiKey?: string;      // 雲端 provider 用
+    dimensions?: number;  // 部分模型可指定降維
   };
   extraction: {
     provider: ExtractionProviderType;
-    model: string;
-    host?: string;
+    model?: string;       // ollama 路徑 optional（從 ollama.primary.model 取）；非 ollama 必填
     apiKey?: string;
   };
   reranker: {
     provider: RerankerProviderType;
-    model: string;
-    host?: string;
+    model?: string;       // placeholder（reranker 未實作）
     apiKey?: string;
   };
 }
@@ -1235,50 +1285,65 @@ function buildMemoryPipelineConfig(
   ollamaRaw: RawConfig["ollama"],
 ): MemoryPipelineConfig | undefined {
   if (raw?.embedding) {
+    const embeddingProvider = raw.embedding.provider ?? "ollama";
     const extractionProvider = raw.extraction?.provider ?? "ollama";
     // 自動解析 Anthropic apiKey：若 provider=anthropic 但沒設 apiKey，嘗試從 auth-profile 讀取
     let extractionApiKey = raw.extraction?.apiKey;
     if (extractionProvider === "anthropic" && !extractionApiKey) {
       extractionApiKey = resolveAnthropicKeyFromAuthProfile();
     }
+    // Ollama 路徑：強制從 ollama.primary 取 model（單一來源）
+    // 使用者若填了不同的 model → log.warn 並覆蓋（讓 Dashboard「Ollama 後端設定」卡片成為唯一改 model 的地方）
+    const embeddingModel = (() => {
+      if (embeddingProvider !== "ollama") return raw.embedding.model || "";
+      const forced = ollamaRaw?.primary?.embeddingModel ?? "qwen3-embedding:8b";
+      if (raw.embedding.model && raw.embedding.model !== forced) {
+        log.warn(`[config] memoryPipeline.embedding.model="${raw.embedding.model}" 被忽略，ollama 路徑強制使用 ollama.primary.embeddingModel="${forced}"`);
+      }
+      return forced;
+    })();
+    const extractionModel = (() => {
+      if (extractionProvider !== "ollama") {
+        return raw.extraction?.model || (extractionProvider === "anthropic" ? "claude-haiku-4-5-20251001" : "qwen3:8b");
+      }
+      const forced = ollamaRaw?.primary?.model ?? "qwen3:8b";
+      if (raw.extraction?.model && raw.extraction.model !== forced) {
+        log.warn(`[config] memoryPipeline.extraction.model="${raw.extraction.model}" 被忽略，ollama 路徑強制使用 ollama.primary.model="${forced}"`);
+      }
+      return forced;
+    })();
     return {
       embedding: {
-        provider: raw.embedding.provider ?? "ollama",
-        model:    raw.embedding.model ?? "qwen3-embedding:8b",
-        host:     raw.embedding.host,
+        provider: embeddingProvider,
+        model:    embeddingModel,
         apiKey:   raw.embedding.apiKey,
         dimensions: raw.embedding.dimensions,
       },
       extraction: {
         provider: extractionProvider,
-        model:    raw.extraction?.model ?? (extractionProvider === "anthropic" ? "claude-haiku-4-5-20251001" : ollamaRaw?.primary?.model ?? "qwen3:8b"),
-        host:     raw.extraction?.host,
+        model:    extractionModel,
         apiKey:   extractionApiKey,
       },
       reranker: {
         provider: raw.reranker?.provider ?? "none",
-        model:    raw.reranker?.model ?? "",
-        host:     raw.reranker?.host,
+        model:    raw.reranker?.model,
         apiKey:   raw.reranker?.apiKey,
       },
     };
   }
-  // fallback：從 ollama config 推導
+  // fallback：未設定 memoryPipeline 時，從 ollama config 全部推導
   if (ollamaRaw?.primary) {
     return {
       embedding: {
         provider: "ollama",
         model:    ollamaRaw.primary.embeddingModel ?? "qwen3-embedding:8b",
-        host:     ollamaRaw.primary.host ?? "http://localhost:11434",
       },
       extraction: {
         provider: "ollama",
         model:    ollamaRaw.primary.model ?? "qwen3:8b",
-        host:     ollamaRaw.primary.host ?? "http://localhost:11434",
       },
       reranker: {
         provider: "none",
-        model:    "",
       },
     };
   }
@@ -1645,6 +1710,17 @@ function reloadConfig(): void {
           overflowHardStop: ceCfg?.strategies?.overflowHardStop,
         });
       }).catch(() => { /* CE 模組尚未初始化 */ });
+    }
+    // Ollama stack hot-reload（dashboard 改 ollama 設定或 memoryPipeline.embedding/extraction 模型時觸發）
+    // 同入口統一處理避免 dashboard PUT + watcher 雙觸發 race
+    const ollamaChanged = JSON.stringify(oldConfig.ollama) !== JSON.stringify(newConfig.ollama);
+    const pipelineChanged = JSON.stringify(oldConfig.memoryPipeline) !== JSON.stringify(newConfig.memoryPipeline);
+    if (ollamaChanged || pipelineChanged) {
+      import("./platform.js").then(({ reinitOllamaStack }) => {
+        void reinitOllamaStack(newConfig).then(r => {
+          if (!r.ok) log.warn(`[config] reinitOllamaStack 失敗：${r.errors.join("; ")}`);
+        }).catch(err => log.warn(`[config] reinitOllamaStack 例外：${err instanceof Error ? err.message : String(err)}`));
+      }).catch(() => { /* platform 模組尚未初始化 */ });
     }
     // Hook Registry hot-reload
     import("../hooks/hook-registry.js").then(({ getHookRegistry }) => {

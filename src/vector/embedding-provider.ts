@@ -36,10 +36,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   readonly providerName = "ollama" as const;
   private _cachedDim = 0;
 
-  constructor(
-    readonly modelName: string,
-    private readonly host?: string,
-  ) {}
+  constructor(readonly modelName: string) {}
 
   async embed(texts: string[]): Promise<EmbedResult> {
     if (!texts.length) return { vectors: [], dim: this._cachedDim };
@@ -184,13 +181,17 @@ let _provider: EmbeddingProvider | null = null;
 export function createEmbeddingProvider(cfg: MemoryPipelineConfig["embedding"]): EmbeddingProvider {
   switch (cfg.provider) {
     case "ollama":
-      return new OllamaEmbeddingProvider(cfg.model, cfg.host);
+      // ollama 路徑下 model 由 buildMemoryPipelineConfig 強制 inherit 自 ollama.primary.embeddingModel，保證有值
+      return new OllamaEmbeddingProvider(cfg.model!);
     case "google":
       if (!cfg.apiKey) throw new Error("[embedding] Google provider 需要 apiKey");
+      if (!cfg.model) throw new Error("[embedding] Google provider 需要 model");
       return new GoogleEmbeddingProvider(cfg.model, cfg.apiKey, cfg.dimensions);
     case "openai":
+      if (!cfg.model) throw new Error("[embedding] OpenAI provider 需要 model");
       return new OpenAIEmbeddingProvider(cfg.model);
     case "voyage":
+      if (!cfg.model) throw new Error("[embedding] Voyage provider 需要 model");
       return new VoyageEmbeddingProvider(cfg.model);
     default:
       throw new Error(`[embedding] 不支援的 provider: ${cfg.provider}`);

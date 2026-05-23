@@ -892,35 +892,28 @@ label.cfg-toggle { min-width: 36px; }
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-    <!-- 監控區：Vector DB -->
-    <div class="card">
-      <h3 style="margin:0 0 8px">Vector DB</h3>
-      <div id="pl-vector-stats">載入中...</div>
-      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
-        <button class="btn btn-green btn-sm" onclick="pipelineResync(false)" title="只 upsert 現有 atom，不 drop（同維度 / 安全）">🔄 Vector Resync</button>
-        <button class="btn btn-sm" style="background:var(--warn);color:#fff" onclick="pipelineResync(true)" title="先 dropTable 再 seed — 換 embedding 模型/維度時必跑（會清空向量 DB 重建）">♻ 完整重建（drop + seed）</button>
-      </div>
-      <div id="pl-resync-result" style="font-size:0.82rem;margin-top:8px"></div>
+  <!-- Ollama 後端設定（單一來源；memoryPipeline 在 provider=ollama 時自動 inherit）-->
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="margin:0 0 4px">Ollama 後端設定</h3>
+    <p style="font-size:0.72rem;color:var(--warn);margin:0 0 10px">⚠ 此設定影響 memory pipeline（embedding / extraction）；對話 LLM 的 Ollama 端點請至「模型設定」頁配置（provider.ollama-*，路徑獨立）</p>
+    <div id="pl-ollama-cfg-msg" style="font-size:0.82rem;margin-bottom:8px"></div>
+    <div id="pl-ollama-cfg-form" style="font-size:0.85rem">載入中...</div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="btn btn-sm" onclick="loadOllamaConfig()">↻ 重新載入</button>
+      <button class="btn btn-green btn-sm" onclick="saveOllamaConfig()">💾 儲存並熱重載</button>
+      <span style="font-size:0.72rem;color:var(--fg3);margin-left:4px">儲存後 ~500ms 內生效（無需 pm2 restart）</span>
     </div>
-    <!-- 操作區：Embedding 切換 -->
-    <div class="card">
-      <h3 style="margin:0 0 8px">Embedding Model 切換</h3>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <select id="pl-embed-select" style="flex:1;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.85rem"></select>
-        <button class="btn btn-sm" onclick="pipelineSwitchEmbed()">套用</button>
-      </div>
-      <div id="pl-embed-msg" style="font-size:0.82rem"></div>
+  </div>
+
+  <!-- Vector DB（Phase 2 合併後單卡片；模型切換已併入「Ollama 後端設定」）-->
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="margin:0 0 8px">Vector DB</h3>
+    <div id="pl-vector-stats">載入中...</div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+      <button class="btn btn-green btn-sm" onclick="pipelineResync(false)" title="只 upsert 現有 atom，不 drop（同維度 / 安全）">🔄 Vector Resync</button>
+      <button class="btn btn-sm" style="background:var(--warn);color:#fff" onclick="pipelineResync(true)" title="先 dropTable 再 seed — 換 embedding 模型/維度時必跑（會清空向量 DB 重建）">♻ 完整重建（drop + seed）</button>
     </div>
-    <!-- 操作區：Extract Model 切換 -->
-    <div class="card">
-      <h3 style="margin:0 0 8px">Extract Model 切換</h3>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <select id="pl-extract-select" style="flex:1;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.85rem"></select>
-        <button class="btn btn-sm" onclick="pipelineSwitchExtract()">套用</button>
-      </div>
-      <div id="pl-extract-msg" style="font-size:0.82rem"></div>
-    </div>
+    <div id="pl-resync-result" style="font-size:0.82rem;margin-top:8px"></div>
   </div>
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
@@ -4545,6 +4538,8 @@ async function testMemRecall() {
 // ── Memory Pipeline 面板 ─────────────────────────────────────────────────────
 
 async function loadPipeline() {
+  // Ollama 後端設定卡片獨立載入（會用同 /api/ollama/models 端點）
+  loadOllamaConfig();
   // 並行載入所有資料
   const [ollamaStatus, models, pipeline, vectorStats, embStatus] = await Promise.all([
     authFetch('/api/ollama/status').then(r => r.json()).catch(() => ({ online: false })),
@@ -4615,22 +4610,7 @@ async function loadPipeline() {
 
   // Ollama 模型列表
   renderPipelineModels(models.models || []);
-
-  // Embedding 切換下拉選單（只列出 embedding 模型）
-  const select = document.getElementById('pl-embed-select');
-  const embeddingModels = (models.models || []).filter(function(m) { return m.name.includes('embed'); });
-  const currentModel = pipeline.config?.embedding?.model || '';
-  select.innerHTML = embeddingModels.length
-    ? embeddingModels.map(function(m) { return '<option value="' + m.name + '"' + (m.name === currentModel ? ' selected' : '') + '>' + m.name + '</option>'; }).join('')
-    : '<option value="">（無 embedding 模型）</option>';
-
-  // Extract 切換下拉選單（列出非 embedding 模型）
-  const extSelect = document.getElementById('pl-extract-select');
-  const extractModels = (models.models || []).filter(function(m) { return !m.name.includes('embed'); });
-  const currentExtractModel = pipeline.config?.extraction?.model || '';
-  extSelect.innerHTML = extractModels.length
-    ? extractModels.map(function(m) { return '<option value="' + m.name + '"' + (m.name === currentExtractModel ? ' selected' : '') + '>' + m.name + '</option>'; }).join('')
-    : '<option value="">（無可用模型）</option>';
+  // Phase 2：Embedding / Extract Model 切換改由「Ollama 後端設定」卡統一管理
 }
 
 function renderPipelineModels(models) {
@@ -4644,38 +4624,6 @@ function renderPipelineModels(models) {
         '<td style="color:var(--fg2)">' + (m.details?.family || '-') + '</td>' +
         '<td><button class="btn btn-sm" style="color:var(--error);font-size:0.72rem" onclick="pipelineDeleteModel(\\'' + m.name.replace(/'/g, "\\\\'") + '\\')">刪除</button></td></tr>';
     }).join('') + '</tbody></table>';
-}
-
-async function pipelineSwitchEmbed() {
-  var select = document.getElementById('pl-embed-select');
-  var model = select.value;
-  if (!model) return;
-  var msgEl = document.getElementById('pl-embed-msg');
-  msgEl.innerHTML = '<div style="color:var(--fg2)">套用中...</div>';
-  try {
-    var r = await authFetch('/api/memory/pipeline', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ embedding: { provider: 'ollama', model: model } }),
-    }).then(function(r) { return r.json(); });
-    msgEl.innerHTML = '<div style="color:var(--success)">' + (r.message || '已更新') + '</div>';
-  } catch (e) { msgEl.innerHTML = '<div style="color:var(--error)">錯誤: ' + e.message + '</div>'; }
-}
-
-async function pipelineSwitchExtract() {
-  var select = document.getElementById('pl-extract-select');
-  var model = select.value;
-  if (!model) return;
-  var msgEl = document.getElementById('pl-extract-msg');
-  msgEl.innerHTML = '<div style="color:var(--fg2)">套用中...</div>';
-  try {
-    var r = await authFetch('/api/memory/pipeline', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extraction: { provider: 'ollama', model: model } }),
-    }).then(function(r) { return r.json(); });
-    msgEl.innerHTML = '<div style="color:var(--success)">' + (r.message || '已更新') + '</div>';
-  } catch (e) { msgEl.innerHTML = '<div style="color:var(--error)">錯誤: ' + e.message + '</div>'; }
 }
 
 async function pipelineResync(rebuild) {
@@ -4724,6 +4672,138 @@ async function pipelineDeleteModel(name) {
     await authFetch('/api/ollama/model/' + encodeURIComponent(name), { method: 'DELETE' });
     loadPipeline();
   } catch (e) { alert('刪除失敗: ' + e.message); }
+}
+
+// ── Ollama 後端設定（單一來源；熱重載）─────────────────────────────────────
+let _ollamaCfgCache = null;
+let _ollamaCfgModels = [];
+
+async function loadOllamaConfig() {
+  var formEl = document.getElementById('pl-ollama-cfg-form');
+  var msgEl = document.getElementById('pl-ollama-cfg-msg');
+  if (msgEl) msgEl.innerHTML = '';
+  formEl.innerHTML = '載入中...';
+  try {
+    var both = await Promise.all([
+      authFetch('/api/ollama/config').then(function(r) { return r.json(); }),
+      authFetch('/api/ollama/models').then(function(r) { return r.json(); }).catch(function() { return { models: [] }; }),
+    ]);
+    var cfg = both[0].config;
+    _ollamaCfgModels = both[1].models || [];
+    if (!cfg) {
+      formEl.innerHTML = '<div style="color:var(--warn)">尚未設定 ollama 區塊（catclaw.json）</div>';
+      return;
+    }
+    _ollamaCfgCache = JSON.parse(JSON.stringify(cfg));
+    renderOllamaCfgForm(cfg);
+  } catch (e) {
+    formEl.innerHTML = '<div style="color:var(--error)">載入失敗：' + e.message + '</div>';
+  }
+}
+
+function renderOllamaCfgForm(cfg) {
+  var formEl = document.getElementById('pl-ollama-cfg-form');
+  // model 選項：所有非 embed → primary.model 候選；含 embed → embeddingModel 候選
+  var nonEmbedModels = _ollamaCfgModels.filter(function(m) { return !m.name.includes('embed'); });
+  var embedModels = _ollamaCfgModels.filter(function(m) { return m.name.includes('embed'); });
+  function modelOptions(list, current) {
+    var opts = list.map(function(m) { return '<option value="' + m.name + '"' + (m.name === current ? ' selected' : '') + '>' + m.name + '</option>'; }).join('');
+    if (current && !list.some(function(m) { return m.name === current; })) {
+      opts = '<option value="' + current + '" selected>' + current + ' (未安裝)</option>' + opts;
+    }
+    return opts;
+  }
+  var inputStyle = 'padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem';
+  var labelStyle = 'display:inline-block;width:120px;color:var(--fg2);font-size:0.82rem';
+  var rowStyle = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';
+
+  var html = '';
+  // Enabled
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">啟用 Ollama</span>' +
+    '<input id="ocfg-enabled" type="checkbox"' + (cfg.enabled ? ' checked' : '') + '></div>';
+  // Primary
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Primary Host</span>' +
+    '<input id="ocfg-primary-host" type="text" value="' + (cfg.primary?.host || '') + '" style="' + inputStyle + ';flex:1;max-width:340px"></div>';
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Primary Model</span>' +
+    '<select id="ocfg-primary-model" style="' + inputStyle + ';min-width:240px">' + modelOptions(nonEmbedModels, cfg.primary?.model || '') + '</select></div>';
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Embedding Model</span>' +
+    '<select id="ocfg-primary-embed" style="' + inputStyle + ';min-width:240px">' + modelOptions(embedModels, cfg.primary?.embeddingModel || '') + '</select></div>';
+  // Failover toggle + collapsible fallback
+  var failoverOn = !!cfg.failover;
+  html += '<div style="' + rowStyle + ';margin-top:10px"><span style="' + labelStyle + '">啟用 Failover</span>' +
+    '<input id="ocfg-failover" type="checkbox"' + (failoverOn ? ' checked' : '') + ' onchange="toggleOllamaCfgFallback()"></div>';
+  html += '<div id="ocfg-fallback-section" style="' + (failoverOn ? '' : 'display:none;') + 'padding-left:24px;border-left:2px solid var(--border);margin-bottom:6px">';
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Fallback Host</span>' +
+    '<input id="ocfg-fallback-host" type="text" value="' + (cfg.fallback?.host || '') + '" style="' + inputStyle + ';flex:1;max-width:340px"></div>';
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Fallback Model</span>' +
+    '<input id="ocfg-fallback-model" type="text" value="' + (cfg.fallback?.model || '') + '" style="' + inputStyle + ';flex:1;max-width:340px"></div>';
+  html += '<p style="font-size:0.72rem;color:var(--fg3);margin:4px 0 0">Fallback 不支援 thinkMode / numPredict（OllamaClient 強制 false / 2048）</p>';
+  html += '</div>';
+  // 進階折疊
+  html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.82rem;color:var(--fg2)">進階設定</summary>';
+  html += '<div style="padding-top:8px">';
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Think Mode</span>' +
+    '<input id="ocfg-think" type="checkbox"' + (cfg.thinkMode ? ' checked' : '') + '>' +
+    '<span style="font-size:0.72rem;color:var(--fg3);margin-left:6px">qwen3 等 thinking 模型使用</span></div>';
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Num Predict</span>' +
+    '<input id="ocfg-numpredict" type="number" value="' + (cfg.numPredict || 512) + '" min="256" style="' + inputStyle + ';width:120px">' +
+    '<span style="font-size:0.72rem;color:var(--fg3);margin-left:6px">最大輸出 token（≥256）</span></div>';
+  html += '<div style="' + rowStyle + '"><span style="' + labelStyle + '">Timeout (ms)</span>' +
+    '<input id="ocfg-timeout" type="number" value="' + (cfg.timeout || 600000) + '" min="1000" style="' + inputStyle + ';width:120px">' +
+    '<span style="font-size:0.72rem;color:var(--fg3);margin-left:6px">embedding / generate 上限</span></div>';
+  html += '</div></details>';
+
+  formEl.innerHTML = html;
+}
+
+function toggleOllamaCfgFallback() {
+  var on = document.getElementById('ocfg-failover').checked;
+  document.getElementById('ocfg-fallback-section').style.display = on ? '' : 'none';
+}
+
+async function saveOllamaConfig() {
+  var msgEl = document.getElementById('pl-ollama-cfg-msg');
+  msgEl.innerHTML = '<span style="color:var(--fg2)">儲存中...</span>';
+  var failover = document.getElementById('ocfg-failover').checked;
+  var body = {
+    enabled: document.getElementById('ocfg-enabled').checked,
+    primary: {
+      host: document.getElementById('ocfg-primary-host').value.trim(),
+      model: document.getElementById('ocfg-primary-model').value.trim(),
+      embeddingModel: document.getElementById('ocfg-primary-embed').value.trim() || undefined,
+    },
+    failover: failover,
+    thinkMode: document.getElementById('ocfg-think').checked,
+    numPredict: parseInt(document.getElementById('ocfg-numpredict').value, 10) || 512,
+    timeout: parseInt(document.getElementById('ocfg-timeout').value, 10) || 600000,
+  };
+  if (failover) {
+    body.fallback = {
+      host: document.getElementById('ocfg-fallback-host').value.trim(),
+      model: document.getElementById('ocfg-fallback-model').value.trim(),
+    };
+  }
+  try {
+    var r = await authFetch('/api/ollama/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var data = await r.json();
+    if (!r.ok) {
+      var detail = data.details ? '<ul style="margin:4px 0 0 20px">' + data.details.map(function(x) { return '<li>' + x + '</li>'; }).join('') + '</ul>' : '';
+      msgEl.innerHTML = '<span style="color:var(--error)">❌ ' + (data.error || '儲存失敗') + '</span>' + detail;
+      return;
+    }
+    msgEl.innerHTML = '<span style="color:var(--success)">✓ ' + (data.message || '已儲存') + '</span>';
+    // 500ms 後重新拉 status 與 config，確認熱重載生效
+    setTimeout(function() {
+      loadOllamaConfig();
+      loadPipeline();
+    }, 700);
+  } catch (e) {
+    msgEl.innerHTML = '<span style="color:var(--error)">❌ ' + e.message + '</span>';
+  }
 }
 
 async function pipelineRecallTest() {
@@ -7882,6 +7962,73 @@ export class DashboardServer {
         return;
       }
 
+      // GET /api/ollama/config — 回傳目前 ollama 設定（給 dashboard 編輯器載入）
+      if (url === "/api/ollama/config" && method === "GET") {
+        void (async () => {
+          try {
+            const { config } = await import("./config.js");
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ config: config.ollama ?? null }));
+          } catch (err) {
+            res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // PUT /api/ollama/config — 更新 ollama 設定
+      // 流程：validateOllamaConfig → 檢查 resync lock → backupConfig → writeFileSync
+      // → 不自己 reinit（watcher 偵測檔案變動觸發 reloadConfig → reinitOllamaStack，~500ms）
+      // 寫檔策略：只覆寫 ollama 區塊，保留 catclaw.json 其他欄位與註解
+      if (url === "/api/ollama/config" && method === "PUT") {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+              const { validateOllamaConfig, resolveConfigPath } = await import("./config.js");
+              const { isMemoryResyncInProgress, isOllamaReinitInProgress } = await import("./platform.js");
+
+              if (isMemoryResyncInProgress()) {
+                res.writeHead(409, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "memory resync 進行中，請稍後再試" }));
+                return;
+              }
+              if (isOllamaReinitInProgress()) {
+                res.writeHead(409, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "另一個 Ollama reinit 進行中" }));
+                return;
+              }
+
+              // failover=false 時清掉 fallback（避免空字串寫進檔）
+              if (body && body.failover === false) {
+                delete body.fallback;
+              }
+
+              const v = validateOllamaConfig(body);
+              if (!v.ok) {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "validateOllamaConfig 失敗", details: v.errors }));
+                return;
+              }
+
+              const configPath = resolveConfigPath();
+              const rawText = readFileSync(configPath, "utf-8");
+              const rawJson = JSON.parse(rawText);
+              rawJson.ollama = body;
+              backupConfig(configPath);
+              writeFileSync(configPath, JSON.stringify(rawJson, null, 2), "utf-8");
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: true, message: "已寫入 catclaw.json，watcher 將在 ~500ms 內熱重載" }));
+            } catch (err) {
+              res.writeHead(500); res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+            }
+          })();
+        });
+        return;
+      }
+
       // DELETE /api/ollama/model/:name — 刪除模型
       if (url.startsWith("/api/ollama/model/") && method === "DELETE") {
         void (async () => {
@@ -7930,7 +8077,9 @@ export class DashboardServer {
         return;
       }
 
-      // PUT /api/memory/pipeline — 更新管線設定（寫回 catclaw.json）
+      // PUT /api/memory/pipeline — 更新管線 provider（給 anthropic/openai 切換用）
+      // Phase 2 後 ollama 模型由「Ollama 後端設定」卡片管；此端點只接 provider + apiKey + 非 ollama 模型
+      // host 欄位已從 schema 移除；ollama 路徑下若帶 model → 忽略並提示
       if (url === "/api/memory/pipeline" && method === "PUT") {
         const chunks: Buffer[] = [];
         req.on("data", (c: Buffer) => chunks.push(c));
@@ -7938,9 +8087,27 @@ export class DashboardServer {
           void (async () => {
             try {
               const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as {
-                embedding?: { provider: string; model: string; host?: string; apiKey?: string; dimensions?: number };
-                extraction?: { provider: string; model: string; host?: string; apiKey?: string };
+                embedding?: { provider: string; model?: string; apiKey?: string; dimensions?: number };
+                extraction?: { provider: string; model?: string; apiKey?: string };
               };
+              const ignored: string[] = [];
+              // 拒收 host（已從 schema 拔掉）— 若舊客戶端送了，silently drop
+              for (const part of [body.embedding, body.extraction]) {
+                if (part && (part as { host?: string }).host) {
+                  delete (part as { host?: string }).host;
+                  ignored.push("host 欄位已移除（OllamaEmbedding/ExtractionProvider 從不讀取）");
+                }
+              }
+              // Ollama 路徑下 model 由 ollama.primary 管，這裡丟掉
+              if (body.embedding && body.embedding.provider === "ollama" && body.embedding.model) {
+                ignored.push(`embedding.model="${body.embedding.model}" 已忽略 → ollama 路徑請改 ollama.primary.embeddingModel`);
+                delete body.embedding.model;
+              }
+              if (body.extraction && body.extraction.provider === "ollama" && body.extraction.model) {
+                ignored.push(`extraction.model="${body.extraction.model}" 已忽略 → ollama 路徑請改 ollama.primary.model`);
+                delete body.extraction.model;
+              }
+
               const { resolveConfigPath } = await import("./config.js");
               const configPath = resolveConfigPath();
               const rawText = readFileSync(configPath, "utf-8");
@@ -7955,7 +8122,11 @@ export class DashboardServer {
               }
               writeFileSync(configPath, JSON.stringify(rawJson, null, 2), "utf-8");
               res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ ok: true, message: "已更新 catclaw.json（需 resync 才生效）" }));
+              res.end(JSON.stringify({
+                ok: true,
+                message: "已寫入，watcher 自動熱重載；維度變動才需手動重建",
+                ignored: ignored.length > 0 ? ignored : undefined,
+              }));
             } catch (err) {
               res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
             }
@@ -7996,7 +8167,12 @@ export class DashboardServer {
               if (body.trim()) {
                 try { rebuild = !!(JSON.parse(body) as { rebuild?: boolean }).rebuild; } catch { /* ignore malformed body */ }
               }
-              const { getPlatformMemoryEngine } = await import("./platform.js");
+              const { getPlatformMemoryEngine, withMemoryResyncLock, isOllamaReinitInProgress } = await import("./platform.js");
+              if (isOllamaReinitInProgress()) {
+                res.writeHead(409, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: "Ollama reinit 進行中，請稍後再試" }));
+                return;
+              }
               const engine = getPlatformMemoryEngine();
               if (!engine) { res.writeHead(500); res.end(JSON.stringify({ error: "MemoryEngine 未啟動" })); return; }
 
@@ -8018,21 +8194,24 @@ export class DashboardServer {
                 }
               }
 
-              const report: Array<{ layer: string; seeded: number; skipped: number; errors: number; dropped?: boolean }> = [];
-              for (const l of layers) {
-                if (!existsSync(l.dir)) continue;
-                try {
-                  if (rebuild) {
-                    const r = await engine.dropAndSeed(l.dir, l.namespace);
-                    report.push({ layer: l.label, dropped: r.dropped, seeded: r.seeded, skipped: r.skipped, errors: r.errors });
-                  } else {
-                    const r = await engine.seedFromDir(l.dir, l.namespace);
-                    report.push({ layer: l.label, ...r });
+              const report = await withMemoryResyncLock(async () => {
+                const r: Array<{ layer: string; seeded: number; skipped: number; errors: number; dropped?: boolean }> = [];
+                for (const l of layers) {
+                  if (!existsSync(l.dir)) continue;
+                  try {
+                    if (rebuild) {
+                      const x = await engine.dropAndSeed(l.dir, l.namespace);
+                      r.push({ layer: l.label, dropped: x.dropped, seeded: x.seeded, skipped: x.skipped, errors: x.errors });
+                    } else {
+                      const x = await engine.seedFromDir(l.dir, l.namespace);
+                      r.push({ layer: l.label, ...x });
+                    }
+                  } catch {
+                    r.push({ layer: l.label, seeded: 0, skipped: 0, errors: 1 });
                   }
-                } catch {
-                  report.push({ layer: l.label, seeded: 0, skipped: 0, errors: 1 });
                 }
-              }
+                return r;
+              });
 
               res.writeHead(200, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ ok: true, rebuild, report }));

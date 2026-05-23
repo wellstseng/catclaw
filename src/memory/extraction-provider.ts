@@ -30,10 +30,7 @@ export interface ExtractionProvider {
 export class OllamaExtractionProvider implements ExtractionProvider {
   readonly providerName = "ollama" as const;
 
-  constructor(
-    readonly modelName: string,
-    private readonly host?: string,
-  ) {}
+  constructor(readonly modelName: string) {}
 
   async generate(prompt: string, opts?: { maxTokens?: number }): Promise<string> {
     const { getOllamaClient } = await import("../ollama/client.js");
@@ -214,12 +211,15 @@ let _provider: ExtractionProvider | null = null;
 export function createExtractionProvider(cfg: MemoryPipelineConfig["extraction"]): ExtractionProvider {
   switch (cfg.provider) {
     case "ollama":
-      return new OllamaExtractionProvider(cfg.model, cfg.host);
+      // ollama 路徑下 model 由 buildMemoryPipelineConfig 強制 inherit 自 ollama.primary.model，保證有值
+      return new OllamaExtractionProvider(cfg.model!);
     case "anthropic":
       if (!cfg.apiKey) throw new Error("[extraction] Anthropic provider 需要 apiKey");
+      if (!cfg.model) throw new Error("[extraction] Anthropic provider 需要 model");
       return new AnthropicExtractionProvider(cfg.model, cfg.apiKey);
     case "openai":
       if (!cfg.apiKey) throw new Error("[extraction] OpenAI provider 需要 apiKey");
+      if (!cfg.model) throw new Error("[extraction] OpenAI provider 需要 model");
       return new OpenAIExtractionProvider(cfg.model, cfg.apiKey);
     default:
       throw new Error(`[extraction] 不支援的 provider: ${cfg.provider}`);

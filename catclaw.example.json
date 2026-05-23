@@ -235,17 +235,25 @@
     }
   },
 
-  // ── 記憶管線（embedding / extraction / reranker 後端）────────
-  // extraction provider: "ollama"（本地免費）/ "anthropic"（API，自動從 auth-profile 讀 key）/ "openai"
-  // 沒有 Ollama 的環境建議用 "anthropic" + haiku 模型（低成本）
+  // ── 記憶管線（embedding / extraction / reranker provider）────────
+  //
+  // 規則：
+  //   provider="ollama"    → 不填 model（強制 inherit ollama.primary.{embeddingModel, model}）
+  //                          填了會被忽略並 log.warn，dashboard「Ollama 後端設定」卡片是唯一改 model 處
+  //   provider="anthropic" → 必填 model（如 "claude-haiku-4-5-20251001"）；apiKey 不填會從 auth-profile 自動讀
+  //   provider="openai"    → 必填 model 與 apiKey
+  //   provider="google"    → 必填 model 與 apiKey（embedding 走 gemini-embedding-001 REST API）
+  //
+  // host 欄位已從 schema 移除（OllamaEmbedding/ExtractionProvider 不讀；其他 provider 也不收 host）。
   "memoryPipeline": {
-    "embedding":  { "provider": "ollama", "model": "qwen3-embedding:8b", "host": "http://localhost:11434" },
-    "extraction": { "provider": "ollama", "model": "qwen3:14b",          "host": "http://localhost:11434" },
-    "reranker":   { "provider": "none",   "model": "" }
+    "embedding":  { "provider": "ollama" },
+    "extraction": { "provider": "ollama" },
+    "reranker":   { "provider": "none" }
   },
 
   // ── Ollama 本地後端（記憶管線用，與對話 LLM 用途不同）──────
-  // providers.ollama-* = 對話用 LLM | 這裡 = embedding / context 分析
+  // providers.ollama-* = 對話用 LLM（獨立路徑） | 這裡 = embedding / context 分析
+  // 此區塊是 memoryPipeline 的單一來源 — provider="ollama" 時 host/model 從這裡 inherit
   "ollama": {
     "enabled": true,
     "primary": {
