@@ -565,11 +565,13 @@ export class DecayStrategy implements ContextStrategy {
       const tokBefore = m.originalTokens ?? m.tokens ?? estimateTokens([m]);
 
       // 外部化：在 truncate 之前攔截，趁原文還在時存檔
+      // 跳過已 externalize 或 compaction 摘要（後者外部化 → 下輪壓縮過濾 stub 等於丟失）
       if (this.extCfg.enabled
         && this._dataDir
         && targetLevel >= this.extCfg.triggerLevel
         && tokBefore >= this.extCfg.minTokens
-        && m.compressedBy !== "externalize") {
+        && m.compressedBy !== "externalize"
+        && m.compressedBy !== "compaction") {
         try {
           const relPath = externalizeMessage(m, ctx.sessionKey, i, this._dataDir);
           const stub = createExternalizedStub(m, relPath, targetLevel);
@@ -588,6 +590,7 @@ export class DecayStrategy implements ContextStrategy {
         && this._dataDir
         && tokBefore >= this.extCfg.minTokens
         && m.compressedBy !== "externalize"
+        && m.compressedBy !== "compaction"
         && targetLevel < 3) {  // L3 stub 走上面的外部化路徑
         try {
           extPath = externalizeMessage(m, ctx.sessionKey, i, this._dataDir);
@@ -919,6 +922,8 @@ ${formattedConvo}`;
       const summaryMessage: Message = {
         role: "user",
         content: `[對話摘要｜多輪壓縮，非原文，可能遺漏細節]${framingPrefix}\n${summaryText.trim()}${anchorBlock}\n⚠️ 若使用者要求引用本範圍的細節，承認這是壓縮摘要、請使用者提供正確版本，不得直接引用本段文字作答。`,
+        // 防摘要再被 decay 外部化（→ 下輪 compaction 過濾 stub → 摘要徹底丟失）
+        compressedBy: "compaction",
       };
 
       const compressed = [...sysMessages, summaryMessage, ...toKeep];
