@@ -3718,6 +3718,9 @@ function _traceRowHtml(t) {
   let html = '<tr data-trace-id="' + t.traceId + '" style="border-bottom:1px solid var(--border);cursor:pointer;' + liveStyle + errorStyle + '" onclick="showTraceDetail(\\'' + t.traceId + '\\')">';
   html += '<td style="padding:4px;text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="trace-row-checkbox" data-trace-id="' + t.traceId + '" onchange="onTraceCheckboxChange()"></td>';
   html += '<td style="padding:4px;color:var(--fg2)">' + ts + '</td>';
+  // Turn 欄：agent 報「turn N」時對得上 channel 內的對話次序
+  const turnDisplay = typeof t.turnIndex === 'number' ? String(t.turnIndex) : '-';
+  html += '<td style="padding:4px;text-align:right;color:var(--fg2);font-family:monospace">' + turnDisplay + '</td>';
   const agentBadge = t.agentId ? ' <span style="background:#7c3aed;color:#fff;font-size:0.6rem;padding:0 3px;border-radius:3px">' + t.agentId + '</span>' : '';
   const copyBtn = '<span title="複製 Trace ID" style="cursor:pointer;font-size:0.7rem;margin-right:2px;opacity:0.5" onclick="event.stopPropagation();navigator.clipboard.writeText(\\'' + t.traceId + '\\').then(()=>{this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',800)})">📋</span>';
   html += '<td style="padding:4px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + chFull + '">' + copyBtn + chShort + agentBadge + '</td>';
@@ -3742,6 +3745,7 @@ const _traceTableHeader = (() => {
   let h = '<tr style="border-bottom:1px solid var(--border);color:var(--fg2)">';
   h += '<th style="text-align:center;padding:4px;width:28px"><input type="checkbox" id="trace-select-all" title="全選" onchange="onTraceSelectAllChange()"></th>';
   h += '<th style="text-align:left;padding:4px">時間</th>';
+  h += '<th style="text-align:right;padding:4px">' + tip('Turn', '本 channel 內的對話輪次（agent 引用「turn N」時對應此編號）') + '</th>';
   h += '<th style="text-align:left;padding:4px">Channel</th>';
   h += '<th style="text-align:right;padding:4px">' + tip('Duration', '從收到訊息到回覆完成的總耗時') + '</th>';
   h += '<th style="text-align:right;padding:4px">' + tip('↑ Effective', 'LLM 實際處理的 input tokens（新送 + cache read + cache write）') + '</th>';
