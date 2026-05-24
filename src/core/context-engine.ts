@@ -423,6 +423,15 @@ function externalizeMessage(
   const fileName = `msg_t${m.turnIndex ?? 0}_i${msgIndex}.json`;
   const filePath = join(dir, fileName);
 
+  // 冪等：檔已存在就不覆寫
+  // Why：L1 decay 第一次靜默存檔時 m.content 是原文（OK）；下輪 build 進入 L2 觸發強制外部化，
+  // 這時 m.content 已被前輪 _compressMessage 截斷（含「⚠️ CE 已截斷」警示）。
+  // 若無此保護會覆寫掉先前更完整版本，agent read_file 拿回的也是截斷版（Wells 2026-05-24 報告）。
+  // 副作用：刻意重新外部化（強制重存）此版本做不到 — 目前無此 use case。
+  if (existsSync(filePath)) {
+    return filePath;
+  }
+
   const record = {
     sessionKey,
     turnIndex: m.turnIndex ?? 0,
