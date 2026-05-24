@@ -7748,22 +7748,14 @@ export class DashboardServer {
       }
 
       // GET /api/memory/atoms — 列出所有 atom
+      // readAllAtoms 已遞迴掃 root（含 accounts/*、projects/*、agents/*）— 不要再額外加子目錄，否則同檔被讀 2 次
       if (url === "/api/memory/atoms" && method === "GET") {
         void (async () => {
           try {
             const { listAtoms } = await import("../memory/memory-api.js");
             const memRoot = await resolveMemRootForAgent();
-            const dirs = [memRoot];
-            // 加入 accounts 子目錄
-            const accountsDir = join(memRoot, "accounts");
-            if (existsSync(accountsDir)) {
-              for (const d of readdirSync(accountsDir)) {
-                const p = join(accountsDir, d);
-                if (existsSync(p)) dirs.push(p);
-              }
-            }
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(listAtoms(dirs)));
+            res.end(JSON.stringify(listAtoms([memRoot])));
           } catch (err) {
             res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
           }
@@ -7777,16 +7769,8 @@ export class DashboardServer {
           try {
             const { getStats } = await import("../memory/memory-api.js");
             const memRoot = await resolveMemRootForAgent();
-            const dirs = [memRoot];
-            const accountsDir = join(memRoot, "accounts");
-            if (existsSync(accountsDir)) {
-              for (const d of readdirSync(accountsDir)) {
-                const p = join(accountsDir, d);
-                if (existsSync(p)) dirs.push(p);
-              }
-            }
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(getStats(dirs)));
+            res.end(JSON.stringify(getStats([memRoot])));
           } catch (err) {
             res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
           }
