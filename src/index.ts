@@ -87,9 +87,24 @@ const platformConfig = agentId
   }
 }
 
-// ── 新平台子系統初始化（僅當 config.providers 有設定時啟用）──────────────────
+// ── 新平台子系統初始化 ──────────────────────────────────────────────────────
+// 包 try/catch 降級：失敗時 dashboard（在 platform.ts step 0 已起）仍能跑，
+// 使用者可從 dashboard /api/status 看到 init error 並修設定後 restart
 const workspaceDir = resolveWorkspaceDirSafe();
-await initPlatform(platformConfig, catclawDir, distDir, workspaceDir);
+try {
+  await initPlatform(platformConfig, catclawDir, distDir, workspaceDir);
+} catch (err) {
+  const { setPlatformInitError } = await import("./core/platform.js");
+  const e = err instanceof Error ? err : new Error(String(err));
+  setPlatformInitError({
+    stage: "initPlatform",
+    message: e.message,
+    stack: e.stack,
+    at: new Date().toISOString(),
+  });
+  log.error(`[bridge] initPlatform 失敗 — 進入降級模式（dashboard 仍跑，可從 /api/status 看 error）：${e.message}`);
+  log.error(e.stack ?? "");
+}
 
 // 舊版 loadSessions() 已移除 — 新版 SessionManager 在 initPlatform() 內完成初始化
 
@@ -287,5 +302,9 @@ process.on("unhandledRejection", (reason) => {
   log.error(`[bridge] unhandledRejection: ${msg}`);
 });
 
-// 登入 Discord
-await bot.login(config.discord.token);
+// 登入 Discord（沒 token 就 skip 整個 bot 上線；catclaw 主體仍跑，dashboard 可用）
+if (config.discord.token) {
+  await bot.login(config.discord.token);
+} else {
+  log.warn("[bridge] discord.token 未設定，skip Discord bot 上線（local-only 模式）— dashboard / memory / agent-loop 仍可用");
+}

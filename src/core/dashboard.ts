@@ -5753,17 +5753,26 @@ export class DashboardServer {
       if (url === "/api/status" && method === "GET") {
         const uptime = Math.floor(process.uptime());
         const mem = process.memoryUsage();
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          uptimeSec: uptime,
-          uptimeStr: `${Math.floor(uptime/3600)}h ${Math.floor(uptime%3600/60)}m`,
-          memoryMB: Math.round(mem.rss/1024/1024),
-          heapUsedMB: Math.round(mem.heapUsed/1024/1024),
-          nodeVersion: process.version,
-          pid: process.pid,
-          configDir: process.env.CATCLAW_CONFIG_DIR ?? "(未設定)",
-          workspace: process.env.CATCLAW_WORKSPACE ?? "(未設定)",
-        }));
+        // 包含 platform initError：dashboard 早期啟動後若 initPlatform 失敗，這條暴露 root cause
+        void (async () => {
+          let initError: unknown = null;
+          try {
+            const { getPlatformInitError } = await import("./platform.js");
+            initError = getPlatformInitError();
+          } catch { /* platform 模組可能還沒載入 */ }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            uptimeSec: uptime,
+            uptimeStr: `${Math.floor(uptime/3600)}h ${Math.floor(uptime%3600/60)}m`,
+            memoryMB: Math.round(mem.rss/1024/1024),
+            heapUsedMB: Math.round(mem.heapUsed/1024/1024),
+            nodeVersion: process.version,
+            pid: process.pid,
+            configDir: process.env.CATCLAW_CONFIG_DIR ?? "(未設定)",
+            workspace: process.env.CATCLAW_WORKSPACE ?? "(未設定)",
+            initError,  // null = init OK；object = 降級模式，含 stage/message/stack/at
+          }));
+        })();
         return;
       }
 

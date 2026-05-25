@@ -60,6 +60,16 @@ let _safetyGuard: SafetyGuard | null = null;
 let _sessionManager: SessionManager | null = null;
 let _ready = false;
 let _memoryRoot: string | null = null;
+// init 失敗時保留錯誤資訊給 dashboard /api/status 暴露給使用者
+let _initError: { stage: string; message: string; stack?: string; at: string } | null = null;
+
+export function getPlatformInitError(): typeof _initError {
+  return _initError;
+}
+
+export function setPlatformInitError(err: NonNullable<typeof _initError>): void {
+  _initError = err;
+}
 
 // ── 初始化 ────────────────────────────────────────────────────────────────────
 
@@ -82,6 +92,19 @@ export async function initPlatform(
   const { getBootAgentDataDir } = await import("./agent-loader.js");
   const bootAgentDir = getBootAgentDataDir(catclawDir);
   log.info(`[platform] 初始化新平台子系統... bootAgent=${bootAgentDir}`);
+
+  // ── 0. Dashboard 提前啟動 ─────────────────────────────────────────────────
+  // 提到最早：任何後續 init 步驟 throw 時，dashboard 仍是活的，使用者可從 GUI 看到 error
+  // 並從 dashboard 改設定（如補 models-config.json aliases）後 restart 救回
+  if (config.dashboard?.enabled) {
+    try {
+      const { initDashboard } = await import("./dashboard.js");
+      initDashboard(config.dashboard.port ?? 8088, config.dashboard.token);
+      log.info(`[platform] Dashboard 早期啟動於 port ${config.dashboard.port ?? 8088}（其他 init 進行中，部分 API 待 init 完成）`);
+    } catch (err) {
+      log.warn(`[platform] Dashboard 早期啟動失敗：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // ── 1. AccountRegistry ─────────────────────────────────────────────────────
   _accountRegistry = new AccountRegistry(catclawDir);
@@ -424,11 +447,7 @@ export async function initPlatform(
   runDataCleanup();
   setInterval(runDataCleanup, 24 * 3600_000).unref(); // unref：不阻止 process 退出
 
-  // ── 9.8 Token Usage Dashboard（可選）──────────────────────────────────────
-  if (config.dashboard?.enabled) {
-    const { initDashboard } = await import("./dashboard.js");
-    initDashboard(config.dashboard.port ?? 8088, config.dashboard.token);
-  }
+  // ── 9.8 Dashboard 已提前在 step 0 啟動（讓 init 失敗時仍能從 GUI 看 error）─
 
   // ── 9.9 Log Error Monitor ──────────────────────────────────────────────────
   {

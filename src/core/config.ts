@@ -1354,8 +1354,9 @@ function loadConfig(): BridgeConfig {
   // 環境變數展開（遞迴，找不到則 throw）
   raw = expandEnvVars(raw, "");
 
+  // discord.token 不再強制必填 — 沒填會 skip Discord bot 啟動，但 catclaw 主體（dashboard / memory / LLM）仍跑
   if (!raw.discord?.token) {
-    throw new Error("catclaw.json 中 discord.token 欄位必填");
+    log.warn("[config] discord.token 未設定 — 將以 local-only 模式啟動（Discord bot 不上線；dashboard 仍可用設定 token 後 restart）");
   }
 
   // 偵測舊版頂層 toolBudget → 提示遷移
@@ -1373,7 +1374,7 @@ function loadConfig(): BridgeConfig {
 
   // 正規化 guilds
   const guilds: Record<string, GuildConfig> = {};
-  if (raw.discord.guilds) {
+  if (raw.discord?.guilds) {
     for (const [guildId, guild] of Object.entries(raw.discord.guilds)) {
       guilds[guildId] = {
         allow: guild.allow,
@@ -1415,8 +1416,8 @@ function loadConfig(): BridgeConfig {
   return {
     // ── 既有欄位 ──
     discord: {
-      token: raw.discord.token,
-      dm: { enabled: raw.discord.dm?.enabled ?? true },
+      token: raw.discord?.token ?? "",
+      dm: { enabled: raw.discord?.dm?.enabled ?? true },
       guilds,
     },
     admin: { allowedUserIds: (raw.admin?.allowedUserIds ?? []).map(String) },

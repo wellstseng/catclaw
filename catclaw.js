@@ -234,8 +234,9 @@ switch (cmd) {
     const { needsToken } = ensureInitialized();
     if (needsToken) {
       const configDir = resolve(process.env.CATCLAW_CONFIG_DIR);
-      console.error(`\n❌ 請先設定 ${join(configDir, "catclaw.json")} 中的 discord.token`);
-      process.exit(1);
+      console.warn(`⚠ ${join(configDir, "catclaw.json")} 中 discord.token 未設定 — 將以 local-only 模式啟動`);
+      console.warn(`  Discord bot 不會上線；dashboard / memory / LLM 仍可用。`);
+      console.warn(`  之後在 dashboard 或編 catclaw.json 補 token 後 restart 即可上線。`);
     }
 
     const forceFlag = process.argv.includes("-f") || process.argv.includes("--force");
