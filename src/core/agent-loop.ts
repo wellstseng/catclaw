@@ -1828,6 +1828,7 @@ export async function* agentLoop(
       }
 
       const llmCallStartMs = Date.now();
+      log.info(`[agent-loop] [loop=${loopCount}] LLM 呼叫 provider=${provider.id} thinking=${opts.thinking ?? "off"}`);
       // 每 iter 重組 systemPrompt：base + 當前 pending 的 deferred listing（已活化的不會再列）
       const deferredBlockNow = buildDeferredBlock();
       const currentSystemPrompt = deferredBlockNow

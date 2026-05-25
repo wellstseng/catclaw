@@ -352,6 +352,7 @@ export class ClaudeApiProvider implements LLMProvider {
     }, 5000);
 
     try {
+      log.info(`[claude:${this.id}] thinking=${opts.thinking ?? "off"} → reasoning ${opts.thinking ? `已送入 Anthropic 請求（${opts.thinking}）` : "未送"}`);
       const stream = streamSimpleAnthropic(model, context, {
         apiKey: credential,
         maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
