@@ -950,6 +950,14 @@ export async function* agentLoop(
   const allowSpawn = opts.allowSpawn !== false && spawnDepth < 2;
 
   // ── 1. 進門權限檢查 ────────────────────────────────────────────────────────
+  // guest:* accountId 自動 lazy 建立（避免「未知帳號」silently 拒絕；某些非主路徑（skill/subagent thread）
+  // 進到這裡時 ensureGuestAccount 還沒被叫過，這裡兜底）
+  if (accountId.startsWith("guest:")) {
+    try {
+      const { ensureGuestAccount } = await import("./platform.js");
+      ensureGuestAccount(accountId);
+    } catch { /* platform 可能 init 失敗，繼續走 — checkAccess 仍會擋 */ }
+  }
   const accessResult = permissionGate.checkAccess(accountId);
   if (!accessResult.allowed) {
     yield { type: "error", message: `存取拒絕：${accessResult.reason}` };
