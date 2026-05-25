@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute, basename } from "node:path";
 import { log } from "../logger.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
@@ -181,6 +181,33 @@ export class ProjectManager {
    * 供頻道處理器在建立 agent-loop 前使用。
    */
   resolveBinding(projectId: string, globalMemoryRoot: string): ProjectBinding | null {
+    // ── DX fallback：projectId 是絕對路徑且該目錄存在 → in-memory binding（不寫 storage） ──
+    // 為何：使用者在 catclaw.json 內 boundProject 直接寫路徑（如 "C:/Projects/TSLG"）符合
+    // 直覺，但 ProjectManager 期望 projectId。沒這 fallback 會 silently 回 null → 走全域。
+    // 三維度全部從路徑推（CWD、memory namespace=basename、CLAUDE.md=讀 path/CLAUDE.md）
+    if (isAbsolute(projectId) && existsSync(projectId)) {
+      const inferredId = basename(projectId).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const memoryDir = join(globalMemoryRoot, "projects", inferredId);
+      let claudeMd: string | undefined;
+      const claudeMdPath = join(projectId, "CLAUDE.md");
+      if (existsSync(claudeMdPath)) {
+        try { claudeMd = readFileSync(claudeMdPath, "utf-8"); } catch { /* skip */ }
+      }
+      log.info(`[projects] resolveBinding 路徑推導：boundProject="${projectId}" → projectId="${inferredId}" cwd="${projectId}" memoryDir="${memoryDir}"`);
+      // 拼一個 anonymous project — 不寫 storage（避免污染 ProjectManager 註冊表）
+      const project: Project = {
+        projectId: inferredId,
+        displayName: inferredId,
+        description: `(inferred from path: ${projectId})`,
+        toolsDir: projectId,
+        members: [],
+        createdBy: "(path-inferred)",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      return { projectId: inferredId, cwd: projectId, memoryDir, claudeMd, project };
+    }
+
     const project = this.get(projectId);
     if (!project) return null;
 
