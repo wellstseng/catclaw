@@ -22,7 +22,7 @@
 ### CatClaw 是什麼
 
 CatClaw 是一套以 Discord 為前端的多人 AI 開發平台，提供等同 Claude Code 的完整開發能力：
-multi-turn agent loop、26 builtin tools、34 builtin skills、36-event hook 系統、多 provider failover、
+multi-turn agent loop、30 builtin tools、46 builtin skills、36-event hook 系統、多 provider failover、
 四層記憶引擎、Context Engineering、subagent 編排、帳號/角色/權限系統、Web Dashboard。
 
 ### 一鍵安裝
@@ -109,8 +109,8 @@ Discord 訊息
 | **Context Engine** | 3 策略：decay（漸進衰減+外部化）→ compaction（結構化摘要+意圖錨點）→ overflow-hard-stop |
 | **Session** | Per-channel 串行佇列 + 磁碟持久化 + TTL |
 | **Accounts** | 5 級角色（guest → platform-owner）+ Tool Tier 物理移除 |
-| **Tools** | 26 builtin tools + MCP tool 自動整合 |
-| **Skills** | 34 builtin skills（31 command-type + 3 prompt） |
+| **Tools** | 30 builtin tools + MCP tool 自動整合 |
+| **Skills** | 46 builtin skills（37 command-type + 9 prompt） |
 | **Dashboard** | Web 監控面板 + REST API + Web Chat |
 | **Cron** | 排程服務（cron/every/at）+ 4 種動作型別 |
 | **Hooks** | 36 events（10 類）+ folder-convention 掛載 + fs.watch 熱重載 + TS/JS/sh/ps1 多 runtime + defineHook SDK + FileWatcher |
@@ -123,8 +123,8 @@ catclaw/                          <- 程式碼
 ├── src/
 │   ├── core/                     核心模組（agent-loop, session, dashboard...）
 │   ├── providers/                LLM Provider 抽象層
-│   ├── tools/                    26 builtin tools
-│   ├── skills/                   34 builtin skills
+│   ├── tools/                    30 builtin tools
+│   ├── skills/                   46 builtin skills
 │   ├── memory/                   四層記憶引擎
 │   ├── accounts/                 帳號/角色/權限
 │   ├── hooks/                    Hook 系統
@@ -221,7 +221,7 @@ catclaw/                          <- 程式碼
 
 > 詳見：[modules/agent-loop.md](modules/agent-loop.md)
 
-### 4.2 Tool 系統（26 builtin tools）
+### 4.2 Tool 系統（30 builtin tools）
 
 自動掃描載入 + register/execute + hot-reload + MCP tool 整合。
 
@@ -233,11 +233,11 @@ LLM 需先呼叫 `tool_search` 載入完整 schema 才能使用（節省 context
 
 > 詳見：[modules/tool-registry.md](modules/tool-registry.md)
 
-### 4.3 Skill 系統（34 builtin skills）
+### 4.3 Skill 系統（46 builtin skills）
 
 
 
-Skill = Discord 指令層，在 agent loop 之前攔截。26 個檔案（含多重 export 共 32 command-type skills）+ 3 個 prompt 型。
+Skill = Discord 指令層，在 agent loop 之前攔截。31 個檔案（含多重 export 共 37 command-type skills）+ 9 個 prompt 型。
 LLM 也可透過 `skill` tool 主動執行 builtin skill（不需引導使用者手動輸入）。
 
 **觸發**：前綴匹配（如 `/think`、`/mode`、`/use`、`/stop`、`/plan`、`/status`）
@@ -507,7 +507,7 @@ echo "$STDIN_JSON" >> /tmp/tool-audit.log
 
 ## 6. 常見陷阱
 
-以下為最常遇到的 5 個問題，完整 21 項陷阱速查見 [09-PITFALLS.md](09-PITFALLS.md)。
+以下為最常遇到的 5 個問題，完整 25 項陷阱速查見 [09-PITFALLS.md](09-PITFALLS.md)。
 
 ### 1. Bot 上線但不回應訊息
 

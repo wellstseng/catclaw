@@ -2,15 +2,15 @@
 
 **English** | [繁體中文](README.md)
 
-Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 26 builtin tools, 34 builtin skills, 36-event hook system, multi-provider failover, four-layer memory engine, and web dashboard.
+Discord-based AI Agent platform with full development capabilities — multi-turn agent loop, 30 builtin tools, 46 builtin skills, 36-event hook system, multi-provider failover, four-layer memory engine, and web dashboard.
 
 ## Features
 
 | Category | Capabilities |
 |----------|-------------|
 | **Agent Loop** | Multi-turn reasoning loop, tool execution, output token recovery, auto-compact |
-| **Tools** | 26 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management, skill execution, hook management, filewatch |
-| **Skills** | 34 builtin skills (31 command-type + 3 prompt-type) — config, session, account, status, restart, plan, remind, hook, and more |
+| **Tools** | 30 builtin tools — file read/write/edit, glob, grep, bash exec, web fetch/search, memory, subagent, task management, skill execution, hook management, filewatch |
+| **Skills** | 46 builtin skills (37 command-type + 9 prompt-type) — config, session, account, status, restart, plan, remind, hook, and more |
 | **Hook System** | 36 events (10 categories: Lifecycle / Turn / Memory / Subagent / Context / CLI Bridge / File+Command / File Watcher / Error / Platform) + folder-convention mount + fs.watch hot-reload + TS/JS/sh/ps1 runtimes + defineHook SDK |
 | **Multi-Provider** | claude-api / ollama / openai-compat / codex-oauth / acp-cli / cli-* + circuit-breaker failover |
 | **Memory** | Four-layer engine (Global / Project / Account / Agent) — vector recall + keyword search + auto-extraction + consolidation + **embedding model drift detection + auto dim-mismatch rebuild** |
@@ -355,8 +355,8 @@ src/
                   Prompt Assembler, Reply Handler, Event Bus, Message Pipeline
   memory/         Four-layer memory engine (engine, recall, extract, consolidate)
   providers/      LLM Provider abstraction (claude-api, ollama, openai-compat, cli-*)
-  tools/          Tool Registry + 26 builtin tools
-  skills/         Skill Registry + 34 builtin skills (32 command-type + 3 prompt)
+  tools/          Tool Registry + 30 builtin tools
+  skills/         Skill Registry + 46 builtin skills (37 command-type + 9 prompt)
   hooks/          Hook system — 36 events + folder-convention + fs.watch + defineHook SDK + FileWatcher
   safety/         Safety interception (guard, collab-conflict)
   workflow/       Workflow engine (rut, oscillation, fix-escalation, sync)

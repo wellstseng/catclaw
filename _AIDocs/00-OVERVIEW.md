@@ -9,8 +9,8 @@ CatClaw = **Codex 版 Claude Code CLI + 多人 AI 開發平台**。
 
 - **Multi-turn Agent Loop**：tool 迴圈 + output token recovery + auto-compact
 - **多 Provider**：Claude API / Codex OAuth / Ollama / OpenAI-compat / ACP CLI / CLI-Claude / CLI-Gemini / CLI-Codex，circuit-breaker + failover 自動切換
-- **25 builtin tools**：file read/write/edit、run_command、search、memory、subagent、hook 管理等
-- **35 builtin skills**（32 command-type + 3 prompt-type）：Discord 指令層（/think、/mode、/use、/stop、/plan、/remind、/hook 等）
+- **30 builtin tools**：file read/write/edit、run_command、search、memory、subagent、hook 管理等
+- **46 builtin skills**（37 command-type + 9 prompt-type）：Discord 指令層（/think、/mode、/use、/stop、/plan、/remind、/hook 等）
 - **36-event hook 系統**：folder-convention 掛載（global + per-agent）+ fs.watch 熱重載 + TS/JS/sh/ps1 多 runtime + defineHook SDK
 - **四層記憶引擎**：recall（vector + keyword）、extract、consolidate
 - **Context Engineering**：decay（漸進衰減+外部化）/ compaction（結構化摘要+意圖錨點）/ overflow-hard-stop
@@ -154,13 +154,13 @@ src/
 │   ├── auth-profile-store.ts (Auth Profile 多憑證 Round-Robin + Cooldown)
 │   ├── circuit-breaker.ts   (Provider 層級 circuit breaker)
 │   └── codex-oauth.ts       (OpenAI Codex OAuth provider)
-├── tools/                   (25 builtin tools)
+├── tools/                   (30 builtin tools)
 │   ├── registry.ts          (Tool 註冊表)
 │   └── builtin/             (file read/write/edit、run_command、search、hook 管理等)
-├── skills/                  (35 builtin skills)
+├── skills/                  (46 builtin skills)
 │   ├── registry.ts          (Skill 註冊 + trigger match)
-│   ├── builtin/             (26 TS files → 32 command-type skills)
-│   └── builtin-prompt/      (3 prompt skill 子目錄：commit/ discord/ pr/，各含 SKILL.md)
+│   ├── builtin/             (31 TS files → 37 command-type skills)
+│   └── builtin-prompt/      (9 prompt skill 子目錄，各含 SKILL.md)
 ├── memory/                  (四層記憶引擎)
 │   ├── engine.ts            (recall + extract + consolidate 統合)
 │   ├── recall.ts / extract.ts / consolidate.ts

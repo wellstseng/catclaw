@@ -58,7 +58,7 @@ interface ToolContext {
 }
 ```
 
-## 25 Builtin Tools
+## 30 Builtin Tools
 
 ### 檔案操作（elevated）
 

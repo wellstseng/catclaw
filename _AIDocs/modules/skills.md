@@ -8,8 +8,8 @@
 src/skills/
   types.ts          — Skill, SkillContext, SkillResult 型別
   registry.ts       — loadBuiltinSkills(), loadPromptSkills(), matchSkill()
-  builtin/          — TypeScript 執行型 skills（25 檔 / 31 個 skill）
-  builtin-prompt/   — SKILL.md 格式 prompt-type skills（3 個）
+  builtin/          — TypeScript 執行型 skills（31 檔 / 37 個 skill）
+  builtin-prompt/   — SKILL.md 格式 prompt-type skills（9 個）
 ```
 
 ## Skill 型別
@@ -63,7 +63,7 @@ interface SkillResult {
 - `loadPromptSkills()` — 掃描 `dist/skills/builtin-prompt/**/SKILL.md`
 - `matchSkill(text)` — 前綴匹配 trigger，回傳 `{ skill, args }`
 
-## Builtin Skills（31 個）
+## Builtin Skills（37 個）
 
 ### 單一 export（`export const skill`）
 
