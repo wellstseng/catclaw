@@ -374,10 +374,14 @@ export class CodexOAuthProvider implements LLMProvider {
     };
 
     if (opts.thinking) {
+      const effort = normalizeReasoningEffort(this.modelId, opts.thinking);
+      log.info(`[codex-oauth:${this.id}] thinking=${opts.thinking} → reasoning.effort=${effort} 已送入 Codex 請求`);
       body["reasoning"] = {
-        effort: normalizeReasoningEffort(this.modelId, opts.thinking),
+        effort,
         summary: "auto",
       };
+    } else {
+      log.info(`[codex-oauth:${this.id}] thinking=off → reasoning 未送`);
     }
 
     // ChatGPT backend 把 instructions 當必填（`Instructions are required`），所以一律送
