@@ -11,7 +11,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { log } from "../logger.js";
 import type { Role } from "../accounts/registry.js";
 import type { ModePreset } from "./config.js";
@@ -40,6 +40,8 @@ export interface PromptContext {
   projectId?: string;
   /** Bound project 解析後的 CLAUDE.md 內容（會注入 system prompt 的 catclaw-md module） */
   projectClaudeMd?: string;
+  /** Bound project cwd（給 @import 解析當 base dir） */
+  projectCwd?: string;
   /** 是否為群組頻道 */
   isGroupChannel?: boolean;
   /** 說話者顯示名稱 */
@@ -326,7 +328,9 @@ function loadCatclawMdHierarchy(workspaceDir: string): string {
       try {
         const content = readFileSync(candidate, "utf-8").trim();
         if (content) {
-          parts.push(`<!-- CATCLAW.md: ${candidate} -->\n${content}`);
+          // 展開 @import 語法（對齊 Claude Code），讓 CLAUDE.md / CATCLAW.md 內的 @path 自動 inline
+          const expanded = expandClaudeMdImports(content, dirname(candidate));
+          parts.push(`<!-- CATCLAW.md: ${candidate} -->\n${expanded}`);
         }
       } catch { /* ignore read errors */ }
     }
@@ -339,6 +343,50 @@ function loadCatclawMdHierarchy(workspaceDir: string): string {
   // Reverse: root-level first, project-level last (project overrides root)
   parts.reverse();
   return parts.join("\n\n");
+}
+
+/**
+ * 展開 CLAUDE.md / CATCLAW.md 內的 @import 語法（對齊 Claude Code 行為）。
+ *
+ * 偵測整行只有 `@<path>` 的 line（前可有空白），把 path 解析為相對 baseDir 的檔案，
+ * 讀進來 inline 取代該行。支援巢狀 @import（遞迴展開，seen set 防無限循環）。
+ *
+ * 範例：
+ *   @IDENTITY.md           → 讀 baseDir/IDENTITY.md 內容 inline
+ *   @memory/MEMORY.md      → 讀 baseDir/memory/MEMORY.md 內容 inline
+ *   @.claude/skills/x.md   → 讀 baseDir/.claude/skills/x.md
+ *
+ * 失敗（檔不存在 / 讀檔錯誤）保留原行（不替換）— 對使用者明顯可見。
+ */
+export function expandClaudeMdImports(content: string, baseDir: string, seen = new Set<string>()): string {
+  const lines = content.split(/\r?\n/);
+  const out: string[] = [];
+  for (const line of lines) {
+    const m = line.match(/^\s*@(\S+)\s*$/);
+    if (!m) { out.push(line); continue; }
+    const importPath = m[1]!;
+    const fullPath = join(baseDir, importPath);
+    if (seen.has(fullPath)) {
+      out.push(`<!-- @import ${importPath} skipped: circular reference -->`);
+      continue;
+    }
+    if (!existsSync(fullPath)) {
+      out.push(`<!-- @import ${importPath} skipped: file not found at ${fullPath} -->`);
+      continue;
+    }
+    try {
+      const imported = readFileSync(fullPath, "utf-8");
+      const nextSeen = new Set(seen);
+      nextSeen.add(fullPath);
+      const expanded = expandClaudeMdImports(imported, dirname(fullPath), nextSeen);
+      out.push(`<!-- @import ${importPath} (from ${fullPath}) -->`);
+      out.push(expanded);
+      out.push(`<!-- /@import ${importPath} -->`);
+    } catch (err) {
+      out.push(`<!-- @import ${importPath} read failed: ${err instanceof Error ? err.message : String(err)} -->`);
+    }
+  }
+  return out.join("\n");
 }
 
 const claudeMdModule: PromptModule = {
@@ -377,15 +425,20 @@ const claudeMdModule: PromptModule = {
         if (existsSync(agentMdPath)) {
           const agentContent = readFileSync(agentMdPath, "utf-8").trim();
           if (agentContent) {
-            content += `\n\n<!-- Agent CATCLAW.md: ${agentMdPath} -->\n${agentContent}`;
+            // 同樣展開 @import（agent CATCLAW.md 也可能引用 @memory/xxx.md）
+            const expanded = expandClaudeMdImports(agentContent, dirname(agentMdPath));
+            content += `\n\n<!-- Agent CATCLAW.md: ${agentMdPath} -->\n${expanded}`;
           }
         }
       }
     } catch { /* agent-loader not ready yet */ }
 
     // 3. Project 層級 CLAUDE.md（bound project 解析後注入）
+    // @import base dir 用 projectCwd（從 ProjectBinding 來），讓 @.claude/memory/xxx 正確解析
     if (ctx.projectClaudeMd) {
-      content += `\n\n<!-- Project CLAUDE.md -->\n${ctx.projectClaudeMd}`;
+      const baseDir = ctx.projectCwd ?? wsDir; // 沒帶 projectCwd 退到 wsDir（不該發生但兜底）
+      const expanded = expandClaudeMdImports(ctx.projectClaudeMd, baseDir);
+      content += `\n\n<!-- Project CLAUDE.md -->\n${expanded}`;
     }
 
     return `## Project Instructions (CATCLAW.md)\n\n${content}`;

@@ -351,15 +351,18 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
     if (blk) { extraBlocks.push(blk); extraBlockNames.push(name); }
   }
 
-  // Bound project：解析 ProjectBinding 取 claudeMd 注入 system prompt
-  // fail-soft：projectId 指向不存在的 project 或 manager 未初始化，claudeMd=undefined 走全域
+  // Bound project：解析 ProjectBinding 取 claudeMd + cwd 注入 system prompt
+  // fail-soft：projectId 指向不存在的 project 或 manager 未初始化，claudeMd/cwd=undefined 走全域
   let _projectClaudeMd: string | undefined;
+  let _projectCwd: string | undefined;
   if (projectId) {
     try {
       const { getProjectManager } = await import("../projects/manager.js");
       const { getPlatformMemoryRoot } = await import("./platform.js");
       const memoryRoot = getPlatformMemoryRoot() ?? "";
-      _projectClaudeMd = getProjectManager().resolveBinding(projectId, memoryRoot)?.claudeMd;
+      const binding = getProjectManager().resolveBinding(projectId, memoryRoot);
+      _projectClaudeMd = binding?.claudeMd;
+      _projectCwd = binding?.cwd;
     } catch { /* fail-soft */ }
   }
 
@@ -369,6 +372,7 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
     modeName,
     projectId,
     projectClaudeMd: _projectClaudeMd,
+    projectCwd: _projectCwd,
     workspaceDir: undefined,
     isGroupChannel,
     speakerDisplay,

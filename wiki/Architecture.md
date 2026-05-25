@@ -92,6 +92,35 @@ graph TB
 
 所有子系統透過 singleton accessor（`getPlatformToolRegistry()` 等）全域存取。
 
+## 分層讀取（對齊 Claude Code）
+
+CatClaw 三層讀取：**全域 → 角色（agent） → 專案（bound project）**。每層注入 / 載入時機與機制：
+
+| 維度 | 全域 `~/.catclaw/` | 角色 `agents/{id}/` | 專案 `bound project cwd` | 機制 |
+|------|--------------------|--------------------|--------------------------|------|
+| CATCLAW.md / CLAUDE.md | `workspace/CATCLAW.md`（含父目錄遞迴） | `agents/{id}/CATCLAW.md` | `{cwd}/CLAUDE.md`（bound project） | `prompt-assembler.ts:loadCatclawMdHierarchy` + `claudeMdModule`；全部支援 `@import` 展開（**對齊 Claude Code**） |
+| Memory | `~/.catclaw/memory/global/` | `agents/{id}/memory/` | `~/.catclaw/memory/projects/{id}/` | recall 自動分層；`atom_write` 按 scope（global/agent/project）路由 |
+| Skills | `~/.catclaw/skills/`（外部） + 內建 `dist/skills/builtin*/` | `agents/{id}/skills/`（**Phase 5 接線**） | — | `index.ts` 啟動時依序載入：builtin → ~/.catclaw/skills → agent skills |
+| Hooks | `workspace/hooks/` + `catclaw.json.hooks[]` | `agents/{id}/hooks/` | — | `HookScanner` 自動掃描；fs.watch 熱重載 |
+| 設定 | `catclaw.json` + `models-config.json` | `agents/{id}/config.json`（deep-merge） | — | 全域設定為基底，agent config 覆寫 |
+| MCP servers | `catclaw.json.mcpServers{}` | —（共用全域） | — | `platform.ts` 啟動每個 MCP server |
+
+### `@import` 語法（CLAUDE.md / CATCLAW.md 內）
+
+支援 Claude Code 標準 `@<path>` 整行語法，自動展開為檔案內容：
+
+```markdown
+# 啟動設定
+@IDENTITY.md
+@USER.md
+@memory/MEMORY.md
+```
+
+- base dir = 該檔案所在目錄（global CATCLAW.md base 是 workspace；agent CATCLAW.md base 是 agent data dir；project CLAUDE.md base 是 project cwd）
+- 支援巢狀（seen set 防無限循環）
+- 失敗（檔不存在 / 讀失敗）保留警示註解，不阻斷其他內容
+- 實作：`prompt-assembler.ts:expandClaudeMdImports`
+
 ## Project Binding & Scope
 
 Bound project 把 agent 在特定頻道內的工作脈絡切到指定專案，影響三維度：

@@ -125,6 +125,22 @@ loadPromptSkills();
   loadExternalPromptSkills(externalSkillsDir);
 }
 
+// 載入 boot agent 專屬 skill 目錄（角色層級：agents/{id}/skills/）
+// audit 揭露此層級之前沒接線 → bound agent 無法用 agent 專屬 skill
+{
+  try {
+    const { getBootAgentId, resolveAgentDataDir } = await import("./core/agent-loader.js");
+    const agentId = getBootAgentId();
+    if (agentId) {
+      const agentSkillsDir = join(resolveAgentDataDir(agentId), "skills");
+      void loadExternalSkills(agentSkillsDir);
+      loadExternalPromptSkills(agentSkillsDir);
+    }
+  } catch (err) {
+    log.warn(`[bridge] agent-level skill 載入失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // ── 啟動 ─────────────────────────────────────────────────────────────────────
 
 const bot = createBot();
