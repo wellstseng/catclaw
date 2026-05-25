@@ -1,10 +1,67 @@
 # CLI Bridge 模組
 
-> 原始碼：`src/cli-bridge/` | 更新：2026-05-17
+> 原始碼：`src/cli-bridge/` | 更新：2026-05-26
 
 ## 定位
 
-第三條訊息處理路徑，與 Agent Loop（溫蒂）並行。透過持久 `claude -p --input-format stream-json` process，讓 Claude CLI（含原子記憶系統）可經由 CatClaw Discord 介面遠端通訊。
+第三條訊息處理路徑，與 Agent Loop（溫蒂）並行。透過持久 CLI process（claude / codex，由 provider 抽象分派），讓外部 CLI 可經由 CatClaw Discord 介面遠端通訊。預設 claude provider：`claude -p --input-format stream-json`（含原子記憶系統）；codex provider 走 `codex app-server` JSON-RPC（見下節）。
+
+## Multi-Provider 抽象
+
+CLI Bridge 不綁死 Claude CLI。`providers/provider.ts` 定義 `CliProvider` interface，把「CLI 怎麼講話」（spawn args、stdin/stdout 編解碼、session resume 規則、權限決策）從 `process.ts` 抽出，`process.ts` 退化成只管「process 怎麼活」（spawn / kill / pipe）的 thin shell。
+
+**Provider 分派**（`bridge.ts spawnProcess()`）：`CliBridgeConfig.provider`（`CliProviderName = "claude" | "codex"`，預設 `"claude"` 向後相容）決定路徑；`cliBin` 依 provider 選（`codexBin ?? "codex"` / `claudeBin ?? "claude"`，獨立鍵）；實例 `provider === "codex" ? new CodexProvider() : new ClaudeProvider()`，注入 `CliProcess` 與 `askUserForApproval` callback。
+
+**CliProvider interface 契約**（兩 provider 都實作）：
+
+| 方法 | 職責 | Claude | Codex |
+|------|------|--------|-------|
+| `buildSpawn(config)` | 算 spawn args + env | `-p --input-format stream-json …` + 寫 `.mcp.json` | `["app-server"]` + 寫 per-bridge `CODEX_HOME` |
+| `postSpawn(io, ctx)` | spawn 後初始化 | noop | initialize handshake → thread/start 或 resume |
+| `sendUserMessage()` | 送 user message | stdin NDJSON `{type:"user"}` | `turn/start` RPC |
+| `sendKeepAlive()` | keep-alive | stdin `{type:"keep_alive"}` | 回 null（不需要） |
+| `sendControlResponse()` | 權限決策回覆 | stdin `control_response` | noop（走 RPC server-request） |
+| `interrupt()` | 中斷 turn | `SIGINT` | `turn/interrupt` RPC |
+| `parseStdoutLine(obj, ctx)` | 解析 stdout → emit `CliBridgeEvent` | NDJSON diff 串流 | 餵進 JSON-RPC client |
+| `resetStreamState()` | restart/spawn 前清串流 | 清 diff 計數器 | reject pending RPC + 清 threadId |
+| `isSessionResumable(sid)` | session 檔還在嗎 | `~/.claude/projects/<slug>/<sid>.jsonl` | 遞迴掃 `~/.codex/sessions/**/*.jsonl` |
+
+兩 provider emit 的是**同一組 `CliBridgeEvent`**（`session_init` / `text_delta` / `thinking_delta` / `tool_call` / `tool_result` / `result` / `control_request` / `status` / `error`），所以下游 `bridge.ts` / `reply.ts` 不需知道是哪個 CLI 在跑——抽象的價值在此。
+
+## Codex Provider（`providers/codex.ts`）
+
+Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Claude 的單向 NDJSON stream 完全不同：
+
+- **雙向 RPC**：`CodexJsonRpcClient` 維護 `pending` map 配對 response，分流三種 incoming（我方 request 的 response、server 主動 request、notification）。
+- **initialize handshake**：`postSpawn` 先送 `initialize` → 等 response → 送 `initialized` notify 才就緒（Claude 不需握手）。
+- **Thread = Claude 的 session**：`thread/start` 產生 thread id（=sessionId），resume 走 `thread/resume`，失敗 fallback 開新 thread；thread id 透過 `session_init` event 回報由 bridge 持久化。
+- **User message 走 `turn/start` RPC**（非 stdin），圖片以 `localImage` + 暫存檔路徑帶入（非 inline base64）。
+
+### Stream 事件對映 / item type → tool_call
+
+| Codex notification | 轉成 `CliBridgeEvent` |
+|--------------------|------------------------|
+| `item/agentMessage/delta` | `text_delta`（第 2+ 個 agentMessage 前補 `\n\n`） |
+| `item/reasoning/textDelta` / `summaryTextDelta` | `thinking_delta` |
+| `item/started`（工具型 item） | `tool_call`（title 由 `getItemTitle`） |
+| `item/completed`（工具型 item） | `tool_result`（含 `duration_ms`、失敗 `error`） |
+| `turn/completed` | `result`（status=failed → is_error） |
+| `error` | `willRetry` → `status: codex_reconnecting`（不轉 Discord）；否則 `error` |
+
+`getItemTitle` 對齊 Claude 的 tool_use surfacing：工具型 item（v2 `mcpToolCall`/`dynamicToolCall`/`commandExecution`/`fileChange`/`webSearch`/`collabAgentToolCall`、v1 legacy `functionCall`/`localShellCall`）一律 emit `tool_call`；非工具型（agentMessage / reasoning / plan / *ReviewMode / contextCompaction 等）回 `null` 跳過。
+
+**Subagent thread 過濾**：Codex 0.130 subagent 會 spawn 子 thread，其 notification 帶不同 `threadId`，`handleNotification` 開頭以 `evtThreadId !== this.threadId` 過濾（對齊 Claude 用 `parent_tool_use_id` 過濾）；`thread/started` 例外用 `!this.threadId` 守門避免子 thread 蓋主 threadId。
+
+### 與 Claude provider 的關鍵差異
+
+- **協議**：Claude = 單向 NDJSON + 累積 diff（自管 lastTextLength）；Codex = 雙向 JSON-RPC，delta 直接是增量不需 diff。
+- **權限審批**：Claude 走 `--permission-prompt-tool` → MCP `request_permission` → Discord 按鈕（control_request event）；Codex **無 stdin control_response**，server 主動發 approval request，`handleServerRequest` 透過 `ctx.askUser`（= bridge `askUserForApproval`）發 Discord 按鈕，5 分鐘超時拒絕。有 callback → `turn/start` 帶 `approvalPolicy:"on-request"` + `sandboxPolicy:workspaceWrite`；無 callback → 退信任模式 `approvalPolicy:"never"` + `dangerFullAccess`。新 API（`item/.../requestApproval`）用 `accept`/`decline`，舊（`execCommandApproval`/`applyPatchApproval`）用 `approved`/`denied`。
+- **MCP 注入**：Claude 寫 `runtime/bridges/<label>.mcp.json` 經 `--mcp-config` 載入；Codex 寫 per-bridge `CODEX_HOME`（`runtime/bridges/<label>.codex/`），symlink 全域 `~/.codex` 的 auth/sessions/skills/memories/profiles，`config.toml` = 全域 config + 注入 `[mcp_servers.catclaw_bridge_discord]`。
+
+### MCP / 權限降級
+
+- **Claude**：`writeMcpConfig` 缺 botToken/channelId 回 `null` → 不能用 `--permission-prompt-tool`（指向沒註冊的 MCP server 會 CLI 啟動 exit 1 crash loop），**fail-soft 降級 `--dangerously-skip-permissions`**。優先序：明確 `dangerouslySkipPermissions=true` → MCP 寫成功走 prompt tool → MCP 缺則降級 skip。
+- **Codex**：`writeCodexHome` 缺 botToken/channelId 不注入 MCP 區塊但仍 symlink + 抄全域 config（home 仍可用）；`CATCLAW_CONFIG_DIR` 未設才回 `null` 走全域 `~/.codex`。
 
 ## 檔案結構
 
@@ -17,6 +74,9 @@
 | `index.ts` | 全域單例：`initCliBridges` / `getCliBridge` / `shutdownAllBridges` |
 | `discord-sender.ts` | Discord 發送抽象層：IndependentBotSender / MainBotSender + `withChannel()` proxy |
 | `reply.ts` | Discord 回覆處理：streaming edit + 重試 fallback + 送達狀態追蹤 |
+| `providers/provider.ts` | `CliProvider` interface — CLI 互動抽象（spawn/編解碼/resume/權限） |
+| `providers/claude.ts` | Claude provider — `claude -p` NDJSON diff 串流 |
+| `providers/codex.ts` | Codex provider — `codex app-server` JSON-RPC 2.0 |
 
 ## 關鍵設計
 
@@ -40,7 +100,7 @@
 - **autoSpawn snapshot pre-empt** — `autoSpawnBridge()` 寫 `cli-bridges.json` 前先 `_lastConfigJson.set(channelId, ...)`，否則 watchFile 觸發的 hotReload 會把 `undefined` snapshot 跟新檔 diff 判定為 config 變更，立刻 shutdown 剛 spawn 出來的 bridge
 - **process.lastStderr** — `CliProcess` 記錄最後 stderr 輸出，供 bridge crash 偵測使用
 - **圖片附件（multimodal stdin）** — `reply.ts` `extractAttachments()` 下載支援的圖片（png/jpeg/gif/webp，≤5MB）並 base64 編碼成 `StdinImageBlock[]`；`bridge.send()` 有 `imageBlocks` 時改送 `content: [{type:"text"}, {type:"image", source:{type:"base64", ...}}]` 而非純字串。避免 Claude CLI 把 Discord CDN URL 當 image URL source 傳給 Anthropic API（CDN 權限/過期會導致 "Could not process image" 400）。下載失敗或超過大小限制時降級為 URL 文字描述。
-- **權限審批（D3）** — `dangerouslySkipPermissions` **預設 false**（fail-safe）。`process.ts` spawn 時走互斥分支：
+- **權限審批（D3）** — 以下為 **claude provider** 路徑；codex provider 的審批走 RPC server-request → `askUser`，見上方 Codex Provider 節。`dangerouslySkipPermissions` **預設 false**（fail-safe）。`process.ts` spawn 時走互斥分支：
   - `true` → 加 `--dangerously-skip-permissions`，**不**加 `--permission-prompt-tool`（信任模式，沿用舊行為），同時 log warn
   - `false`（預設）→ 加 `--permission-prompt-tool mcp__catclaw-bridge-discord__request_permission`，**不**加 dangerous flag
   CLI 任何權限請求（含 `ExitPlanMode` / `AskUserQuestion`）會呼叫 MCP server 的 `request_permission` tool；`discord-server.ts` 開自己的 discord.js Gateway Client（用 bridge bot token），在 `DISCORD_CHANNEL_ID`（由 process.ts 注入）顯示按鈕：`ExitPlanMode` 顯示 plan 預覽 + Approve/Reject、`AskUserQuestion` 渲染 StringSelectMenu 收集答案塞回 `updatedInput.answers`、其他 tool 顯示 `tool_name + input JSON` + Approve/Deny。預設 10 分鐘內無回應 → `{behavior:"deny", interrupt:true}` 中斷整個 turn（可用環境變數 `CATCLAW_PERMISSION_TIMEOUT_MS` 覆寫）。stdin close 時 `client.destroy()` 收尾
@@ -58,7 +118,7 @@
 
 ## stdout 事件解析
 
-沿用 `acp.ts` 的 diff 邏輯（累積文字比對取 delta），但改為 EventEmitter 模式。支援事件：`session_init` / `text_delta` / `thinking_delta` / `tool_call` / `tool_result` / `result` / `control_request` / `status`。
+**claude provider** 沿用 `acp.ts` 的 diff 邏輯（累積文字比對取 delta），改為 EventEmitter 模式；**codex provider** 走 JSON-RPC notification（delta 直接是增量，見上方 Codex Provider 節）。兩者最終 emit 同一組事件：`session_init` / `text_delta` / `thinking_delta` / `tool_call` / `tool_result` / `result` / `control_request` / `status` / `error`。
 
 ## 已實作擴充功能
 

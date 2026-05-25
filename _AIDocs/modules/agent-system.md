@@ -107,7 +107,10 @@ interface AgentTypeConfig {
 ### 概觀
 
 掃描 `~/.catclaw/workspace/agents/{id}/skills/*.md`，解析 YAML frontmatter，組裝為 system prompt 區塊。
-由 `spawn-subagent.ts` 在載入 agent config 後呼叫。
+
+兩條呼叫路徑：
+1. **主對話 turn**（`agent-loop.ts`，約 L1303）：只要 `opts.agentId` 有值就載入該 agent 全部 skills（無 filter）+ 自建提示注入 system prompt。早期只有 spawn 路徑會載入，導致 wendy 等主 agent 不知道自己有 skills 可用、也不知能自建——已改成主對話一視同仁。trace 以 `recordAgentSkills` 記錄載入清單與 prompt token 估算。
+2. **spawn_subagent**（`spawn-subagent.ts`，約 L424）：載入 agent config 後依 `agentConfig.skills` 欄位 filter 載入。
 
 ### AgentSkill 介面
 
@@ -128,6 +131,12 @@ interface AgentSkill {
 | `loadAgentSkills(agentId, filter?)` | 掃描 skills/ 目錄，filter 來自 config.json skills 欄位 |
 | `buildSkillsPrompt(skills)` | 組裝為 `# Agent Skills` prompt 區塊 |
 | `buildSkillCreationHint(agentId)` | 產生 skill 自建提示（告知 agent 如何用 write_file 建立新 skill） |
+
+> **與 `skills/registry.ts` 的 `buildSkillsPrompt` 同名但不同物**：
+> - `agent-skill-loader.buildSkillsPrompt(skills)` — 吃傳入的 `AgentSkill[]`，產出 `# Agent Skills` 區塊，**把整個 body 內嵌**進 system prompt（單段式）。
+> - `skills/registry.buildSkillsPrompt()` — 無參數，讀模組級 `promptSkills`，產出 `<skill>` XML 清單（**只給 name/description/location，body 要 agent 自己用 Read 讀**，兩段式）。
+>
+> 同理 `agent-skill-loader.loadAgentSkills` 載入的是 **agent persona skills**（`agents/{id}/skills/*.md`，內嵌進該 agent 的 prompt），與 `skills/registry.ts` 的 `loadExternalSkills`（掃外部 `.js` command-type skill）/ `loadExternalPromptSkills`（掃外部 `SKILL.md`，靠 trigger 前綴匹配觸發）是不同的兩套子系統。
 
 ### Skill 檔案格式
 

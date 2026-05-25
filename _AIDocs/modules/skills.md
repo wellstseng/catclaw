@@ -1,6 +1,6 @@
 # skills — 內建 Skill 系統
 
-> 更新日期：2026-04-13
+> 更新日期：2026-05-26
 
 ## 檔案結構
 
@@ -91,6 +91,12 @@ interface SkillResult {
 | `turn-audit.ts` | turn-audit | Turn 審計 |
 | `usage.ts` | usage | 用量統計 |
 | `use.ts` | use | Provider 手動覆寫 |
+| `capabilities.ts` | capabilities | 列出平台可用能力 hooks/tools/skills/modules/mcp（trigger: `/capabilities`、`/caps`） |
+| `file.ts` | file | `@file` 引用展開助手，把檔案內容展開進對話（trigger: `/file`） |
+| `guardian-export.ts` | guardian-export | 匯出 Guardian hits 為 jsonl（trajectory-fingerprint 訓練資料源）（trigger: `/guardian-export`） |
+| `insights.ts` | insights | 使用統計報告：token/cache/活躍時段/Tool top（trigger: `/insights`） |
+| `recall.ts` | recall | 跨 session 全文記憶搜尋（trigger: `/recall`） |
+| `reload.ts` | reload | 強制重建 frozen prompt snapshot（CATCLAW.md/規則檔改後生效）（trigger: `/reload`） |
 
 ### 多重 export（`export const skill` + `export const skills[]`）
 

@@ -39,6 +39,8 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | Workflow | `src/workflow/` | 工作流引擎：rut/oscillation/fix-escalation/sync/wisdom/failure-detector |
 | Health Monitor | `src/core/health-monitor.ts` | Component-level fail-loud + degraded/critical/recovered 升級與通報 |
 | Cron | `src/cron.ts` | 排程服務（cron/every/at），croner 驅動 |
+| Background Jobs | `src/core/background-job-registry.ts` | 本地 shell 長期程式追蹤：poller 監測 process + expectedOutputs，event / wake / Discord 三層通報 |
+| Wake Agent | `src/core/wake-agent.ts` | job/subagent 完成後 parent turn 已退場時自動喚醒新 turn 讓 agent 接續 |
 | MCP | `src/mcp/` | MCP client（rich content 支援）+ Discord MCP server |
 | Computer Use MCP | `mcp/computer-use/` | 獨立 MCP Server：螢幕截圖（等比縮放+座標自動換算）/鍵鼠操控（拖曳插值）/視窗管理/測試框架（9 tools） |
 | Playwright MCP | `mcp/playwright/` | 獨立 MCP Server：headless 瀏覽器自動化（封裝 @playwright/mcp，不佔用螢幕鍵鼠） |
@@ -66,7 +68,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 
 | 文件 | 對應原始碼 | 主題 | 更新日期 |
 |------|-----------|------|---------|
-| [modules/agent-loop.md](modules/agent-loop.md) | `src/core/agent-loop.ts` | 主推理迴圈 | 2026-04-05 |
+| [modules/agent-loop.md](modules/agent-loop.md) | `src/core/agent-loop.ts` | 主推理迴圈 + Wake Agent | 2026-05-26 |
 | [modules/platform.md](modules/platform.md) | `src/core/platform.ts` | 子系統初始化工廠 | 2026-04-05 |
 | [modules/context-engine.md](modules/context-engine.md) | `src/core/context-engine.ts` | Context 壓縮策略 | 2026-04-05 |
 | [modules/prompt-assembler.md](modules/prompt-assembler.md) | `src/core/prompt-assembler.ts` | 模組化 system prompt 組裝 | 2026-04-05 |
@@ -77,7 +79,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/config.md](modules/config.md) | `src/core/config.ts` | JSON 設定載入 | 2026-04-05 |
 | [modules/discord.md](modules/discord.md) | `src/discord.ts` + `src/discord/` | Discord 入口 + messageUpdate 編輯感知 + Bot Circuit Breaker | 2026-04-23 |
 | [modules/providers.md](modules/providers.md) | `src/providers/` | LLM Provider 系統 | 2026-04-05 |
-| [modules/skills.md](modules/skills.md) | `src/skills/` | Skill 系統 | 2026-04-05 |
+| [modules/skills.md](modules/skills.md) | `src/skills/` | Skill 系統 | 2026-05-26 |
 | [modules/session.md](modules/session.md) | `src/core/session.ts` | SessionManager | 2026-04-05 |
 | [modules/reply.md](modules/reply.md) | `src/core/reply-handler.ts` | Streaming 回覆 | 2026-04-05 |
 | [modules/accounts.md](modules/accounts.md) | `src/accounts/` | 帳號 + 角色 + 權限 + Identity Linking | 2026-04-05 |
@@ -85,7 +87,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/hooks.md](modules/hooks.md) | `src/hooks/` | Hook 系統（36 events + defineHook SDK + folder-convention） | 2026-04-15 |
 | [modules/safety.md](modules/safety.md) | `src/safety/` | 安全攔截 | 2026-04-05 |
 | [modules/workflow.md](modules/workflow.md) | `src/workflow/` | 工作流引擎 | 2026-04-05 |
-| [modules/health-monitor.md](modules/health-monitor.md) | `src/core/health-monitor.ts` | Component fail-loud + 通報 | 2026-04-27 |
+| [modules/health-monitor.md](modules/health-monitor.md) | `src/core/health-monitor.ts` + `log-error-monitor.ts` + `restart-history.ts` | Component fail-loud + 通報；含 Log Error Monitor / Restart History | 2026-05-26 |
 | [modules/acp.md](modules/acp.md) | `src/acp.ts` | Claude CLI spawn（Legacy，僅 cron.ts 使用） | 2026-04-13 |
 | [modules/permission-gate.md](modules/permission-gate.md) | `src/accounts/permission-gate.ts` | 權限閘門（Tier + allow/deny） | 2026-04-06 |
 | [modules/ollama-provider.md](modules/ollama-provider.md) | `src/providers/ollama.ts` | Ollama 本地 LLM Provider | 2026-04-06 |
@@ -94,7 +96,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/task-ui.md](modules/task-ui.md) | `src/core/task-ui.ts` | Discord 任務按鈕互動 | 2026-04-06 |
 | [modules/mcp-client.md](modules/mcp-client.md) | `src/mcp/client.ts` | MCP server 連線 + tool 自動註冊 + rich content | 2026-04-20 |
 | [modules/message-pipeline.md](modules/message-pipeline.md) | `src/core/message-pipeline.ts` | 統一訊息管線 | 2026-04-06 |
-| [modules/agent-system.md](modules/agent-system.md) | `src/core/agent-loader.ts` + `agent-registry.ts` + `agent-types.ts` | Multi-Agent 設定與型別 | 2026-04-06 |
+| [modules/agent-system.md](modules/agent-system.md) | `src/core/agent-loader.ts` + `agent-registry.ts` + `agent-types.ts` + `agent-skill-loader.ts` | Multi-Agent 設定與型別 + Agent Persona Skills | 2026-05-26 |
 | [modules/subagent-system.md](modules/subagent-system.md) | `src/core/subagent-registry.ts` + `subagent-discord-bridge.ts` | Subagent 編排與追蹤 | 2026-04-06 |
 | [modules/exec-approval.md](modules/exec-approval.md) | `src/core/exec-approval.ts` | 執行指令 DM 確認 | 2026-04-06 |
 | [modules/mode.md](modules/mode.md) | `src/core/mode.ts` | Per-channel 模式管理 | 2026-04-06 |
@@ -103,7 +105,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/tool-log-store.md](modules/tool-log-store.md) | `src/core/tool-log-store.ts` | Tool log 持久化 | 2026-04-06 |
 | [modules/inbound-history.md](modules/inbound-history.md) | `src/discord/inbound-history.ts` | 未處理訊息記錄 | 2026-04-06 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務 | 2026-04-29 |
-| [modules/cli-bridge.md](modules/cli-bridge.md) | `src/cli-bridge/` | CLI Bridge 持久 process 模組 | 2026-04-29 |
+| [modules/cli-bridge.md](modules/cli-bridge.md) | `src/cli-bridge/` | CLI Bridge 持久 process 模組（claude / codex multi-provider） | 2026-05-26 |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點 | 2026-03-22 |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log 系統 | 2026-03-22 |
 | [modules/pm2.md](modules/pm2.md) | `catclaw.js` | PM2 進程管理 | 2026-03-22 |
@@ -113,6 +115,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/skill-improvement-store.md](modules/skill-improvement-store.md) | `src/memory/skill-improvement-store.ts` + `src/skills/registry.ts runSkill` | Skill 自動提案產生機制（項目 10 Week 1） | 2026-05-04 |
 | [modules/fts-query.md](modules/fts-query.md) | `src/memory/fts-query.ts` | NDJSON 訊息查詢 + 統計聚合（項目 9 Phase 2/3） | 2026-05-04 |
 | [modules/trajectory-fingerprint.md](modules/trajectory-fingerprint.md) | `src/workflow/trajectory-fingerprint.ts` | 失敗 pattern 壓縮 / record / match（項目 12 階段 2 plumbing） | 2026-05-04 |
+| [modules/background-jobs.md](modules/background-jobs.md) | `src/core/background-job-registry.ts` + `bg-job-discord-bridge.ts` | 本地 shell 長期程式背景追蹤與通報 | 2026-05-26 |
 
 ## 重啟機制
 

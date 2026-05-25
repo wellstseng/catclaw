@@ -1,7 +1,7 @@
 # modules/agent-loop — 核心對話迴圈
 
 > 檔案：`src/core/agent-loop.ts` (~1880 行)
-> 更新日期：2026-04-29
+> 更新日期：2026-05-26
 
 ## 職責
 
@@ -44,6 +44,67 @@
 按 abort/exhausted 來源分支送出 bailNotice：
 - `controller.signal.reason`：`timeout-no-tool` / `timeout-with-tool` / `timeout-grace-exhausted` / `stop` / 其他（插話）
 - `emptyToolUseExhausted` / `deferredNudgeExhausted` / `zeroProgressBailed` / `consecutiveToolErrorsExhausted`：各自獨立提示
+
+## Wake Agent（自動喚醒）
+
+> 原始碼：`src/core/wake-agent.ts`（~144 行）
+
+### 問題
+
+Agent `end_turn` 後，agent-loop 的 workflow listener 已 cleanup，eventBus 上的
+`background-job:completed` / `subagent:completed` 已無人接。原本 fallback 只送 Discord 文字通知、**不喚醒 agent**——
+結果 agent spawn 一個 job 後 `end_turn`，job 完成卻沒被叫回來執行後續步驟。
+
+### 機制
+
+`wakeAgentForCompletion(opts)` 在 fallback 路徑啟動一個**新 turn**：直接呼叫 `agentLoop()`
+（`_sessionKeyOverride` 沿用原 session），把一段「`[平台喚醒]`」訊息以 user role 注入新 turn 開頭，
+agent 自行判斷後續（執行下一步 / 回報 / 結束）。
+
+```typescript
+export interface WakeAgentOpts {
+  sessionKey: string;
+  channelId: string;
+  accountId: string;
+  agentId?: string;          // 預設 getBootAgentId()
+  injectedMessage: string;   // 以 user role 進入新 turn messages 開頭
+  source: "background-job" | "subagent";
+  recordId: string;          // 去重用（jobId / runId）
+  trace?: MessageTrace;
+}
+export interface WakeAgentResult { ok: boolean; reason?: string; traceId?: string; }
+export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeAgentResult>
+```
+
+### 關鍵常數與不變量
+
+| 項目 | 值 | 說明 |
+|------|-----|------|
+| `DEDUP_TTL_MS` | `5 × 60_000` | in-memory Set 去重 TTL，防同 record 多次喚醒（race / 重啟） |
+| dedup key | `` `${source}:${recordId}` `` | 命中 → `ok:false, reason:"already-woken"` |
+
+**Parent stream active 旗標**：wake 前呼 `markParentStreamActive(channelId)`，turn 結束（含 catch）呼
+`unmarkParentStreamActive`。意義：wake turn 進行中若內部 spawn 的 job/subagent 又完成，platform fallback
+看到 `isParentStreamActive===true` → 走 eventBus listener 路徑、**不重複 wake**；turn 結束清旗標後才會再觸發。
+（三個旗標函式來自 `subagent-discord-bridge.ts`。）
+
+### 失敗分流
+
+`agentLoop` 吐 error / Discord client 未就緒 / channel 不可送 / platform 未就緒 → 回 `ok:false`，
+呼叫端據此降級成 Discord 文字通知（`discord-client-not-ready` / `channel-not-sendable` /
+`platform-not-ready` / `agent-error:<msg>`）。
+
+### 呼叫點
+
+| 呼叫端 | 觸發 | wake 失敗 fallback |
+|--------|------|---------------------|
+| `platform.ts` bgRegistry onComplete | job 完成 300ms 後且 parent stream 已退場 | `sendBgJobNotification(completed)` |
+| `platform.ts` bgRegistry onFail | job 失敗 | 一律送 `sendBgJobNotification(failed)`（雙保險） |
+| `spawn-subagent.ts` 非同步完成回呼 | subagent 結束 300ms 後且 parent 已退場 | `sendSubagentNotification` |
+| `agent-loop.ts` finally「ACK Scan」 | turn 結束掃 `acked===false` 終態 record（補救 silent end_turn） | 直接 wake / `sendBgJobNotification` |
+
+三條路徑送 wake 前都先建 `MessageTrace`（type=`"wake"`）並即時 ping 頻道帶 traceId 短碼，
+避免 wake turn 跑 30-60s 期間使用者完全沒訊號。詳見 [background-jobs.md](background-jobs.md) 的通報串接。
 
 ## 主函式
 
