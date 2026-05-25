@@ -92,6 +92,44 @@ graph TB
 
 所有子系統透過 singleton accessor（`getPlatformToolRegistry()` 等）全域存取。
 
+## Project Binding & Scope
+
+Bound project 把 agent 在特定頻道內的工作脈絡切到指定專案，影響三維度：
+
+| 維度 | 切換目標 | 機制 |
+|------|---------|------|
+| CWD | `project.toolsDir` 或 `~/.catclaw/workspace/data/projects/{id}/` | agent-loop 注入 `ctx.projectCwd`；`run_command` / `read_file` / `write_file` / `edit_file` 相對路徑用此為 base |
+| Memory | `~/.catclaw/memory/projects/{id}/` | recall 自動加 `project/{id}` namespace；`atom_write` 預設 scope=project |
+| System Prompt | `{project.cwd}/CLAUDE.md`（若存在） | 注入 `catclaw-md` module 末段，agent 看到 project 規則 |
+
+### 啟動條件
+
+turn 取得 projectId 的優先序（discord.ts:825）：
+
+1. **頻道綁定**：`catclaw.json` → `discord.guilds.{guildId}.channels.{channelId}.boundProject`
+2. **帳號當前專案**：`account.projects[0]`（fallback）
+3. 都沒設 → undefined → 走全域（CWD = catclaw 啟動目錄，memory = global namespace）
+
+### 程式路徑
+
+```
+discord.ts 收訊息
+  → resolveDiscordIdentity → accountId
+  → 取 ChannelAccess.boundProject ?? account.currentProject = projectId
+  → 呼叫 runAgentLoop({ projectId, ... })
+       agent-loop 在 turn 開頭：
+         ProjectManager.resolveBinding(projectId, memoryRoot) → { cwd, memoryDir, claudeMd }
+         注入 ToolContext.{projectCwd, projectMemoryDir, projectClaudeMd}
+       message-pipeline 在組 systemPrompt 時：
+         呼叫同 resolveBinding 取 claudeMd 給 prompt-assembler.claudeMdModule 注入
+       memory engine recall：
+         RecallContext.projectId 帶過去 → layerToNs("project") = `project/{id}`
+```
+
+### Fail-soft
+
+`projectId` 指向不存在的 project / ProjectManager 未初始化 → `binding=null`，log.warn 後仍跑（CWD 回 catclaw 啟動目錄、memory 回 global）。
+
 ## 設計原則
 
 - **One-Track Control**：LLM 只負責思考與決策，所有工具執行由 CatClaw 控制

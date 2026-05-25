@@ -38,6 +38,8 @@ export interface PromptContext {
   modeName: string;
   /** 專案 ID（可選） */
   projectId?: string;
+  /** Bound project 解析後的 CLAUDE.md 內容（會注入 system prompt 的 catclaw-md module） */
+  projectClaudeMd?: string;
   /** 是否為群組頻道 */
   isGroupChannel?: boolean;
   /** 說話者顯示名稱 */
@@ -380,6 +382,11 @@ const claudeMdModule: PromptModule = {
         }
       }
     } catch { /* agent-loader not ready yet */ }
+
+    // 3. Project 層級 CLAUDE.md（bound project 解析後注入）
+    if (ctx.projectClaudeMd) {
+      content += `\n\n<!-- Project CLAUDE.md -->\n${ctx.projectClaudeMd}`;
+    }
 
     return `## Project Instructions (CATCLAW.md)\n\n${content}`;
   },

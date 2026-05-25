@@ -37,7 +37,9 @@ export const tool: Tool = {
     const content = String(params["content"] ?? "").trim();
     const description = String(params["description"] ?? content.slice(0, 60)).trim();
     const confidence = String(params["confidence"] ?? "[臨]").trim() as "[固]" | "[觀]" | "[臨]";
-    const scope = String(params["scope"] ?? "global").trim() as "global" | "agent" | "project" | "account";
+    // bound project：未指定 scope 時優先使用 project（agent 在 bound 頻道寫的 atom 自然進 project memory）
+    const defaultScope = ctx.projectId && ctx.projectMemoryDir ? "project" : "global";
+    const scope = String(params["scope"] ?? defaultScope).trim() as "global" | "agent" | "project" | "account";
     const triggersRaw = String(params["triggers"] ?? "").trim();
     const relatedRaw = String(params["related"] ?? "").trim();
     const bypass = params["bypass"] === true;

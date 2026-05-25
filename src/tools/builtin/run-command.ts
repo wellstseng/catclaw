@@ -105,7 +105,8 @@ export const tool: Tool = {
   },
   async execute(params, ctx) {
     const command   = String(params["command"] ?? "").trim();
-    const cwd       = params["cwd"] ? String(params["cwd"]) : undefined;
+    // cwd 解析優先序：params.cwd（agent 顯式指定）> ctx.projectCwd（bound project）> spawn 預設（catclaw 啟動目錄）
+    const cwd       = params["cwd"] ? String(params["cwd"]) : (ctx.projectCwd ?? undefined);
     const timeoutMs = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : DEFAULT_TIMEOUT_MS;
 
     if (!command) return { error: "command 不能為空" };

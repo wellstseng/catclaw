@@ -8,6 +8,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { log } from "../../logger.js";
 import { config } from "../../core/config.js";
 import type { Tool, ToolContext, ToolResult } from "../types.js";
@@ -43,7 +44,9 @@ export const tool: Tool = {
   },
 
   async execute(params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
-    const filePath = String(params["path"] ?? "");
+    const rawPath = String(params["path"] ?? "");
+    // bound project：相對路徑用 ctx.projectCwd 當 base
+    const filePath = rawPath && !isAbsolute(rawPath) ? resolve(ctx.projectCwd ?? process.cwd(), rawPath) : rawPath;
     const oldStr = String(params["old_string"] ?? "");
     const newStr = String(params["new_string"] ?? "");
     const replaceAll = Boolean(params["replace_all"] ?? false);

@@ -4,7 +4,7 @@
  */
 
 import { readFileSync, existsSync, statSync, readdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { resolve, extname, join } from "node:path";
+import { resolve, extname, join, isAbsolute } from "node:path";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import type { Tool } from "../types.js";
@@ -119,7 +119,9 @@ export const tool: Tool = {
     required: ["path"],
   },
   async execute(params, ctx) {
-    const filePath = resolve(String(params["path"] ?? ""));
+    // bound project：相對路徑用 ctx.projectCwd 當 base（沒則 process.cwd()）
+    const rawPath = String(params["path"] ?? "");
+    const filePath = isAbsolute(rawPath) ? resolve(rawPath) : resolve(ctx.projectCwd ?? process.cwd(), rawPath);
 
     if (!existsSync(filePath)) return { error: `檔案不存在：${filePath}` };
 

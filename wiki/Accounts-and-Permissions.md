@@ -10,12 +10,28 @@ interface Account {
   displayName: string
   role: Role                  // 5 級角色
   identities: Identity[]      // 跨平台身份綁定
-  projects: string[]
+  projects: string[]          // 此帳號可用的專案清單；projects[0] = currentProject（當 channel 沒 boundProject 時的 fallback）
   preferences: AccountPreferences  // language / style / provider
   disabled?: boolean
   createdAt: string           // ISO 8601
   lastActiveAt: string
 }
+```
+
+### Project 切換
+
+每個 turn agent 取得 projectId 的優先序：
+
+1. `channel.boundProject`（`catclaw.json` 內 `discord.guilds.{g}.channels.{c}.boundProject`，最優先）
+2. `account.projects[0]`（fallback）
+3. 都沒設 → 走全域
+
+切換指令：`/project switch <id>`（更新 account.projects[0]）。
+全部專案管理見 `/project list` / `create` / `delete` / `addMember`。
+
+Bound project 啟動後影響 CWD / memory / CLAUDE.md，詳見 `Architecture.md` 內 Project Binding & Scope 章節。
+
+```typescript
 
 interface Identity {
   platform: Platform           // "discord" | "line" | "telegram" | "slack" | "web"

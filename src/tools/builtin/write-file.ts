@@ -6,7 +6,7 @@
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { log } from "../../logger.js";
 import { config } from "../../core/config.js";
 import type { Tool, ToolContext, ToolResult } from "../types.js";
@@ -34,7 +34,9 @@ export const tool: Tool = {
   },
 
   async execute(params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
-    const filePath = String(params["path"] ?? "");
+    const rawPath = String(params["path"] ?? "");
+    // bound project：相對路徑用 ctx.projectCwd 當 base
+    const filePath = rawPath && !isAbsolute(rawPath) ? resolve(ctx.projectCwd ?? process.cwd(), rawPath) : rawPath;
     const content = String(params["content"] ?? "");
 
     if (!filePath) return { error: "path 不能為空" };

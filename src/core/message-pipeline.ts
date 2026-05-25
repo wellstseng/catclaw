@@ -351,10 +351,24 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
     if (blk) { extraBlocks.push(blk); extraBlockNames.push(name); }
   }
 
+  // Bound project：解析 ProjectBinding 取 claudeMd 注入 system prompt
+  // fail-soft：projectId 指向不存在的 project 或 manager 未初始化，claudeMd=undefined 走全域
+  let _projectClaudeMd: string | undefined;
+  if (projectId) {
+    try {
+      const { getProjectManager } = await import("../projects/manager.js");
+      const { getPlatformMemoryRoot } = await import("./platform.js");
+      const memoryRoot = getPlatformMemoryRoot() ?? "";
+      _projectClaudeMd = getProjectManager().resolveBinding(projectId, memoryRoot)?.claudeMd;
+    } catch { /* fail-soft */ }
+  }
+
   const systemPrompt = assembleSystemPrompt({
     role: role as any,
     mode: modePreset,
     modeName,
+    projectId,
+    projectClaudeMd: _projectClaudeMd,
     workspaceDir: undefined,
     isGroupChannel,
     speakerDisplay,

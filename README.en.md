@@ -288,6 +288,36 @@ Migration is idempotent (re-running returns `already_v2`). V1 providers with `to
 - **DM** the bot directly (if `dm.enabled: true`)
 - Use `/` prefix for skill commands (e.g., `/help`, `/status`, `/configure`)
 
+## Per-channel Project Binding
+
+Bind a Discord channel to a project so the agent works with that project's CWD / memory / CLAUDE.md in that channel:
+
+```jsonc
+"discord": {
+  "guilds": {
+    "<guildId>": {
+      "channels": {
+        "<channelId>": { "boundProject": "<projectId>" }
+      }
+    }
+  }
+}
+```
+
+Three dimensions switch to project scope:
+
+| Dimension | Target |
+|-----------|--------|
+| CWD (default base for run_command / read_file / write_file / edit_file relative paths) | `project.toolsDir` or `~/.catclaw/workspace/data/projects/{id}/` |
+| Memory | `~/.catclaw/memory/projects/{id}/` (recall adds project layer; atom_write defaults scope=project) |
+| System prompt | Injects `CLAUDE.md` from the project CWD (if present) |
+
+**Verify**: in the bound channel ask the agent "what's your working directory?" → reply should be the project CWD, not the catclaw repo path.
+
+**Fail-soft**: if `projectId` points to a non-existent project, log.warn and fall back to global behavior.
+
+Priority: `channel.boundProject` > `account.projects[0]` (fallback).
+
 ### Common Skills
 
 | Skill | Tier | Description |

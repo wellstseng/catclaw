@@ -288,6 +288,36 @@ migration 冪等（重跑回 `already_v2`）。涉及 token/password 的 V1 prov
 - 直接 **私訊** Bot（需 `dm.enabled: true`）
 - 使用 `/` 前綴觸發 skill 指令（如 `/help`、`/status`、`/configure`）
 
+## Per-channel Project Binding
+
+把單一 Discord 頻道綁定特定專案，讓 agent 在該頻道內以該專案的 CWD / 記憶 / CLAUDE.md 工作：
+
+```jsonc
+"discord": {
+  "guilds": {
+    "<guildId>": {
+      "channels": {
+        "<channelId>": { "boundProject": "<projectId>" }
+      }
+    }
+  }
+}
+```
+
+啟用後三個維度自動切到 project scope：
+
+| 維度 | 切到哪 |
+|------|--------|
+| CWD（run_command / read_file / write_file / edit_file 相對路徑 base） | `project.toolsDir` 或 `~/.catclaw/workspace/data/projects/{id}/` |
+| 記憶 | `~/.catclaw/memory/projects/{id}/`（recall 自動加 project 層，atom_write 預設 scope=project） |
+| System prompt | 注入 project CWD 下的 `CLAUDE.md`（若存在） |
+
+**驗證方法**：在綁定頻道問 agent「你的目錄是哪裡」→ 答 project cwd 而非 catclaw 啟動目錄。
+
+**Fail-soft**：projectId 指向不存在的 project → log.warn 後仍跑（回全域）。
+
+優先序：`channel.boundProject` > `account.projects[0]`（fallback）。
+
 ### 常用 Skills
 
 | Skill | 權限 | 說明 |

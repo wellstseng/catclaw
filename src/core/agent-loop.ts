@@ -949,6 +949,23 @@ export async function* agentLoop(
   // allowSpawn: depth ≥ 2 強制 false（最多 3 層）；opts.allowSpawn 明確 false 也關閉
   const allowSpawn = opts.allowSpawn !== false && spawnDepth < 2;
 
+  // ── Project Binding 解析 ────────────────────────────────────────────────────
+  // 此 turn 用的 project cwd / memoryDir / claudeMd 在這一處取，後續注入 toolCtx
+  // fail-soft：projectId 指向不存在的 project 或 manager 未初始化，binding=null 走全域
+  let _projectBinding: { cwd: string; memoryDir: string; claudeMd?: string } | null = null;
+  if (projectId) {
+    try {
+      const { getProjectManager, getPlatformMemoryRoot } = await import("../projects/manager.js").then(async m => ({
+        getProjectManager: m.getProjectManager,
+        getPlatformMemoryRoot: (await import("./platform.js")).getPlatformMemoryRoot,
+      }));
+      const memoryRoot = getPlatformMemoryRoot() ?? "";
+      _projectBinding = getProjectManager().resolveBinding(projectId, memoryRoot);
+    } catch (err) {
+      log.warn(`[agent-loop] projectId="${projectId}" 解析 ProjectBinding 失敗：${err instanceof Error ? err.message : String(err)}（走全域）`);
+    }
+  }
+
   // ── 1. 進門權限檢查 ────────────────────────────────────────────────────────
   // guest:* accountId 自動 lazy 建立（避免「未知帳號」silently 拒絕；某些非主路徑（skill/subagent thread）
   // 進到這裡時 ensureGuestAccount 還沒被叫過，這裡兜底）
@@ -2102,7 +2119,7 @@ export async function* agentLoop(
 
         const batchResults = await Promise.all(spawnCalls.map(async (call): Promise<SpawnBatchResult> => {
           const params = call.params as Record<string, unknown>;
-          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId, agentId: opts.agentId, isAdmin: opts.isAdmin };
+          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId, agentId: opts.agentId, isAdmin: opts.isAdmin, projectCwd: _projectBinding?.cwd, projectMemoryDir: _projectBinding?.memoryDir, projectClaudeMd: _projectBinding?.claudeMd };
           const events: SpawnEvent[] = [];
           const hookResult = await runBeforeToolCall(
             { id: call.id, name: call.name, params },
@@ -2191,7 +2208,7 @@ export async function* agentLoop(
         };
         const batchResults = await Promise.all(concurrentCalls.map(async (call): Promise<BatchResult> => {
           const params = call.params as Record<string, unknown>;
-          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId, agentId: opts.agentId, isAdmin: opts.isAdmin };
+          const toolCtx: ToolContext = { accountId, projectId, sessionId: sessionKey, channelId, eventBus, spawnDepth, parentRunId: opts.parentRunId, traceId: trace?.traceId, agentId: opts.agentId, isAdmin: opts.isAdmin, projectCwd: _projectBinding?.cwd, projectMemoryDir: _projectBinding?.memoryDir, projectClaudeMd: _projectBinding?.claudeMd };
           const events: AgentLoopEvent[] = [];
 
           const hookResult = await runBeforeToolCall(
@@ -2273,6 +2290,9 @@ export async function* agentLoop(
           traceId: trace?.traceId,
           agentId: opts.agentId,
           isAdmin: opts.isAdmin,
+          projectCwd: _projectBinding?.cwd,
+          projectMemoryDir: _projectBinding?.memoryDir,
+          projectClaudeMd: _projectBinding?.claudeMd,
         };
 
         // before_tool_call

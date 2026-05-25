@@ -45,6 +45,12 @@ export interface ToolResult {
 export interface ToolContext {
   accountId: string;
   projectId?: string;
+  /** Project binding 解析後的工作目錄（file tools 預設 cwd） */
+  projectCwd?: string;
+  /** Project binding 解析後的記憶目錄（recall/extract 切 namespace 用） */
+  projectMemoryDir?: string;
+  /** Project binding 解析後的 CLAUDE.md 內容（system prompt 注入用，prompt-assembler 用） */
+  projectClaudeMd?: string;
   sessionId: string;
   channelId: string;
   /** CatClaw 事件匯流排（EventEmitter 子集，避免循環引用） */

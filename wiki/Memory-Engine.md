@@ -7,11 +7,23 @@
 | 層 | namespace | 目錄 | 用途 |
 | ---- | ---- | ---- | ---- |
 | global | `global` | `{memoryRoot}/` | 平台共用知識 |
-| project | `project/{id}` | `{memoryRoot}/projects/{id}/` | 專案知識（暫停用） |
+| project | `project/{id}` | `{memoryRoot}/projects/{id}/` | 專案知識 — 由 `discord.guilds.{g}.channels.{c}.boundProject` 或 account `currentProject` 啟用 |
 | account | `account/{id}` | `{memoryRoot}/accounts/{id}/` | 使用者偏好/個人資訊 |
 | agent | `agent/{id}` | `~/.catclaw/workspace/agents/{id}/memory/` | Agent 專屬記憶 |
 
-Recall 範圍 = `global + account(當前使用者) + agent(若有 agentId)`。寫入：agent context 下寫入 agent 層；其餘依工具 scope 參數決定。
+Recall 範圍 = `global + account(當前使用者) + agent(若有 agentId) + project(若 turn 有 projectId)`。寫入：agent context 下寫入 agent 層；bound project 頻道下 `atom_write` 預設 scope=project；其餘依工具 scope 參數決定。
+
+### Project layer 啟動條件
+
+需要 turn-scope 有 `projectId`：
+1. **頻道綁定**：`catclaw.json` 內 `discord.guilds.{guildId}.channels.{channelId}.boundProject = "<projectId>"`（最優先）
+2. **帳號當前專案**：`account.projects[0]`（fallback）
+
+agent-loop 在 turn 開頭呼叫 `ProjectManager.resolveBinding(projectId, memoryRoot)` 解析出 `{ cwd, memoryDir, claudeMd }`，注入 ToolContext 的 `projectCwd / projectMemoryDir / projectClaudeMd` 三欄。Recall 路徑透過 `RecallPaths.projectDir` 加入 project 層。`atom_write` 與 file tools 也讀 ToolContext 切到 project scope。
+
+範例展開：
+- projectId = `mygame` → memoryDir = `~/.catclaw/memory/projects/mygame/`
+- recall 時 namespace = `project/mygame`，向量 DB 自動切該 namespace 表
 
 ```mermaid
 graph LR
