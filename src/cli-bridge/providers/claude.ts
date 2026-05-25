@@ -57,16 +57,6 @@ export class ClaudeProvider implements CliProvider {
       "--verbose",
     ];
 
-    // 互斥分支：dangerouslySkipPermissions 與 --permission-prompt-tool 不可共存
-    // - true：信任模式，沿用舊行為直接放行
-    // - false（預設）：走 MCP request_permission tool → Discord 按鈕審批
-    if (config.dangerouslySkipPermissions) {
-      args.push("--dangerously-skip-permissions");
-      log.warn(`[cli-bridge:${config.label}] dangerouslySkipPermissions=true（fail-open，所有 tool 直接放行）`);
-    } else {
-      args.push("--permission-prompt-tool", "mcp__catclaw-bridge-discord__request_permission");
-    }
-
     // --resume 前先驗證 .jsonl 是否還在 ~/.claude/projects/*/；
     // 若不在，跳過 --resume 讓 CLI 開新 session（避免 "No conversation found" 死循環）
     let effectiveSessionId: string | undefined = config.sessionId;
@@ -79,9 +69,24 @@ export class ClaudeProvider implements CliProvider {
     }
 
     // 寫入 per-bridge MCP config：catclaw-bridge-discord 用 bridge 自己的 bot token
+    // 若 botToken/channelId 缺 → writeMcpConfig 回 null → 必須 fail-soft 降級為 --dangerously-skip-permissions
+    // 否則下面 --permission-prompt-tool 指向沒註冊的 MCP server，Claude CLI 啟動就 exit code=1 crash loop
     const mcpConfigPath = this.writeMcpConfig(config);
     if (mcpConfigPath) {
       args.push("--mcp-config", mcpConfigPath);
+    }
+
+    // permission 模式三選一（順序：明確 skip > MCP 註冊成功走 prompt > MCP 缺則 fail-soft 降級 skip）
+    if (config.dangerouslySkipPermissions) {
+      args.push("--dangerously-skip-permissions");
+      log.warn(`[cli-bridge:${config.label}] dangerouslySkipPermissions=true（fail-open，所有 tool 直接放行）`);
+    } else if (mcpConfigPath) {
+      // MCP server 已註冊 → permission-prompt-tool 找得到，走 Discord 按鈕審批
+      args.push("--permission-prompt-tool", "mcp__catclaw-bridge-discord__request_permission");
+    } else {
+      // MCP 缺 botToken/channelId → 不能用 prompt tool，降級為 skip（避免 crash loop）
+      args.push("--dangerously-skip-permissions");
+      log.warn(`[cli-bridge:${config.label}] MCP config 未寫成功（缺 botToken/channelId），fail-soft 降級為 dangerouslySkipPermissions 避免 crash loop`);
     }
 
     // 注入 bridge runtime env（讓 CLI 內可以 echo $CATCLAW_BRIDGE_* 查證部署資訊）
