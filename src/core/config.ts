@@ -1094,6 +1094,14 @@ function synthesizeFromModelsConfig(mcfg: ModelsConfigFile): {
       models[fullRef] = { alias };
     }
   }
+  // 保險網：新環境 models-config.json 可能無 aliases，導致 primary="sonnet" 解析失敗
+  // 補預設 anthropic 系列 alias，讓 catclaw 在 mcfg 不完整時仍能啟動
+  if (Object.keys(models).length === 0) {
+    models["anthropic/claude-sonnet-4-6"]         = { alias: "sonnet" };
+    models["anthropic/claude-opus-4-6"]           = { alias: "opus" };
+    models["anthropic/claude-haiku-4-5-20251001"] = { alias: "haiku" };
+    log.warn("[config] models-config.json 內 aliases 為空，已補預設 sonnet/opus/haiku — 建議手動編輯補完整 aliases 表");
+  }
 
   const agentDefaults: AgentDefaultsConfig = {
     model: {
