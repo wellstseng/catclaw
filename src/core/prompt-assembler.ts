@@ -362,7 +362,7 @@ const claudeMdModule: PromptModule = {
         }
       } catch { /* ignore */ }
       if (!defaultContent) {
-        defaultContent = `# CATCLAW.md — CatClaw Bot 行為規則\n\n你是 CatClaw，一個專案知識代理人。\n\n## 工作目錄\n\n你的工作目錄是 \`${wsDir}\`。`;
+        defaultContent = `# CATCLAW.md — CatClaw Bot 行為規則\n\n你是 CatClaw，一個專案知識代理人。\n\n## 工作目錄\n\n工作目錄由 bound project（若該頻道有設）或 run_command 實際解析決定。**不要憑記憶回答**，請用 run_command pwd 驗證實際路徑。`;
       }
       try { writeFileSync(p, defaultContent, "utf-8"); log.info(`[prompt-assembler] 已產生預設 CATCLAW.md：${p}`); } catch { /* ignore */ }
       content = defaultContent;

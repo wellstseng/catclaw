@@ -197,8 +197,8 @@ function ensureInitialized() {
 
 ## 工作目錄
 
-你的工作目錄是 \`${workspace}\`。
-專案原始碼在 \`${__dirname}\`。
+你的工作目錄由 bound project 決定（若該頻道有設 \`boundProject\`）；否則為 catclaw 啟動目錄。
+**不要憑記憶回答工作目錄**，請使用 run_command 跑 \`pwd\` / \`cd\` 查實際路徑。
 `;
     writeFileSync(catclawMdPath, defaultCatclaw, "utf-8");
     console.log(`📝 建立 CATCLAW.md：${catclawMdPath}`);
