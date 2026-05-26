@@ -1,4 +1,4 @@
-# 09 — 陷阱速查（26 項）
+# 09 — 陷阱速查（27 項）
 
 > 開發與維護時容易踩到的坑，全部從實際除錯經驗總結。
 
@@ -167,6 +167,7 @@ const ch = await client.channels.fetch(channelId);
 | 修改 claude.cwd 但不生效 | §17 | 改設 `CATCLAW_WORKSPACE` 環境變數 |
 | cron exec job 在 Windows 失敗 ENOENT | §18 | Windows 用 `bash`（Git Bash），Unix 用 `sh` |
 | svn/xcopy 中文參數失敗 (W155010 / 路徑亂碼) | §26 | builtin tools 優先；svn 用 `cd /d "中文目錄" && svn add .` |
+| Subagent polling 死循環吃 token | §27 | spawn 後 end_turn；wait 預設 5s；STUCK-LOOP ≥3 強制 break |
 | catclaw.json trailing comma 導致 hot-reload 失敗 | §19 | JSONC strip 後仍需合法 JSON |
 | cron exec 輸出亂碼（cp950） | §20 | 注入 `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1` |
 | cron exec 失敗時頻道無回報 | §21 | catch 區塊加 Discord 錯誤訊息發送 |
@@ -273,3 +274,27 @@ const ch = await client.channels.fetch(channelId);
 **PowerShell 不是 fallback**：公司電腦 ExecutionPolicy 可能擋 powershell，亂碼 `�s���Q�ڡC` = `拒絕存取`（CP950→utf8 亂碼），不要把 powershell 當必選。
 
 **Agent 規則**：詳見 `~/.catclaw/workspace/CATCLAW.md` → 「Windows 環境陷阱」段，已在全域 prompt 注入。
+
+## 27. Subagent polling 死循環吃 token（spawn 後不肯 end_turn）
+
+**現象**：露米 spawn 兩個 subagent 後反覆呼叫 `subagents wait` 60s timeout，14 分鐘 22 loops 吃 **762K effective input tokens**，主 turn 從未 end_turn。trace `5b4d8634-63b9-4c8a-b269-34858aee2f89` 紀錄。
+
+**根因（三層）**：
+1. `spawn_subagent` 回傳 note 早期版本寫「**不要 end_turn** — 可以呼叫 subagents 工具 (wait/list/kill/steer)」教 LLM polling
+2. `subagents wait` 預設 60s timeout，每次純等待 + 一輪 LLM call（input/output token 累計）
+3. BLOCKED 訊息「請改用其他方式或回覆使用者」太溫和，LLM 選「改用其他方式」（run_command 查檔）然後又回去 wait
+
+**解法（5 層防線，2026-05-26 commit f273f24/c2da964/73f1bae）**：
+
+| 層 | 機制 | 行為 |
+|----|------|------|
+| L1 prompt | `subagentProtocolModule` (priority=22) | system prompt 強制宣告「spawn 後 end_turn / 禁止 polling / 收到 BLOCKED 立即 end_turn」 |
+| L1 tool note | `spawn_subagent` return note | 改成「建議直接 end_turn，平台 wake 你」 |
+| L1 tool behavior | `subagents wait` action | timeout 60s→5s（上限 30s），timeout 回 hint「請 end_turn」 |
+| L2 BLOCKED 訊息 | agent-loop runBeforeToolCall | 4 處 BLOCKED reason 加 `[STUCK-LOOP]` 前綴 + 改寫「請立刻 end_turn，不要繞用其他工具」 |
+| L3 強制 break | agent-loop iter 末尾 check | STUCK-LOOP 累計 ≥3 或 subagents.{wait,list,status} 累計 ≥6 → 強制 break + post-loop bail notice 推 Discord |
+| L5 max_tokens 補通知 | agent-loop continuationCount > 3 | 標記 maxTokensExhausted + bail notice，之前是 silent break |
+
+**設計理念**：三層防護冗餘（prompt 教育 + tool 訊息強制 + catclaw 端強制 break），不靠 LLM 自律。
+
+**Wake-agent 不需修**：subagent 還在 running 期間，agent-loop 內部 listener (event-bus subagent:completed/failed) 接住結果並注入 pendingBgResults 給下一輪 LLM 看到。`spawn-subagent.ts:728` / `platform.ts:343` 的 wake-agent 路徑只在 parent stream 退場後才走。設計正確。
