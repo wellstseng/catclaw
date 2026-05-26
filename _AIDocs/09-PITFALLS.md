@@ -1,4 +1,4 @@
-# 09 — 陷阱速查（25 項）
+# 09 — 陷阱速查（26 項）
 
 > 開發與維護時容易踩到的坑，全部從實際除錯經驗總結。
 
@@ -166,6 +166,7 @@ const ch = await client.channels.fetch(channelId);
 | crash recovery 掃不到 active-turns/ | §16（已修正） | 已統一使用 CATCLAW_WORKSPACE |
 | 修改 claude.cwd 但不生效 | §17 | 改設 `CATCLAW_WORKSPACE` 環境變數 |
 | cron exec job 在 Windows 失敗 ENOENT | §18 | Windows 用 `bash`（Git Bash），Unix 用 `sh` |
+| svn/xcopy 中文參數失敗 (W155010 / 路徑亂碼) | §26 | builtin tools 優先；svn 用 `cd /d "中文目錄" && svn add .` |
 | catclaw.json trailing comma 導致 hot-reload 失敗 | §19 | JSONC strip 後仍需合法 JSON |
 | cron exec 輸出亂碼（cp950） | §20 | 注入 `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1` |
 | cron exec 失敗時頻道無回報 | §21 | catch 區塊加 Discord 錯誤訊息發送 |
@@ -255,3 +256,20 @@ const ch = await client.channels.fetch(channelId);
 - 支援 Codex CLI **nested auth.json 格式**（`tokens` 物件包 `id_token` / `access_token` / `refresh_token`）+ **JWT exp 解析**（不用 `expires_at` 欄位，直接從 JWT payload `exp` claim 推）
 - cli-bridge codex approval decision enum 改用新 API + 繼承全域 `~/.codex` 設定
 - `codex.sandboxPolicy.networkAccess` 型別應為 `boolean`（早期文件寫 string）
+
+## 26. Windows 中文路徑 — chcp 65001 修不了「stdin/參數 encoding」
+
+**現象**：Windows 中文系統下，agent 對中文路徑/檔名做 `run_command(svn add "...裝備系統規格")` / `run_command(dir "...中文目錄")` 失敗，svn 報 `not found`，dir 輸出 `Anti�W���` 亂碼。
+
+**原因（兩層）**：
+1. **stdout 顯示**：cmd 預設 CP950（Big5）輸出，Node `Buffer.toString('utf8')` decode 後亂碼。`commit 703035e` 已對 run_command 前綴 `chcp 65001>nul &` 處理。
+2. **stdin / 參數 encoding（chcp 修不了）**：cmd.exe 把 UTF-8 命令字串用系統 ANSI codepage (CP950) 重新編碼後傳給外部 .exe，xcopy / svn.exe / mkdir 等命令對中文參數 decode 失敗。**這是 svn.exe / xcopy 等程式自己的 Windows 編碼 bug，不在 catclaw 控制範圍**，iconv-lite 或 cmd /U 都繞不過（Node spawn 即使用 wide-char API 把參數丟給 cmd，cmd 依然會 ANSI-encode 後再傳給 exe）。
+
+**解法（依優先序）**：
+1. **首選**：用 builtin tools（glob / read_file / write_file / edit_file）走 Node fs API，完全不經 cmd。中文路徑直通。
+2. **無 builtin 對應時**（svn / xcopy / git）：用 `cd /d "中文目錄" && command .` 繞開 — `cd /d` 是 cmd 內部命令配合 chcp 對中文有效；`.` 是純 ASCII target。**Wells 公司電腦實測**：`cd /d "C:/Projects/TSLG/.../裝備系統規格" && svn add .` 成功 commit SVN r966。
+3. **顯示亂碼 ≠ 路徑錯**：cd 進去後 svn 輸出仍可能顯示 `? ??????`（顯示端問題），但 commit 已成功。判斷成功看 exitCode + 「added / committed」字樣，不看中文是否正確顯示。
+
+**PowerShell 不是 fallback**：公司電腦 ExecutionPolicy 可能擋 powershell，亂碼 `�s���Q�ڡC` = `拒絕存取`（CP950→utf8 亂碼），不要把 powershell 當必選。
+
+**Agent 規則**：詳見 `~/.catclaw/workspace/CATCLAW.md` → 「Windows 環境陷阱」段，已在全域 prompt 注入。
