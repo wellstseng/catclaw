@@ -48,6 +48,14 @@ const IGNORE_PATTERNS = [
   /\[cli-bridge-reply\].*streaming edit 失敗/,
   /rate.?limit/i,
   /\bDEBUG\b/i,  // debug 訊息帶 "error" 字樣
+  // LLM POST 預覽行含 lastUser="..." — user prompt 內可能有 error 字眼（誤觸發）
+  /\[claude:.*\]\s+POST.*lastUser=/i,
+  // turn-auditor / skill-judge 的歷史 turn 標記 (T20 [hadError]:)
+  /T\d+\s*\[hadError\]/,
+  // skill-judge prompt 結尾常有「不需提案」「值得 / 不值得」這類 reason 字串
+  /\[skill-(candidate|judge|improvement)\]/i,
+  // turn 失敗指標但不是程式 error — 來自 audit / candidate / advice 等
+  /\[turn-audit\]/i,
 ];
 
 // ── State ───────────────────────────────────────────────────────────────────
