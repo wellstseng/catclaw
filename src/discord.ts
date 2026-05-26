@@ -939,6 +939,7 @@ async function handleMessage(
         platform: "discord",
         channelId: effectiveChannelId,
         accountId,
+        projectId: resolvedProjectId,
         agentId: getBootAgentId(),
         isAdmin: getBootIsAdmin(),
         isGroupChannel,
