@@ -2983,20 +2983,24 @@ async function loadAgentConfigs() {
       list.innerHTML = '<div style="color:var(--fg3)">無 agent</div>';
       return;
     }
-    var rowStyle = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:8px;background:var(--bg2);border-radius:4px;flex-wrap:wrap';
-    var labelStyle = 'min-width:80px;color:var(--fg2);font-size:0.82rem';
     var inputStyle = 'padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem';
     var html = '';
     for (var i = 0; i < agents.length; i++) {
       var a = agents[i];
       var bootBadge = a.isBoot ? ' <span style="background:#7c3aed;color:#fff;font-size:0.65rem;padding:0 4px;border-radius:3px">BOOT</span>' : '';
       var adminBadge = a.admin ? ' <span style="background:#dc2626;color:#fff;font-size:0.65rem;padding:0 4px;border-radius:3px">admin</span>' : '';
-      html += '<div style="' + rowStyle + '">';
-      html += '<span style="' + labelStyle + ';min-width:120px"><strong>' + a.id + '</strong>' + (a.label ? ' <span style="color:var(--fg3)">(' + a.label + ')</span>' : '') + bootBadge + adminBadge + '</span>';
-      html += '<span style="' + labelStyle + '">boundProject:</span>';
+      var summary = a.id + (a.label ? ' (' + a.label + ')' : '') + bootBadge + adminBadge;
+      html += '<details class="cfg-section"' + (i === 0 ? ' open' : '') + '>';
+      html += '<summary>' + summary + '</summary>';
+      html += '<div class="cfg-fields">';
+      html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+      html += '<label style="min-width:120px;color:var(--fg2);font-size:0.82rem">boundProject</label>';
       html += '<input id="agentcfg-bp-' + a.id + '" type="text" value="' + (a.boundProject || '') + '" placeholder="留空 = 無 agent-level 綁定" style="' + inputStyle + ';flex:1;min-width:280px;font-family:monospace">';
       html += '<button class="btn btn-green btn-sm" onclick="saveAgentConfig(\\'' + a.id + '\\')">💾 儲存</button>';
       html += '</div>';
+      html += '<p style="font-size:0.72rem;color:var(--fg3);margin:6px 0 0">寫回 <code>agents/' + a.id + '/config.json</code>，需 <code>./catclaw restart</code> 才生效。</p>';
+      html += '</div>';
+      html += '</details>';
     }
     list.innerHTML = html;
   } catch (err) {
