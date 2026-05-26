@@ -118,14 +118,25 @@ export const tool: Tool = {
       }
 
       case "resume": {
-        // 喚醒 keepSession:true 的已完成子 agent
+        // 喚醒 keepSession:true 的已完成子 agent；keepSession=false → 邏輯 fallback 自動 spawn 新子
         if (!runId) return { error: "resume 需要指定 runId" };
         const message = params["message"] ? String(params["message"]) : undefined;
         if (!message) return { error: "resume 需要指定 message（注入訊息）" };
 
         const record = registry.get(runId);
         if (!record) return { error: `找不到 runId：${runId}` };
-        if (!record.keepSession) return { error: `該子 agent 未啟用 keepSession，無法喚醒` };
+        // 邏輯規則驅動 fallback：runId record 上的 keepSession bit 決定路徑，不靠 prompt 教育
+        // keepSession=false → 子 session 已銷毀，自動 spawn 新子接替（task = 原 task + 追問）
+        if (!record.keepSession) {
+          log.info(`[subagents:resume] keepSession=false runId=${runId} → 自動 spawn 新子接替`);
+          const newTask = `[續問前次子任務（原子 ${runId.slice(0, 8)} 已銷毀，自動接替）]\n\n原任務：\n${record.task}\n\n追問：\n${message}`;
+          const spawnTool = (await import("./spawn-subagent.js")).tool;
+          return await spawnTool.execute({
+            task: newTask,
+            ...(record.label ? { label: `${record.label}-續` } : {}),
+            async: false,
+          }, ctx);
+        }
         if (record.status === "running") return { error: `子 agent 仍在執行中，請用 steer` };
         if (record.status === "killed") return { error: `子 agent 已 killed，無法喚醒` };
 
@@ -215,11 +226,11 @@ export const tool: Tool = {
           return { result: `✅ 訊息已注入 running agent ${runId.slice(0, 8)}` };
         }
 
-        // completed/failed → keepSession 才能續接
-        if (!rec.keepSession) return { error: `該子 agent 未啟用 keepSession，無法續接` };
+        // completed/failed
         if (rec.status === "killed") return { error: `子 agent 已 killed，無法續接` };
-
-        // 重用 resume 邏輯
+        // keepSession=false → 統一交給 resume case 的 fallback 邏輯（auto-spawn 新子）
+        // keepSession=true → 走原本 resume 喚醒流程
+        // 兩個 case 都重用 resume，由 resume 內判斷分流
         params["action"] = "resume";
         return this.execute(params, ctx);
       }
