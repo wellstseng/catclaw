@@ -140,8 +140,8 @@ export const tool: Tool = {
         }
         if (record.status === "running") return { error: `子 agent 仍在執行中，請用 steer` };
         if (record.status === "killed") return { error: `子 agent 已 killed，無法喚醒` };
-        // 已 timeout / error 的子：直接重啟會撞同 task 同 timeout，邏輯規則擋下要求換 spawn 新子
-        if (record.status === "timeout" || record.status === "error") {
+        // 已 timeout / failed / interrupted 的子：直接重啟會撞同 task 同 timeout，邏輯規則擋下要求換 spawn 新子
+        if (record.status === "timeout" || record.status === "failed" || record.status === "interrupted") {
           return { error: `子 agent 之前已 ${record.status}（同 task 重啟仍會撞同樣失敗）。請改用 spawn_subagent 重新 spawn 新子，task 拆更小或加大 timeoutMs。原 task 前 100 字：${record.task.slice(0, 100)}` };
         }
 
