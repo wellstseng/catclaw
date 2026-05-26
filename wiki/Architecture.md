@@ -153,6 +153,15 @@ turn 取得 projectId 的優先序（discord.ts:825 附近）：
 
 DM 訊息無 guild → channel.boundProject 不適用，自動退到 agent.boundProject。
 
+### Dashboard 編輯
+
+Dashboard「**設定（Config）**」分頁底下有兩棵設定樹（樹狀 `<details>` 可折疊區段）：
+
+1. **Agent 設定**（寫回 `agents/{id}/config.json`）— 每個 agent 一個區段，可編輯 `boundProject` 等白名單欄位。
+2. **catclaw.json**（完整編輯）— 整份全域設定 JSON 編輯器，含 Discord / Guilds / providers / ... 全部區段。
+
+> Agent 設定不放「憑證（Auth）」分頁 — Auth 分頁語意是憑證/模型認證（Auth Profiles / Models Config / models.json）；Agent 行為設定（boundProject 是「綁定到哪個專案目錄」）屬於 Config 範疇。修改後 `./catclaw restart` 才生效。
+
 ### 程式路徑
 
 ```

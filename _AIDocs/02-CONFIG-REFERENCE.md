@@ -519,6 +519,7 @@ Per-Agent 設定（`AgentConfig`，存放 `agents/{id}/config.json`）：
 | `memory.namespace` | string | 記憶命名空間 |
 | `admin` | boolean | 管理者 flag（可改 catclaw.json） |
 | `globalMemoryWrite` | boolean | 允許寫入全域記憶（預設 false） |
+| `boundProject` | string | Agent-level bound project（projectId 或絕對路徑），讓 DM / 跨 channel 始終綁定同 project。優先序：channel.boundProject > agent.boundProject > account.currentProject。Dashboard「設定」分頁可編輯。 |
 
 ---
 
