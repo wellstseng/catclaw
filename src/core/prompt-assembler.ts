@@ -476,6 +476,34 @@ const failureRecallModule: PromptModule = {
   },
 };
 
+// ── _AIDocs Index Module ────────────────────────────────────────────────────
+// Bound project 內 _AIDocs/_INDEX.md 自動注入 system prompt — 讓 agent 知道專案知識庫存在
+// 哪些檔，按需用 read_file 取詳細內容（對齊 ~/.claude 那邊 SessionStart 注入 _AIDocs 機制）
+// 只注入索引（_INDEX.md），不全部把 _AIDocs/*.md 塞進來（避免爆 token budget）
+const aidocsIndexModule: PromptModule = {
+  name: "aidocs-index",
+  priority: 13, // after identity (10) + catclaw-md (15)，在 tools-usage (20) 之前
+  build: (ctx) => {
+    // 沒 projectCwd（無 bound project）→ 不注入
+    const projectCwd = ctx.projectCwd;
+    if (!projectCwd) return "";
+    const indexPath = join(projectCwd, "_AIDocs", "_INDEX.md");
+    if (!existsSync(indexPath)) return "";
+    try {
+      const content = readFileSync(indexPath, "utf-8").trim();
+      if (!content) return "";
+      // 4000 chars 兜底；_INDEX.md 通常 < 1000 chars 但保險
+      const truncated = content.length > 4000
+        ? content.slice(0, 4000) + "\n\n... [_INDEX.md 已截斷至 4000 chars，完整版用 read_file 取]"
+        : content;
+      return `## 專案知識庫索引 (_AIDocs/_INDEX.md)\n\n${truncated}\n\n> agent 可依此索引用 read_file 取詳細文件。`;
+    } catch (err) {
+      log.debug(`[aidocs-index] 讀取失敗：${err instanceof Error ? err.message : String(err)}`);
+      return "";
+    }
+  },
+};
+
 // ── Module Registry ──────────────────────────────────────────────────────────
 
 const builtinModules: PromptModule[] = [
@@ -483,6 +511,7 @@ const builtinModules: PromptModule[] = [
   identityModule,
   contextIntegrityModule,
   claudeMdModule,
+  aidocsIndexModule,
   toolsUsageModule,
   codingRulesModule,
   gitRulesModule,

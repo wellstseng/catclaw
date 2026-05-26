@@ -105,6 +105,17 @@ CatClaw 三層讀取：**全域 → 角色（agent） → 專案（bound project
 | 設定 | `catclaw.json` + `models-config.json` | `agents/{id}/config.json`（deep-merge） | — | 全域設定為基底，agent config 覆寫 |
 | MCP servers | `catclaw.json.mcpServers{}` | —（共用全域） | — | `platform.ts` 啟動每個 MCP server |
 
+### `_AIDocs/_INDEX.md` 自動注入
+
+Bound project 啟動的 turn 內，`prompt-assembler.ts:aidocsIndexModule`（priority=13）自動偵測 `{projectCwd}/_AIDocs/_INDEX.md`：
+
+- 存在 → 注入 system prompt 為「## 專案知識庫索引」段
+- 上限 4000 chars（_INDEX.md 通常 < 1000，超過 truncate 加警示）
+- agent 看到索引後用 `read_file` 按需取 `_AIDocs/{filename}.md` 詳細內容（不會自動把全部 _AIDocs 內容塞 system prompt）
+- 不存在/讀失敗 → fail-soft 回空字串，不影響其他模組
+
+對齊 `~/.claude` 那邊 SessionStart 注入 `_AIDocs/_INDEX.md` 的機制，但走純 TS module 不依賴 Python hooks。
+
 ### `@import` 語法（CLAUDE.md / CATCLAW.md 內）
 
 支援 Claude Code 標準 `@<path>` 整行語法，自動展開為檔案內容：
