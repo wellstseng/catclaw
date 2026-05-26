@@ -810,7 +810,11 @@ label.cfg-toggle { min-width: 36px; }
     </h2>
     <div id="models-json-viewer" style="font-size:0.75rem;color:#888">點擊「讀取」載入</div>
   </div>
-  <div class="card" style="margin-top:16px">
+</div>
+
+<!-- Config -->
+<div id="pane-config" class="pane">
+  <div class="card" style="margin-bottom:16px">
     <h2>Agent 設定（白名單欄位，寫回 agents/{id}/config.json）
       <button class="btn btn-sm" style="float:right" onclick="loadAgentConfigs()">↻ 重新載入</button>
     </h2>
@@ -820,10 +824,6 @@ label.cfg-toggle { min-width: 36px; }
     <div id="agent-configs-msg" style="font-size:0.82rem;margin-bottom:6px"></div>
     <div id="agent-configs-list" style="font-size:0.85rem">載入中...</div>
   </div>
-</div>
-
-<!-- Config -->
-<div id="pane-config" class="pane">
   <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
     <button class="btn" onclick="loadCfg()">↻ 讀取</button>
     <button class="btn btn-green" onclick="saveCfg()">💾 備份後儲存</button>
@@ -1106,7 +1106,8 @@ function switchTab(id, el) {
   if (id === 'insights') { loadInsights(); }
   if (id === 'improvements') { loadSkillImprovements(); }
   if (id === 'candidates') { loadSkillCandidates(); }
-  if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); loadAgentConfigs(); }
+  if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
+  if (id === 'config') loadAgentConfigs();
   if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 5000); }
   if (id === 'cron') loadCron();
   if (id === 'config') loadCfg();
@@ -1136,10 +1137,10 @@ function refreshAll() {
     case 'insights': loadInsights(); break;
     case 'improvements': loadSkillImprovements(); break;
     case 'candidates': loadSkillCandidates(); break;
-    case 'auth': loadModelsConfig(); loadAuthProfiles(); loadModelsJson(); loadAgentConfigs(); break;
+    case 'auth': loadModelsConfig(); loadAuthProfiles(); loadModelsJson(); break;
     case 'traces': loadTraces(); break;
     case 'cron': loadCron(); break;
-    case 'config': loadCfg(); break;
+    case 'config': loadCfg(); loadAgentConfigs(); break;
     case 'memory': loadAgentList().then(() => loadMemory()); break;
     case 'pipeline': loadPipeline(); break;
     case 'clibridge': cbLoadConfig(); loadCliBridges(); if (_cbSelectedLabel) cbLoadStatus(); break;
