@@ -43,6 +43,9 @@ const PATCH_WHITELIST = [
   // 模型路由已遷移至 models-config.json，由 Dashboard 管理
   "cron.enabled",
   "cron.maxConcurrentRuns",
+  "subagents.maxConcurrent",
+  "subagents.defaultTimeoutMs",
+  "subagents.defaultKeepSession",
   "inboundHistory.inject.enabled",
   "session.ttlHours",
   "session.maxHistoryTurns",
@@ -106,7 +109,7 @@ export const tool: Tool = {
     "局部更新 catclaw.json 指定欄位，hot-reload 立即生效，無需重啟。",
     "需要 owner 權限（admin.allowedUserIds）。",
     "可修改的欄位（白名單）：discord guilds/channels 的 allow/requireMention/allowBot/allowFrom；",
-    "debounceMs、logLevel、showToolCalls、memory.recall.*、",
+    "debounceMs、logLevel、showToolCalls、memory.recall.*、subagents.{maxConcurrent,defaultTimeoutMs,defaultKeepSession}、",
     "cron.enabled、session.ttlHours 等。模型路由請用 Dashboard 管理。",
     "禁止修改：token、apiKey、secret、password。",
     "value 為 JSON 格式：字串用引號如 \"\\\"info\\\"\"，布林用 true/false，數字直接傳。",
