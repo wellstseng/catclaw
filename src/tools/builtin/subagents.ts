@@ -127,18 +127,23 @@ export const tool: Tool = {
         if (!record) return { error: `找不到 runId：${runId}` };
         // 邏輯規則驅動 fallback：runId record 上的 keepSession bit 決定路徑，不靠 prompt 教育
         // keepSession=false → 子 session 已銷毀，自動 spawn 新子接替（task = 原 task + 追問）
+        // 用 async=true：立即回 spawned 訊息不阻塞，平台 wake 機制負責子完成後通知
         if (!record.keepSession) {
-          log.info(`[subagents:resume] keepSession=false runId=${runId} → 自動 spawn 新子接替`);
+          log.info(`[subagents:resume] keepSession=false runId=${runId} → async fallback spawn 新子接替`);
           const newTask = `[續問前次子任務（原子 ${runId.slice(0, 8)} 已銷毀，自動接替）]\n\n原任務：\n${record.task}\n\n追問：\n${message}`;
           const spawnTool = (await import("./spawn-subagent.js")).tool;
           return await spawnTool.execute({
             task: newTask,
             ...(record.label ? { label: `${record.label}-續` } : {}),
-            async: false,
+            async: true,
           }, ctx);
         }
         if (record.status === "running") return { error: `子 agent 仍在執行中，請用 steer` };
         if (record.status === "killed") return { error: `子 agent 已 killed，無法喚醒` };
+        // 已 timeout / error 的子：直接重啟會撞同 task 同 timeout，邏輯規則擋下要求換 spawn 新子
+        if (record.status === "timeout" || record.status === "error") {
+          return { error: `子 agent 之前已 ${record.status}（同 task 重啟仍會撞同樣失敗）。請改用 spawn_subagent 重新 spawn 新子，task 拆更小或加大 timeoutMs。原 task 前 100 字：${record.task.slice(0, 100)}` };
+        }
 
         // 注入喚醒訊息到子 session
         const sessionManager = getPlatformSessionManager();
