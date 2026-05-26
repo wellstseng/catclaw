@@ -1532,12 +1532,16 @@ export async function* agentLoop(
   let zeroProgressBailed = false;             // 為 0-progress 中止 → 走 post-loop notice 分支
   let emptyToolUseCount = 0;                  // stopReason=tool_use 但 toolCalls=[] 的累計次數
   let emptyToolUseExhausted = false;          // emptyToolUseCount 觸頂 → 走 post-loop notice 分支
-  // L3 Pattern Detection — STUCK-LOOP BLOCKED 累計：≥3 次 → 強制 break loop
+  // L3 Pattern Detection — STUCK-LOOP BLOCKED 累計（分級升級）：
+  //   1-2 次 → 注入 strategy nudge 給 agent 自主換策略；≥3 次 → 強制 break（safety net）
   let stuckLoopBlockCount = 0;
   let stuckLoopBailed = false;
-  // L3 Tool Cluster Detection — subagents.{wait,list,status} 累計呼叫，≥6 次強制 break
+  let stuckLoopNudgeInjected = false;
+  // L3 Tool Cluster Detection — subagents.{wait,list,status} 累計（分級升級）：
+  //   3-5 次 → 注入 strategy nudge；≥6 次 → 強制 break
   let subagentPollCount = 0;
   let subagentPollBailed = false;
+  let subagentPollNudgeInjected = false;
   // L5 max_tokens 續接耗盡 → 走 post-loop notice 分支
   let maxTokensExhausted = false;
   const turnStartMs = Date.now();
@@ -2566,9 +2570,13 @@ export async function* agentLoop(
       // 把 tool results 加入 messages
       messages.push(makeToolResultMessage(toolResults));
 
-      // ── L3 Pattern Detection：STUCK-LOOP BLOCKED 累計 + subagent polling cluster ──────
-      // STUCK-LOOP：BeforeToolCall 偵測到工具迴圈 ≥3 次 → 強制中止 turn（避免 LLM 繞道繼續）
-      // subagent polling cluster：本 turn subagents.{wait,list,status} 累計 ≥6 次 → 強制中止
+      // ── L3 Pattern Detection（分級升級）：先注入 strategy nudge 給 agent 自主轉策略，再 fail-safe break ──────
+      // STUCK-LOOP：BeforeToolCall 偵測到工具迴圈
+      //   1-2 次 → 注入 strategy nudge（first time only），給 agent 換策略空間
+      //   ≥3 次 → 強制中止（safety net）
+      // subagent polling cluster：本 turn subagents.{wait,list,status} 累計
+      //   3-5 次 → 注入 strategy nudge
+      //   ≥6 次 → 強制中止
       {
         for (const r of toolResults) {
           if (r.is_error && typeof r.content === "string" && r.content.includes("[STUCK-LOOP]")) {
@@ -2590,6 +2598,36 @@ export async function* agentLoop(
         if (stuckLoopBailed || subagentPollBailed) {
           log.warn(`[agent-loop] [loop=${loopCount}] L3 強制中止：stuckLoopBlockCount=${stuckLoopBlockCount} subagentPollCount=${subagentPollCount}`);
           break;
+        }
+
+        // 分級升級：第 1 次 STUCK-LOOP 觸發 → 注入 strategy nudge 給 LLM 自主轉策略
+        if (stuckLoopBlockCount >= 1 && !stuckLoopNudgeInjected) {
+          stuckLoopNudgeInjected = true;
+          const stuckNudge = [
+            "🔁 [平台訊息：策略升級]",
+            `偵測到工具迴圈（STUCK-LOOP 已觸發 ${stuckLoopBlockCount} 次）。**禁止對同 args 重複呼叫同 tool**。`,
+            "請從下列方向**主動換策略**（你還有 2 次機會，第 3 次 STUCK-LOOP 會強制中止本 turn）：",
+            "  (a) **spawn_subagent 外包**：把卡住的探索/讀取任務丟給子 agent，主對話直接 end_turn 等 wake",
+            "  (b) **換不同工具**：glob 失敗改 read_file 直接讀已知路徑；run_command 失敗改 builtin tool",
+            "  (c) **拆小任務**：一次只做一件事，避免複合操作",
+            "  (d) **end_turn 回報使用者**：說明目前進度與卡點，由使用者決定下一步",
+            "立刻評估哪條路最務實，下一輪採用該策略；繼續硬幹會被 catclaw 強制中止。",
+          ].join("\n");
+          messages.push({ role: "user", content: stuckNudge });
+          log.info(`[agent-loop] [loop=${loopCount}] L3 stuck-loop nudge 注入 (count=${stuckLoopBlockCount})`);
+        }
+        // 分級升級：subagent polling 累計 3 次 → 注入 strategy nudge
+        if (subagentPollCount >= 3 && !subagentPollNudgeInjected) {
+          subagentPollNudgeInjected = true;
+          const pollNudge = [
+            "🔁 [平台訊息：策略升級]",
+            `偵測到 subagent polling 反模式（已累計 ${subagentPollCount} 次呼叫 subagents.{wait,list,status}）。`,
+            "spawn_subagent 後是 fire-and-forget — **平台會在子完成（或失敗）時自動 wake 你**，不需要主動 polling。",
+            "請立即 **end_turn**：你不會錯過任何結果，下一輪 wake 會把子的結果摘要直接注入。",
+            `繼續 polling 會被強制中止（再 ${6 - subagentPollCount} 次達上限）。`,
+          ].join("\n");
+          messages.push({ role: "user", content: pollNudge });
+          log.info(`[agent-loop] [loop=${loopCount}] L3 subagent-poll nudge 注入 (count=${subagentPollCount})`);
         }
       }
 
