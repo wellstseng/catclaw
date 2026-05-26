@@ -810,6 +810,16 @@ label.cfg-toggle { min-width: 36px; }
     </h2>
     <div id="models-json-viewer" style="font-size:0.75rem;color:#888">點擊「讀取」載入</div>
   </div>
+  <div class="card" style="margin-top:16px">
+    <h2>Agent 設定（白名單欄位，寫回 agents/{id}/config.json）
+      <button class="btn btn-sm" style="float:right" onclick="loadAgentConfigs()">↻ 重新載入</button>
+    </h2>
+    <p style="font-size:0.72rem;color:var(--fg3);margin:0 0 8px">
+      ⚠ 修改後需 <code>./catclaw restart</code> 才生效。<code>boundProject</code> 可填 projectId 或絕對路徑（如 <code>C:/Projects/TSLG</code>）— path 會 in-memory 推導三維度。
+    </p>
+    <div id="agent-configs-msg" style="font-size:0.82rem;margin-bottom:6px"></div>
+    <div id="agent-configs-list" style="font-size:0.85rem">載入中...</div>
+  </div>
 </div>
 
 <!-- Config -->
@@ -1096,7 +1106,7 @@ function switchTab(id, el) {
   if (id === 'insights') { loadInsights(); }
   if (id === 'improvements') { loadSkillImprovements(); }
   if (id === 'candidates') { loadSkillCandidates(); }
-  if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); }
+  if (id === 'auth') { loadModelsConfig(); loadAuthProfiles(); loadAgentConfigs(); }
   if (id === 'traces') { loadTraces(); _traceAutoRefresh = setInterval(loadTraces, 5000); }
   if (id === 'cron') loadCron();
   if (id === 'config') loadCfg();
@@ -1126,7 +1136,7 @@ function refreshAll() {
     case 'insights': loadInsights(); break;
     case 'improvements': loadSkillImprovements(); break;
     case 'candidates': loadSkillCandidates(); break;
-    case 'auth': loadModelsConfig(); loadAuthProfiles(); loadModelsJson(); break;
+    case 'auth': loadModelsConfig(); loadAuthProfiles(); loadModelsJson(); loadAgentConfigs(); break;
     case 'traces': loadTraces(); break;
     case 'cron': loadCron(); break;
     case 'config': loadCfg(); break;
@@ -2959,6 +2969,61 @@ async function loadModelsJson() {
     }
     el.innerHTML = html;
   } catch(e) { document.getElementById('models-json-viewer').innerHTML = '<span class="msg err">讀取失敗：' + e + '</span>'; }
+}
+
+// ── Agent Configs（編輯 agents/{id}/config.json 白名單欄位）─────────────────
+async function loadAgentConfigs() {
+  const list = document.getElementById('agent-configs-list');
+  const msg = document.getElementById('agent-configs-msg');
+  if (msg) msg.innerHTML = '';
+  list.innerHTML = '載入中...';
+  try {
+    const agents = await authFetch('/api/agents').then(r => r.json());
+    if (!Array.isArray(agents) || agents.length === 0) {
+      list.innerHTML = '<div style="color:var(--fg3)">無 agent</div>';
+      return;
+    }
+    var rowStyle = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:8px;background:var(--bg2);border-radius:4px;flex-wrap:wrap';
+    var labelStyle = 'min-width:80px;color:var(--fg2);font-size:0.82rem';
+    var inputStyle = 'padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:0.82rem';
+    var html = '';
+    for (var i = 0; i < agents.length; i++) {
+      var a = agents[i];
+      var bootBadge = a.isBoot ? ' <span style="background:#7c3aed;color:#fff;font-size:0.65rem;padding:0 4px;border-radius:3px">BOOT</span>' : '';
+      var adminBadge = a.admin ? ' <span style="background:#dc2626;color:#fff;font-size:0.65rem;padding:0 4px;border-radius:3px">admin</span>' : '';
+      html += '<div style="' + rowStyle + '">';
+      html += '<span style="' + labelStyle + ';min-width:120px"><strong>' + a.id + '</strong>' + (a.label ? ' <span style="color:var(--fg3)">(' + a.label + ')</span>' : '') + bootBadge + adminBadge + '</span>';
+      html += '<span style="' + labelStyle + '">boundProject:</span>';
+      html += '<input id="agentcfg-bp-' + a.id + '" type="text" value="' + (a.boundProject || '') + '" placeholder="留空 = 無 agent-level 綁定" style="' + inputStyle + ';flex:1;min-width:280px;font-family:monospace">';
+      html += '<button class="btn btn-green btn-sm" onclick="saveAgentConfig(\'' + a.id + '\')">💾 儲存</button>';
+      html += '</div>';
+    }
+    list.innerHTML = html;
+  } catch (err) {
+    list.innerHTML = '<div style="color:var(--error)">載入失敗：' + err.message + '</div>';
+  }
+}
+
+async function saveAgentConfig(agentId) {
+  var bpInput = document.getElementById('agentcfg-bp-' + agentId);
+  var msg = document.getElementById('agent-configs-msg');
+  var body = { boundProject: bpInput.value.trim() };
+  msg.innerHTML = '<span style="color:var(--fg2)">儲存 ' + agentId + ' 中...</span>';
+  try {
+    var r = await authFetch('/api/agents/' + encodeURIComponent(agentId) + '/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var data = await r.json();
+    if (!r.ok) {
+      msg.innerHTML = '<span style="color:var(--error)">❌ ' + (data.error || '儲存失敗') + '</span>';
+      return;
+    }
+    msg.innerHTML = '<span style="color:var(--success)">✓ ' + agentId + ' 已儲存（重啟後生效）</span>';
+  } catch (err) {
+    msg.innerHTML = '<span style="color:var(--error)">❌ ' + err.message + '</span>';
+  }
 }
 
 // ── Models Config ────────────────────────────────────────────────────────────
@@ -7733,7 +7798,7 @@ export class DashboardServer {
             const { resolveWorkspaceDir } = await import("./config.js");
             const { getBootAgentId, loadAgentConfig } = await import("./agent-loader.js");
             const agentsDir = join(resolveWorkspaceDir(), "agents");
-            const agents: Array<{ id: string; hasMemory: boolean; isBoot: boolean; label?: string; admin?: boolean; globalMemoryWrite?: boolean; hasCatclawMd: boolean }> = [];
+            const agents: Array<{ id: string; hasMemory: boolean; isBoot: boolean; label?: string; admin?: boolean; globalMemoryWrite?: boolean; hasCatclawMd: boolean; boundProject?: string }> = [];
             if (existsSync(agentsDir)) {
               for (const d of readdirSync(agentsDir)) {
                 if (d.startsWith(".")) continue;
@@ -7748,6 +7813,7 @@ export class DashboardServer {
                   admin: cfg?.admin,
                   globalMemoryWrite: cfg?.globalMemoryWrite,
                   hasCatclawMd: existsSync(catclawMd),
+                  boundProject: cfg?.boundProject,
                 });
               }
             }
@@ -7757,6 +7823,51 @@ export class DashboardServer {
             res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
           }
         })();
+        return;
+      }
+
+      // PUT /api/agents/:id/config — 更新 agent config 白名單欄位
+      // 目前白名單：boundProject / label / admin / globalMemoryWrite
+      // 寫到 ~/.catclaw/workspace/agents/{id}/config.json（merge，不覆蓋其他欄位）
+      if (url && /^\/api\/agents\/[^/]+\/config$/.test(url) && method === "PUT") {
+        const agentId = url.replace(/^\/api\/agents\/([^/]+)\/config$/, "$1");
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as Record<string, unknown>;
+              const { resolveAgentDataDir } = await import("./agent-loader.js");
+              const cfgPath = join(resolveAgentDataDir(agentId), "config.json");
+              // 讀現有（不存在則空 obj）→ merge 白名單 → 寫回
+              let existing: Record<string, unknown> = {};
+              if (existsSync(cfgPath)) {
+                try { existing = JSON.parse(readFileSync(cfgPath, "utf-8")) as Record<string, unknown>; } catch { /* 重寫 */ }
+              }
+              const allowed = ["boundProject", "label", "admin", "globalMemoryWrite"] as const;
+              const ignored: string[] = [];
+              for (const key of Object.keys(body)) {
+                if ((allowed as readonly string[]).includes(key)) {
+                  // 空字串視同刪掉欄位（讓使用者用空字串清除設定）
+                  if (body[key] === "" || body[key] === null) delete existing[key];
+                  else existing[key] = body[key];
+                } else {
+                  ignored.push(key);
+                }
+              }
+              writeFileSync(cfgPath, JSON.stringify(existing, null, 2), "utf-8");
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({
+                ok: true,
+                message: "已寫入 agent config（重啟後生效）",
+                writtenTo: cfgPath,
+                ignored: ignored.length > 0 ? ignored : undefined,
+              }));
+            } catch (err) {
+              res.writeHead(500); res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+            }
+          })();
+        });
         return;
       }
 
