@@ -938,7 +938,8 @@ export async function* agentLoop(
   },
 ): AsyncGenerator<AgentLoopEvent> {
   const { sessionManager, permissionGate, toolRegistry, safetyGuard, eventBus } = deps;
-  const { channelId, accountId, provider, projectId } = opts;
+  const { channelId, accountId, provider } = opts;
+  let projectId = opts.projectId;
   const platform = opts.platform ?? "discord";
   const spawnDepth = opts.spawnDepth ?? 0;
   const trace = opts.trace;
@@ -952,7 +953,7 @@ export async function* agentLoop(
   // ── Project Binding 解析 ────────────────────────────────────────────────────
   // 此 turn 用的 project cwd / memoryDir / claudeMd 在這一處取，後續注入 toolCtx
   // fail-soft：projectId 指向不存在的 project 或 manager 未初始化，binding=null 走全域
-  let _projectBinding: { cwd: string; memoryDir: string; claudeMd?: string } | null = null;
+  let _projectBinding: { projectId: string; cwd: string; memoryDir: string; claudeMd?: string } | null = null;
   if (projectId) {
     try {
       const { getProjectManager, getPlatformMemoryRoot } = await import("../projects/manager.js").then(async m => ({
@@ -964,6 +965,12 @@ export async function* agentLoop(
     } catch (err) {
       log.warn(`[agent-loop] projectId="${projectId}" 解析 ProjectBinding 失敗：${err instanceof Error ? err.message : String(err)}（走全域）`);
     }
+  }
+  // 把 raw projectId（可能是路徑字串）替換為 binding 內 normalized projectId（basename），
+  // 避免後續 atom_write / recall 用路徑當 namespace 撞 lancedb format / mkdir 路徑炸
+  // （Wells 2026-05-26 trace 655a2612 報告：boundProject="C:/Projects/TSLG" 直拼 projects\C:\Projects\TSLG）
+  if (_projectBinding?.projectId) {
+    projectId = _projectBinding.projectId;
   }
 
   // ── 1. 進門權限檢查 ────────────────────────────────────────────────────────
