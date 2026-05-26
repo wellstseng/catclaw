@@ -2995,7 +2995,7 @@ async function loadAgentConfigs() {
       html += '<span style="' + labelStyle + ';min-width:120px"><strong>' + a.id + '</strong>' + (a.label ? ' <span style="color:var(--fg3)">(' + a.label + ')</span>' : '') + bootBadge + adminBadge + '</span>';
       html += '<span style="' + labelStyle + '">boundProject:</span>';
       html += '<input id="agentcfg-bp-' + a.id + '" type="text" value="' + (a.boundProject || '') + '" placeholder="留空 = 無 agent-level 綁定" style="' + inputStyle + ';flex:1;min-width:280px;font-family:monospace">';
-      html += '<button class="btn btn-green btn-sm" onclick="saveAgentConfig(\'' + a.id + '\')">💾 儲存</button>';
+      html += '<button class="btn btn-green btn-sm" onclick="saveAgentConfig(\\'' + a.id + '\\')">💾 儲存</button>';
       html += '</div>';
     }
     list.innerHTML = html;
