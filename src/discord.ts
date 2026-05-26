@@ -817,12 +817,20 @@ async function handleMessage(
         }
       } catch (err) { log.debug(`[discord] account registry 無法存取：${err instanceof Error ? err.message : String(err)}`); }
 
-      // 頻道綁定的專案優先於帳號的 currentProject
+      // bound project 解析優先序：
+      //   channel.boundProject（per-channel） > agent.boundProject（per-agent，DM 也適用） > account.currentProject
+      // agent-level boundProject 讓特定 agent（如露米）在 DM / 沒設 channel 的場景仍綁專案
       const guildId = firstMessage.guild?.id ?? null;
       const coreChannelAccess = guildId
         ? getCoreChannelAccess(guildId, firstMessage.channelId)
         : undefined;
-      const resolvedProjectId = coreChannelAccess?.boundProject ?? currentProjectId;
+      let agentBoundProject: string | undefined;
+      try {
+        const { getBootAgentId, loadAgentConfig } = await import("./core/agent-loader.js");
+        const aid = getBootAgentId();
+        if (aid) agentBoundProject = loadAgentConfig(aid)?.boundProject;
+      } catch { /* agent-loader 未就緒：靜默 */ }
+      const resolvedProjectId = coreChannelAccess?.boundProject ?? agentBoundProject ?? currentProjectId;
 
       // ── Rate Limit 檢查 ─────────────────────────────────────────────────
       const rateLimiter = getPlatformRateLimiter();

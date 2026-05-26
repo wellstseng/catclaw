@@ -672,6 +672,12 @@ export interface AgentConfig {
   admin?: boolean;
   /** 允許寫入全域記憶（預設 false） */
   globalMemoryWrite?: boolean;
+  /**
+   * Agent-level bound project（path 或 projectId）。
+   * 優先序：channel.boundProject > agent.boundProject > account.currentProject
+   * 用途：讓 agent（如露米）在 DM / 沒設 channel boundProject 的場景仍綁定特定 project。
+   */
+  boundProject?: string;
 }
 
 /** 多 Agent 單一 bot 入口設定 */
