@@ -1532,6 +1532,14 @@ export async function* agentLoop(
   let zeroProgressBailed = false;             // 為 0-progress 中止 → 走 post-loop notice 分支
   let emptyToolUseCount = 0;                  // stopReason=tool_use 但 toolCalls=[] 的累計次數
   let emptyToolUseExhausted = false;          // emptyToolUseCount 觸頂 → 走 post-loop notice 分支
+  // L3 Pattern Detection — STUCK-LOOP BLOCKED 累計：≥3 次 → 強制 break loop
+  let stuckLoopBlockCount = 0;
+  let stuckLoopBailed = false;
+  // L3 Tool Cluster Detection — subagents.{wait,list,status} 累計呼叫，≥6 次強制 break
+  let subagentPollCount = 0;
+  let subagentPollBailed = false;
+  // L5 max_tokens 續接耗盡 → 走 post-loop notice 分支
+  let maxTokensExhausted = false;
   const turnStartMs = Date.now();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -2040,6 +2048,7 @@ export async function* agentLoop(
         continuationCount++;
         if (continuationCount > MAX_CONTINUATIONS) {
           log.warn(`[agent-loop] max_tokens 續接已達上限 (${MAX_CONTINUATIONS})，結束 turn`);
+          maxTokensExhausted = true;
           break;
         }
         log.info(`[agent-loop] [loop=${loopCount}] output 被截斷（max_tokens），自動續接 (${continuationCount}/${MAX_CONTINUATIONS})`);
@@ -2557,6 +2566,33 @@ export async function* agentLoop(
       // 把 tool results 加入 messages
       messages.push(makeToolResultMessage(toolResults));
 
+      // ── L3 Pattern Detection：STUCK-LOOP BLOCKED 累計 + subagent polling cluster ──────
+      // STUCK-LOOP：BeforeToolCall 偵測到工具迴圈 ≥3 次 → 強制中止 turn（避免 LLM 繞道繼續）
+      // subagent polling cluster：本 turn subagents.{wait,list,status} 累計 ≥6 次 → 強制中止
+      {
+        for (const r of toolResults) {
+          if (r.is_error && typeof r.content === "string" && r.content.includes("[STUCK-LOOP]")) {
+            stuckLoopBlockCount++;
+          }
+        }
+        if (stuckLoopBlockCount >= 3) stuckLoopBailed = true;
+
+        for (const tc of streamResult.toolCalls) {
+          if (tc.name === "subagents") {
+            const action = (tc.params as Record<string, unknown>)?.["action"];
+            if (action === "wait" || action === "list" || action === "status") {
+              subagentPollCount++;
+            }
+          }
+        }
+        if (subagentPollCount >= 6) subagentPollBailed = true;
+
+        if (stuckLoopBailed || subagentPollBailed) {
+          log.warn(`[agent-loop] [loop=${loopCount}] L3 強制中止：stuckLoopBlockCount=${stuckLoopBlockCount} subagentPollCount=${subagentPollCount}`);
+          break;
+        }
+      }
+
       // ── 連續工具錯誤偵測：本 iter 工具結果全失敗 → 累計；任一成功 → 清零 ──────
       //   防 buggy 死循環（LLM 輪換工具全錯卻不停）；Claude Code 沒有這個，純多一層防呆網。
       if (toolResults.length > 0) {
@@ -2659,6 +2695,18 @@ export async function* agentLoop(
     // 0-progress 中止（防乾打草稿）
     bailNotice = `\n\n⏹️ 偵測到模型連續 ${ZERO_PROGRESS_BAIL} 輪沒實質進展（無工具呼叫且文本 < ${ZERO_PROGRESS_TEXT_THRESHOLD} 字），自動中止本輪以省 token。請補充更具體的指示再試。`;
     log.warn(`[agent-loop] 0-progress 中止：sessionKey=${sessionKey}`);
+  } else if (stuckLoopBailed) {
+    // L3：STUCK-LOOP BLOCKED 累計 ≥3 → 強制中止（LLM 繞道繼續、不肯 end_turn）
+    bailNotice = `\n\n🛑 偵測到工具迴圈反覆觸發（STUCK-LOOP BLOCKED ${stuckLoopBlockCount} 次），本輪強制中止以省 token。模型可能卡在類似 args / 交替工具 / 連續同 tool 的死循環。建議：拆小任務、spawn_subagent 外包、或重述需求更具體。`;
+    log.warn(`[agent-loop] L3 stuck-loop 強制中止：sessionKey=${sessionKey} count=${stuckLoopBlockCount}`);
+  } else if (subagentPollBailed) {
+    // L3：subagents.{wait,list,status} 累計 ≥6 → polling 反模式，強制中止
+    bailNotice = `\n\n🛑 偵測到 subagent polling 反模式（subagents 工具累計呼叫 ${subagentPollCount} 次），本輪強制中止。spawn_subagent 後直接 end_turn 即可，平台會在子完成時 wake 你。不要主動 wait/list/status 等待。`;
+    log.warn(`[agent-loop] L3 subagent-poll 強制中止：sessionKey=${sessionKey} count=${subagentPollCount}`);
+  } else if (maxTokensExhausted) {
+    // L5：max_tokens 續接 3 次仍未完成 → 補通知讓使用者知道（之前是 silent break）
+    bailNotice = `\n\n⚠️ 回應被截斷 ${MAX_CONTINUATIONS} 次仍未完成（output token 上限），本輪強制中止。建議：拆小任務、spawn_subagent 處理大段內容、或讓使用者分批詢問。`;
+    log.warn(`[agent-loop] L5 max_tokens 續接耗盡：sessionKey=${sessionKey}`);
   }
   if (bailNotice) {
     fullResponse = fullResponse.trim() ? fullResponse + bailNotice : bailNotice.trimStart();
