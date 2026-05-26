@@ -6913,7 +6913,9 @@ export class DashboardServer {
         // /api/traces/:traceId/export — 匯出單筆 trace 為 Markdown
         const exportMatch = url.match(/^\/api\/traces\/([a-f0-9-]+)\/export/);
         if (exportMatch) {
-          const entry = traceStore.getById(exportMatch[1]!);
+          // 先查 disk store，沒命中再查 live（trace 還沒 finalize 時）
+          const entry = traceStore.getById(exportMatch[1]!)
+            ?? MessageTrace.getLiveTraces().find(t => t.traceId === exportMatch[1]!);
           if (!entry) { res.writeHead(404); res.end(JSON.stringify({ error: "Trace not found" })); return; }
           const ctxStore = getTraceContextStore();
           const ctx = ctxStore?.get(exportMatch[1]!);
