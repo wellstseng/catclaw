@@ -814,16 +814,15 @@ label.cfg-toggle { min-width: 36px; }
 
 <!-- Config -->
 <div id="pane-config" class="pane">
-  <div class="card" style="margin-bottom:16px">
-    <h2>Agent 設定（白名單欄位，寫回 agents/{id}/config.json）
-      <button class="btn btn-sm" style="float:right" onclick="loadAgentConfigs()">↻ 重新載入</button>
-    </h2>
-    <p style="font-size:0.72rem;color:var(--fg3);margin:0 0 8px">
-      ⚠ 修改後需 <code>./catclaw restart</code> 才生效。<code>boundProject</code> 可填 projectId 或絕對路徑（如 <code>C:/Projects/TSLG</code>）— path 會 in-memory 推導三維度。
-    </p>
-    <div id="agent-configs-msg" style="font-size:0.82rem;margin-bottom:6px"></div>
-    <div id="agent-configs-list" style="font-size:0.85rem">載入中...</div>
+  <h3 style="margin:0 0 8px;color:var(--fg2);font-size:0.95rem">Agent 設定（白名單欄位，寫回 agents/{id}/config.json）</h3>
+  <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
+    <button class="btn" onclick="loadAgentConfigs()">↻ 重新載入</button>
+    <div id="agent-configs-msg" class="msg" style="flex:1"></div>
+    <p style="font-size:0.72rem;color:var(--fg3);margin:0">⚠ 修改後需 <code>./catclaw restart</code> 才生效。<code>boundProject</code> 可填 projectId 或絕對路徑。</p>
   </div>
+  <div id="agent-configs-list" style="font-size:0.85rem;margin-bottom:24px">載入中...</div>
+
+  <h3 style="margin:0 0 8px;color:var(--fg2);font-size:0.95rem;border-top:1px solid var(--border);padding-top:16px">catclaw.json（完整編輯）</h3>
   <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
     <button class="btn" onclick="loadCfg()">↻ 讀取</button>
     <button class="btn btn-green" onclick="saveCfg()">💾 備份後儲存</button>
