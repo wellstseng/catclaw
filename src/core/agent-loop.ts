@@ -767,7 +767,7 @@ async function runBeforeToolCall(
     const callSig = JSON.stringify(call.params);
     const identicalCount = recentSame.filter(c => JSON.stringify(c.params) === callSig).length;
     if (identicalCount >= 3) {
-      return { blocked: true, reason: `偵測到工具迴圈：${call.name} 以相同參數連續呼叫 ${identicalCount} 次` };
+      return { blocked: true, reason: `[STUCK-LOOP] 偵測到工具迴圈：${call.name} 以相同參數連續呼叫 ${identicalCount} 次。**請立刻 end_turn 回覆使用者**，不要繞用其他工具繼續嘗試（會被 catclaw 強制中止）。` };
     }
   }
   // 4b. 寬鬆防線：同 tool 最近 10 次中 ≥8 次、其中 ≥5 次「失敗且 args 與當前相似」→ 疑似無效重試
@@ -781,7 +781,7 @@ async function runBeforeToolCall(
       argsSignature(c.name, c.params as Record<string, unknown>) === curSig
     ).length;
     if (failingSimilar >= 5) {
-      return { blocked: true, reason: `${call.name} 在最近 10 次中有 ${failingSimilar} 次失敗且 args 相似，疑似無效重試` };
+      return { blocked: true, reason: `[STUCK-LOOP] ${call.name} 在最近 10 次中有 ${failingSimilar} 次失敗且 args 相似，疑似無效重試。**請立刻 end_turn**，告訴使用者目前進度與卡點，由使用者決定下一步。` };
     }
   }
 
@@ -798,7 +798,7 @@ async function runBeforeToolCall(
       const isIterativeDev = ITERATIVE_DEV_TOOLS.has(r4[0]) && ITERATIVE_DEV_TOOLS.has(r4[1]);
       const involvesToolSearch = r4[0] === "tool_search" || r4[1] === "tool_search";
       if (!isIterativeDev && !involvesToolSearch) {
-        return { blocked: true, reason: `偵測到交替工具迴圈：${r4[1]}↔${r4[0]}（已重複 2 輪）` };
+        return { blocked: true, reason: `[STUCK-LOOP] 偵測到交替工具迴圈：${r4[1]}↔${r4[0]}（已重複 2 輪）。**請立刻 end_turn**，這個 pattern 通常代表卡死，繼續嘗試只會浪費 token。子任務外包給 spawn_subagent 或讓使用者介入。` };
       }
     }
   }
@@ -814,7 +814,7 @@ async function runBeforeToolCall(
   }
   const sameToolLimit = config.safety?.maxSameToolPerTurn ?? MAX_SAME_TOOL_PER_TURN_DEFAULT;
   if (consecutiveSame >= sameToolLimit) {
-    return { blocked: true, reason: `${call.name} 已連續呼叫 ${consecutiveSame} 次（上限 ${sameToolLimit}），疑似卡死在同一工具，請改用其他方式或回覆使用者` };
+    return { blocked: true, reason: `[STUCK-LOOP] ${call.name} 已連續呼叫 ${consecutiveSame} 次（上限 ${sameToolLimit}），疑似卡死在同一工具。**請立刻 end_turn 回覆使用者目前進度**，不要切換到別的工具繼續嘗試 — 那只會耗更多 token，且 catclaw 會偵測「交替工具迴圈」再次 BLOCK。` };
   }
 
   // 5. Reversibility Assessment
