@@ -373,7 +373,7 @@ export const tool: Tool = {
       provider:   { type: "string",  description: "指定 provider ID（預設繼承父）" },
       runtime:    { type: "string",  description: "default | coding | explore（唯讀搜尋）| plan（架構規劃）| build（程式碼建構）| review（程式碼審查）| acp（Claude CLI）" },
       maxTurns:   { type: "number",  description: "最大 turn 數（預設 10）" },
-      timeoutMs:  { type: "number",  description: "逾時毫秒（預設 120000）" },
+      timeoutMs:  { type: "number",  description: "逾時毫秒（預設 120000；0 = 無 timeout，對齊 agent-loop turnTimeoutToolCallMs=0 語意）" },
       async:      { type: "boolean", description: "true = 立即回傳 runId，背景執行（預設 false）" },
       keepSession:{ type: "boolean", description: "完成後保留 session（debug 用，預設 false）" },
       mode:       { type: "string",  description: "run（預設，one-shot）| session（持久，需搭配 keepSession:true）" },
@@ -432,7 +432,13 @@ export const tool: Tool = {
     const providerId = modelParam ?? agentConfig?.model ?? (params["provider"] ? String(params["provider"]) : undefined);
     const runtime    = String(params["runtime"] ?? "default");
     const maxTurns   = typeof params["maxTurns"] === "number" ? params["maxTurns"] : (agentConfig?.maxTurns ?? 10);
-    const timeoutMs  = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : (agentConfig?.timeoutMs ?? 120_000);
+    // timeoutMs 解析：0 視為「無 timeout」（對齊 agent-loop turnTimeoutToolCallMs=0 語意）
+    // 若直接傳 0，setTimeout(reject, 0+1000ms) 會在 1 秒後立刻 timeout（露米診斷案例）
+    // 優先序：params.timeoutMs > agentConfig.timeoutMs > catclaw.json subagents.defaultTimeoutMs > 120_000
+    const _cfgMod = await import("../../core/config.js");
+    const _cfgDefault = _cfgMod.config?.subagents?.defaultTimeoutMs ?? 120_000;
+    const _rawTimeoutMs = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : (agentConfig?.timeoutMs ?? _cfgDefault);
+    const timeoutMs  = _rawTimeoutMs === 0 ? Number.MAX_SAFE_INTEGER : _rawTimeoutMs;
     const isAsync          = params["async"] === true;
     const keepSession      = agentParam ? true : params["keepSession"] === true;  // agent 身份強制 keepSession
     const mode             = (params["mode"] as "run" | "session") ?? "run";
