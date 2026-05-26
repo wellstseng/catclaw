@@ -56,6 +56,11 @@ const IGNORE_PATTERNS = [
   /\[skill-(candidate|judge|improvement)\]/i,
   // turn 失敗指標但不是程式 error — 來自 audit / candidate / advice 等
   /\[turn-audit\]/i,
+  // tool 執行失敗（白名單擋 / permission denied / tool 自己 fail）— 不是 catclaw runtime error，
+  // trace 系統已經記錄；包含「(toolName) :: error」格式
+  /\[agent-loop\]\s+\[使用工具\][^:]*::\s+error/i,
+  // fix-escalation 是 catclaw 內部 retry 計數機制，不是錯誤本身
+  /\[fix-escalation\]/i,
 ];
 
 // ── State ───────────────────────────────────────────────────────────────────
