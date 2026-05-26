@@ -181,6 +181,24 @@ const toolsUsageModule: PromptModule = {
   },
 };
 
+const subagentProtocolModule: PromptModule = {
+  name: "subagent-protocol",
+  priority: 22,
+  build: () => {
+    return [
+      "## Subagent / 背景 Job 協定（省 token 鐵則）",
+      "- **spawn_subagent / 啟動 BG job 後是 fire-and-forget**：建議直接 end_turn，平台會在子完成（或失敗）時自動 wake 你進入新 turn，並把結果摘要注入。",
+      "- **禁止 polling**：不要呼叫 `subagents wait` / 反覆 `list` / `status` 等子完成。每次 polling 都讓本 turn 多一輪 LLM call（cache write + input token 累計），是反模式。",
+      "- **判斷準則**：",
+      "  - 主任務必須等子結果 → **立刻 end_turn**（最省 token）",
+      "  - 本 turn 還有獨立工作（不依賴子結果）→ 做完獨立工作後 end_turn",
+      "  - 想知道子目前狀態 → 一次 `subagents list` 看個概況就 end_turn，不要連 wait",
+      "- **若收到 BLOCKED「卡死 / 交替迴圈」訊息** → 立即 end_turn 回覆使用者，不要繞用其他工具繼續嘗試。",
+      "- catclaw 已建好 wake-agent 機制（subagent / bg job 完成都會 wake），「end_turn 後接不到結果」是過時的擔心。",
+    ].join("\n");
+  },
+};
+
 const codingRulesModule: PromptModule = {
   name: "coding-rules",
   priority: 30,
@@ -513,6 +531,7 @@ const builtinModules: PromptModule[] = [
   claudeMdModule,
   aidocsIndexModule,
   toolsUsageModule,
+  subagentProtocolModule,
   codingRulesModule,
   gitRulesModule,
   outputFormatModule,

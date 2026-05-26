@@ -90,7 +90,9 @@ export const tool: Tool = {
 
       case "wait": {
         if (!runId) return { error: "wait 需要指定 runId" };
-        const timeoutMs = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : 60_000;
+        // wait 預設 timeout 從 60s 縮到 5s — 「polling 是反模式」，end_turn 後平台會自動 wake。
+        // 保留 wait action 是給「本 turn 還有極短工作必須等子結果」的場景，不是給長時間等待用。
+        const timeoutMs = typeof params["timeoutMs"] === "number" ? Math.min(params["timeoutMs"], 30_000) : 5_000;
         const start = Date.now();
 
         while (Date.now() - start < timeoutMs) {
@@ -108,7 +110,11 @@ export const tool: Tool = {
           await new Promise(r => setTimeout(r, 500));
         }
 
-        return { result: { status: "timeout", result: null } };
+        // wait timeout：明確告訴 LLM「停止 polling，end_turn 等 wake」
+        return { result: {
+          status: "still-running",
+          hint: "子 agent 仍在執行中。**請 end_turn**——平台會在子完成時自動 wake 你進入新 turn。不要再呼叫 wait/status/list polling，會浪費 token。",
+        } };
       }
 
       case "resume": {

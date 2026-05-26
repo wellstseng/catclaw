@@ -792,7 +792,7 @@ export const tool: Tool = {
           status: "spawned",
           runId: record.runId,
           sessionKey: record.childSessionKey,
-          note: "async 模式：subagent 在背景執行，結果會在完成時自動注入你後續的 turn。**不要 end_turn**——可以繼續做其他工作，或呼叫 subagents 工具（action: wait/list/kill/steer）。end_turn 後 turn 結束就接不到結果了。",
+          note: "async 模式：subagent 在背景執行。**建議直接 end_turn**——平台會在子完成（或失敗）時自動 wake 你進入新 turn，並注入結果摘要。**不要 polling**：呼叫 `subagents wait` / 反覆 list/status 會浪費 LLM tokens 且阻塞本 turn。如果這個 turn 還有獨立工作（不依賴子結果），可以繼續做完再 end_turn；如果主任務必須等子結果，**立刻 end_turn 是最省 token 的策略**。",
         } satisfies SpawnResult,
       };
     }
