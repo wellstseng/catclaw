@@ -148,7 +148,14 @@ export const tool: Tool = {
         }
       }
 
-      const proc = spawn(command, [], {
+      // Windows 平台：spawn 前綴 `chcp 65001>nul & ` 強制 cmd.exe 用 UTF-8 codepage
+      // 預設 CP950（zh-TW）→ stdout 含中文字會被 Node default utf8 decode 弄成亂碼
+      // chcp 65001 改 UTF-8 後 cmd 輸出 UTF-8 bytes，跟 Node toString() 對齊
+      // `>nul` 吞掉 "Active code page: 65001" 提示；`&` 不檢查 exit code，chcp 失敗也繼續
+      const finalCommand = process.platform === "win32"
+        ? `chcp 65001>nul & ${command}`
+        : command;
+      const proc = spawn(finalCommand, [], {
         cwd,
         env: safeEnv,
         shell: true,
