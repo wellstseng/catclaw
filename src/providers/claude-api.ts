@@ -35,10 +35,23 @@ import type {
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-// max_output_tokens 預設：models-config.json `maxOutputTokens` > env CATCLAW_DEFAULT_MAX_TOKENS > 8192
-// 不再寫死，user 可在 models-config.json 設 `maxOutputTokens: 32000` 等更高值
+// max_output_tokens 預設優先序：
+//   opts.maxTokens（caller 顯式）
+//   > model catalog maxTokens（pi-ai 該 model 的官方上限，如 claude-opus 32K）
+//   > models-config.json `maxOutputTokens`（user 全域設定）
+//   > env CATCLAW_DEFAULT_MAX_TOKENS
+//   > 8192（最後 fallback）
 const HARDCODED_FALLBACK_MAX_TOKENS = 8192;
-function getDefaultMaxTokens(): number {
+function getDefaultMaxTokens(modelId?: string): number {
+  // Layer 1: model catalog 的 maxTokens（pi-ai 官方上限）
+  if (modelId) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const m = getModel("anthropic", modelId as any) as { maxTokens?: number } | undefined;
+      if (m?.maxTokens && m.maxTokens > 0) return m.maxTokens;
+    } catch { /* fall through */ }
+  }
+  // Layer 2: models-config.json 全域 maxOutputTokens
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { config } = require("../core/config.js") as typeof import("../core/config.js");
@@ -46,8 +59,10 @@ function getDefaultMaxTokens(): number {
     const fromConfig = typeof raw?.["maxOutputTokens"] === "number" ? raw["maxOutputTokens"] as number : undefined;
     if (fromConfig && fromConfig > 0) return fromConfig;
   } catch { /* fall through */ }
+  // Layer 3: env
   const fromEnv = Number(process.env["CATCLAW_DEFAULT_MAX_TOKENS"]);
   if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  // Layer 4: 最後 fallback
   return HARDCODED_FALLBACK_MAX_TOKENS;
 }
 
@@ -369,7 +384,7 @@ export class ClaudeApiProvider implements LLMProvider {
       log.info(`[claude:${this.id}] thinking=${opts.thinking ?? "off"} → reasoning ${opts.thinking ? `已送入 Anthropic 請求（${opts.thinking}）` : "未送"}`);
       const stream = streamSimpleAnthropic(model, context, {
         apiKey: credential,
-        maxTokens: opts.maxTokens ?? getDefaultMaxTokens(),
+        maxTokens: opts.maxTokens ?? getDefaultMaxTokens(this.modelId),
         signal: childAc.signal,
         ...(skipTemperature ? {} : { temperature: opts.temperature }),
         cacheRetention: "long",

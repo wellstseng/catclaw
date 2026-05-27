@@ -22,6 +22,7 @@
 import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
+import { getModel } from "@mariozechner/pi-ai";
 import { log } from "../logger.js";
 import type {
   LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent, ToolCall,
@@ -402,8 +403,18 @@ export class CodexOAuthProvider implements LLMProvider {
     // max_output_tokens：先試傳，server 拒絕（HTTP 400 `Unsupported parameter`）則 fallback 移除
     // OpenAI Responses API 公開規格支援此參數（OpenAI 文檔），但 ChatGPT codex backend 可能不同
     // 之前版本註解寫「不接受」— Wells 質疑此寫法已過時，改試傳並動態適配
-    if (typeof opts.maxTokens === "number" && opts.maxTokens > 0) {
-      body["max_output_tokens"] = opts.maxTokens;
+    // 預設取 model catalog 的 maxTokens（如 gpt-5.5 → 128000），不再硬編碼 8192
+    let resolvedMaxTokens = opts.maxTokens;
+    if (!resolvedMaxTokens) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const m = getModel("openai-codex", this.modelId as any) as { maxTokens?: number } | undefined;
+        if (m?.maxTokens && m.maxTokens > 0) resolvedMaxTokens = m.maxTokens;
+      } catch { /* model catalog 查不到就不傳，由 server 自己 default */ }
+    }
+    if (resolvedMaxTokens && resolvedMaxTokens > 0) {
+      body["max_output_tokens"] = resolvedMaxTokens;
+      log.debug(`[codex-oauth:${this.id}] max_output_tokens=${resolvedMaxTokens}（${opts.maxTokens ? "opts" : "model catalog"}）`);
     }
 
     // Codex 端點：{baseUrl}/codex/responses
