@@ -1702,7 +1702,22 @@ export async function* agentLoop(
   {
     const userText = (typeof prompt === "string" ? prompt : "").trim();
     const LONG_TASK_KEYWORDS = /分析|報告|規格|文件|文檔|文案|規劃|計畫|計劃|藍圖|綜觀|拆解|整理|批次|重構|migrate|產出|寫一份|寫一個.*md|寫.*\.md|多個|每個|N 個|各個|逐一|逐個|完整.*寫|完整.*產|全部.*寫/i;
-    if (userText.length >= 30 && LONG_TASK_KEYWORDS.test(userText)) {
+    // 直接命中：user prompt ≥ 30 字 + 長任務關鍵字
+    let triggered = userText.length >= 30 && LONG_TASK_KEYWORDS.test(userText);
+    let triggerReason = "user-prompt";
+    // History-based 偵測：user prompt 不命中但 history 最近 3 條訊息（user + assistant）內含長任務關鍵字
+    // 場景：續接型短 prompt（如「繼續」「OK」「執行」）— LLM 從 history context 進長任務，需 reminder
+    if (!triggered && processedHistory.length > 0) {
+      const recentMsgs = processedHistory.slice(-3);
+      const recentText = recentMsgs
+        .map(m => typeof m.content === "string" ? m.content : "")
+        .join("\n");
+      if (recentText.length > 0 && LONG_TASK_KEYWORDS.test(recentText)) {
+        triggered = true;
+        triggerReason = "history";
+      }
+    }
+    if (triggered) {
       const assessmentMsg = [
         "🎯 [平台：長任務評估]",
         "你收到的任務含「分析 / 報告 / 規格 / 規劃 / 多檔 / 逐個」等關鍵字 — 屬於長任務範疇。**動手前必須先評估拆分**：",
@@ -1726,7 +1741,7 @@ export async function* agentLoop(
         "若評估後判定**不是長任務**（如 user 只問 1 個快速問題）→ 忽略此提醒直接處理。",
       ].join("\n");
       messages.push({ role: "user", content: assessmentMsg });
-      log.info(`[agent-loop] long-task detection 命中（user text ${userText.length} chars） → 注入評估提示`);
+      log.info(`[agent-loop] long-task detection 命中（trigger=${triggerReason}） → 注入評估提示`);
     }
   }
 
