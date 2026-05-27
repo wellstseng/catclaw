@@ -435,10 +435,14 @@ export const tool: Tool = {
     // timeoutMs 解析：0 視為「無 timeout」（對齊 agent-loop turnTimeoutToolCallMs=0 語意）
     // 若直接傳 0，setTimeout(reject, 0+1000ms) 會在 1 秒後立刻 timeout（露米診斷案例）
     // 優先序：params.timeoutMs > agentConfig.timeoutMs > catclaw.json subagents.defaultTimeoutMs > 120_000
+    // **不能用 Number.MAX_SAFE_INTEGER**：Node.js setTimeout delay > 2147483647 (INT32_MAX) 會 clip 成
+    // 1ms，subagent 啟動後 ~1 秒就 timeout（trace 3232fde3 0.9 秒 aborted bail notice 顯示
+    // 9007199254740991ms 就是這條 bug）。改用 7 天作為「無 timeout」代理值（INT32_MAX 內，安全）。
     const _cfgMod = await import("../../core/config.js");
     const _cfgDefault = _cfgMod.config?.subagents?.defaultTimeoutMs ?? 120_000;
     const _rawTimeoutMs = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : (agentConfig?.timeoutMs ?? _cfgDefault);
-    const timeoutMs  = _rawTimeoutMs === 0 ? Number.MAX_SAFE_INTEGER : _rawTimeoutMs;
+    const NO_TIMEOUT_PROXY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days = 604800000ms（< INT32_MAX 2147483647 ms 不會被 setTimeout clip）
+    const timeoutMs  = _rawTimeoutMs === 0 ? NO_TIMEOUT_PROXY_MS : Math.min(_rawTimeoutMs, NO_TIMEOUT_PROXY_MS);
     const isAsync          = params["async"] === true;
     const keepSession      = agentParam ? true : params["keepSession"] === true;  // agent 身份強制 keepSession
     const mode             = (params["mode"] as "run" | "session") ?? "run";
