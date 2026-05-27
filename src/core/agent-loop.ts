@@ -1557,6 +1557,8 @@ export async function* agentLoop(
   const SUBAGENT_POLL_CYCLE_THRESHOLD = 6;
   // L5 max_tokens 續接耗盡 → 走 post-loop notice 分支
   let maxTokensExhausted = false;
+  // max_tokens + 0 tool 時自動把寫到的內容存到 _staging/auto-save-*.md（避免內容丟失 + 不再抱怨 LLM）
+  let autoSavedPath: string | null = null;
   const turnStartMs = Date.now();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -2122,9 +2124,28 @@ export async function* agentLoop(
         const hadToolCallThisIter = streamResult.toolCalls.length > 0;
         if (!hadToolCallThisIter) {
           // 反模式：LLM 在 inline reply 寫長文（沒呼叫任何 tool）撞 max_tokens
-          // 不續接，break + bail notice 引導 LLM 改用 write_file
-          log.warn(`[agent-loop] [loop=${loopCount}] max_tokens + 0 tool call（inline 長文反模式），立刻 break 不續接`);
+          // 不續接，break + 自動把寫到的內容存到 _staging/auto-save-*.md 避免丟失
+          log.warn(`[agent-loop] [loop=${loopCount}] max_tokens + 0 tool call（inline 長文反模式），立刻 break 並自動存檔`);
           maxTokensExhausted = true;
+          // 自動存檔：把 fullResponse 寫到 _staging/auto-save-{ts}.md
+          try {
+            const partialText = tracker.getFullResponse();
+            if (partialText && partialText.trim().length > 100) {
+              const { writeFileSync, mkdirSync } = await import("node:fs");
+              const { join } = await import("node:path");
+              const { homedir } = await import("node:os");
+              const stagingDir = join(homedir(), ".catclaw", "workspace", "_staging");
+              mkdirSync(stagingDir, { recursive: true });
+              const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+              const safeKey = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_").slice(-30);
+              autoSavedPath = join(stagingDir, `auto-save-${ts}-${safeKey}.md`);
+              const header = `# Auto-saved output (max_tokens + 0 tool call)\n\n- 來源 trace: ${trace?.traceId ?? "n/a"}\n- session: ${sessionKey}\n- 時間: ${new Date().toISOString()}\n- output tokens: ${streamResult.usage.output}\n\n---\n\n`;
+              writeFileSync(autoSavedPath, header + partialText, "utf-8");
+              log.info(`[agent-loop] max_tokens 自動存檔 → ${autoSavedPath} (${partialText.length} chars)`);
+            }
+          } catch (e) {
+            log.warn(`[agent-loop] max_tokens 自動存檔失敗：${e instanceof Error ? e.message : String(e)}`);
+          }
           break;
         }
         continuationCount++;
@@ -2825,11 +2846,13 @@ export async function* agentLoop(
     bailNotice = `\n\n⏹️ 偵測到模型連續 ${ZERO_PROGRESS_BAIL} 輪沒實質進展（無工具呼叫且文本 < ${ZERO_PROGRESS_TEXT_THRESHOLD} 字），自動中止本輪以省 token。請補充更具體的指示再試。`;
     log.warn(`[agent-loop] 0-progress 中止：sessionKey=${sessionKey}`);
   } else if (maxTokensExhausted) {
-    // L5：max_tokens 撞上限（兩種 case）：
-    // (a) 續接 N 次仍未完成（有 tool call）→ 真的任務太大寫不完
-    // (b) 0 tool call 撞 max_tokens → LLM 進 inline 寫長文反模式（trace eb4a5751）
-    bailNotice = `\n\n⚠️ 回應被截斷未完成（output token 8192 上限）。\n\n**最常見原因**：你在 reply 內 inline 寫長文（報告/規劃/說明）撞上限。**正確做法**：用 \`write_file\` 把內容寫到 \`.md\` 檔，不要在 reply 內 inline 寫超過 500 字的長文。\n\n下個 turn 請用 \`write_file\` 直接落檔，或拆小任務（每段獨立一次 turn 處理）。`;
-    log.warn(`[agent-loop] L5 max_tokens 觸發：sessionKey=${sessionKey}`);
+    // L5：max_tokens 撞上限（已自動把內容存到 _staging/auto-save-*.md 避免丟失）
+    if (autoSavedPath) {
+      bailNotice = `\n\n📥 輸出超過 8192 token 上限，已自動存檔到：\n\`${autoSavedPath}\`\n\n下個 turn 想接續：直接 \`read_file\` 讀此檔取回內容，或 \`write_file\` 移到正式位置。`;
+    } else {
+      bailNotice = `\n\n⚠️ 回應被截斷未完成（output token 上限）。下個 turn 請用 \`write_file\` 落檔或拆小任務。`;
+    }
+    log.warn(`[agent-loop] L5 max_tokens 觸發：sessionKey=${sessionKey} autoSaved=${autoSavedPath ?? "none"}`);
   } else if (llmFailureExhausted) {
     // LLM provider 連續 retry 失敗（ChatGPT 後端卡 / network timeout / 5xx）→ fail-safe response
     bailNotice = `\n\n⚠️ LLM provider 多次重試失敗，本輪中止。可能原因：API 後端暫時不可用、network 卡死、provider 過載。\n錯誤：${llmFailureReason}\n\n建議：稍後重試，或在 Dashboard 切換 fallback provider。`;
