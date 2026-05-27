@@ -76,8 +76,12 @@ export const tool: Tool = {
           const deps = t.blockedBy.length > 0 ? ` (blocked by #${t.blockedBy.join(",#")})` : "";
           return `${statusIcon} #${t.id} [${t.status}] ${t.subject}${deps}`;
         }).join("\n");
-        // Emit task:ui event for Discord Components v2 rendering
-        if (tasks.length > 0 && ctx.channelId) {
+        // Emit task:ui event for Discord Components v2 rendering（預設 OFF：Wells 偏好一條龍跑不要 button UI）
+        // 開啟方式：catclaw.json `discord.taskUi.enabled = true`
+        const cfgMod = await import("../../core/config.js");
+        const taskUiEnabled = (cfgMod.config?.discord as unknown as Record<string, unknown>)?.["taskUi"];
+        const taskUiOn = taskUiEnabled && typeof taskUiEnabled === "object" && (taskUiEnabled as Record<string, unknown>)["enabled"] === true;
+        if (taskUiOn && tasks.length > 0 && ctx.channelId) {
           ctx.eventBus.emit("task:ui", ctx.channelId, tasks.map(t => ({
             id: t.id,
             subject: t.subject,
