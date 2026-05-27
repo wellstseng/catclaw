@@ -246,6 +246,11 @@ async function runTool(p: P): Promise<string> {
     case "delete": {
       const ch = channelId(p);
       const msgId = str(p, "messageId", true)!;
+      // Audit log：mcp server 在 child process 跑，沒有 ctx.accountId context，
+      // 但仍記錄「mcp 端有人呼 delete」讓「訊息消失」可追溯。
+      // catclaw builtin discord tool 端有 owner check（src/tools/builtin/discord.ts），
+      // mcp 端目前不擋（cli-bridge agent 可能合法需要），只 audit。
+      process.stderr.write(`[mcp:discord:delete] AUDIT channel=${ch} messageId=${msgId}\n`);
       await discordFetch("DELETE", `/channels/${ch}/messages/${msgId}`);
       return "訊息已刪除";
     }
