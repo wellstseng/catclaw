@@ -407,8 +407,15 @@ export class CodexOAuthProvider implements LLMProvider {
 
     // 401 retry：Codex CLI（共用 auth.json）剛好在我們發送的瞬間 refresh 過 → server 認新 token
     // → 我們手上的舊 token 直接被吊銷 → 401。這時丟掉 cache 重讀檔再試一次。
+    // Connection timeout：fetch 自己沒 timeout，若 server 不回 response headers（trace fba4c71e
+    // ChatGPT 後端卡死案例）會等到上層 turn-level timeout（300s）。加 60s connection timeout
+    // 合併到 signal，提早 abort 讓 callWithRetry 接手 retry。stream idle watchdog 在 response.ok
+    // 後接手（line 343），不重疊。
+    const FETCH_CONNECTION_TIMEOUT_MS = 60_000;
     let response: Response;
     while (true) {
+      const connectionTimeoutSignal = AbortSignal.timeout(FETCH_CONNECTION_TIMEOUT_MS);
+      const combinedSignal = AbortSignal.any([controller.signal, connectionTimeoutSignal]);
       response = await fetch(codexUrl, {
         method: "POST",
         headers: {
@@ -420,7 +427,12 @@ export class CodexOAuthProvider implements LLMProvider {
           "originator": "pi",
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
+        signal: combinedSignal,
+      }).catch((err) => {
+        if (connectionTimeoutSignal.aborted) {
+          throw new Error(`[codex-oauth:${this.id}] connection timeout (${FETCH_CONNECTION_TIMEOUT_MS}ms 內未收到 response headers)`);
+        }
+        throw err;
       });
 
       if (response.status === 401 && !triedRefresh) {
