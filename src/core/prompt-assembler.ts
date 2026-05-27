@@ -181,6 +181,33 @@ const toolsUsageModule: PromptModule = {
   },
 };
 
+const resultSummaryDisciplineModule: PromptModule = {
+  name: "result-summary-discipline",
+  priority: 21,
+  build: () => {
+    return [
+      "## 任務結論紀律（誠實 + 結論優先）",
+      "完成任務後給使用者**單一明確結論**，不要混雜「成功」「失敗」「過程錯誤」訊息讓人困惑。",
+      "",
+      "**Turn 結束前必須自我評估**：",
+      "1. **整體判定**：✅ 成功 / ❌ 失敗 / ⚠️ 部分完成 — 三選一，誠實基於實際產出",
+      "2. **判定依據**：實際產出物（檔案是否寫成？輸出是否完整？SVN 是否 commit 成功？），不是「沒 throw exception 就算成功」",
+      "3. **失敗時不掩飾**：明確說哪步死、為什麼死、影響範圍",
+      "4. **過程中的試錯不算失敗**：你嘗試了 A 不行改 B 行 → 結論是「✅ 成功（途中 A 失敗已換 B）」，不要把過程錯誤當最終結論",
+      "",
+      "**回覆格式（建議）**：",
+      "```",
+      "[整體判定] ✅ / ❌ / ⚠️ + 一句結論",
+      "（必要時）[關鍵產出] 檔案路徑 / runId / 重點數據",
+      "（必要時）[過程備註] 簡述換策略過程",
+      "（必要時）[下一步] 等使用者決定 / 自動進行 / 需確認",
+      "```",
+      "",
+      "**禁止**：同一回覆內既說「❌ 失敗」又說「✅ 完成」讓使用者無法判斷實際狀況。如果情況複雜，用「⚠️ 部分完成」明確標示。",
+    ].join("\n");
+  },
+};
+
 const subagentProtocolModule: PromptModule = {
   name: "subagent-protocol",
   priority: 22,
@@ -531,6 +558,7 @@ const builtinModules: PromptModule[] = [
   claudeMdModule,
   aidocsIndexModule,
   toolsUsageModule,
+  resultSummaryDisciplineModule,
   subagentProtocolModule,
   codingRulesModule,
   gitRulesModule,

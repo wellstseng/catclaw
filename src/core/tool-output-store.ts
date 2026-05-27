@@ -55,10 +55,17 @@ const EXTERNALIZE_THRESHOLD_CHARS: Record<string, number> = {
   web_search: 2000 * 4,
 };
 
-/** 判斷是否該外部化（不外部化 mcp_* 與小 result） */
-export function shouldExternalizeToolOutput(toolName: string, text: string): boolean {
+/** 判斷是否該外部化（不外部化 mcp_* / 小 result / 讀已外部化檔 stub-chain） */
+export function shouldExternalizeToolOutput(toolName: string, text: string, args?: unknown): boolean {
   if (!toolName) return false;
   if (toolName.startsWith("mcp_")) return false;
+  // 防 stub-chain 連環包：read_file 讀 tool-outputs/ 內已外部化檔 → 跳過再外部化
+  // 露米 trace 5b4d8634 / f52fdafa 子 agent 撞過：read_file <path> → 外部化 stub → LLM 看 stub
+  // 內容含 tool-outputs/X.txt 路徑 → 又 read_file X.txt → 又被外部化 → 第二層 stub → 重複死循環。
+  if (toolName === "read_file" && args && typeof args === "object") {
+    const path = String((args as Record<string, unknown>)["path"] ?? (args as Record<string, unknown>)["file_path"] ?? "");
+    if (path.includes("tool-outputs")) return false;
+  }
   const threshold = EXTERNALIZE_THRESHOLD_CHARS[toolName] ?? EXTERNALIZE_THRESHOLD_DEFAULT_CHARS;
   return text.length >= threshold;
 }

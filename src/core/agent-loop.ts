@@ -164,7 +164,7 @@ function truncateToolResult(
   opts?: { sessionKey: string; turnIndex: number; args?: unknown },
 ): { text: string; externalized?: ExternalizedToolOutput } {
   // ── 外部化優先（項目 6）：≥ 閾值且非 mcp_* tool → 寫檔 + stub ──
-  if (toolName && opts && shouldExternalizeToolOutput(toolName, text)) {
+  if (toolName && opts && shouldExternalizeToolOutput(toolName, text, opts.args)) {
     try {
       const ext = externalizeToolOutput({
         toolName,
