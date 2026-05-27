@@ -1539,6 +1539,9 @@ export async function* agentLoop(
   let zeroProgressBailed = false;             // 為 0-progress 中止 → 走 post-loop notice 分支
   let emptyToolUseCount = 0;                  // stopReason=tool_use 但 toolCalls=[] 的累計次數
   let emptyToolUseExhausted = false;          // emptyToolUseCount 觸頂 → 走 post-loop notice 分支
+  // LLM call 連續 retry 失敗（callWithRetry 耗盡）→ 不直接 return，走 post-loop bail notice 確保 finalize
+  let llmFailureExhausted = false;
+  let llmFailureReason = "";
   // L3 Pattern Detection — STUCK-LOOP BLOCKED 累計（cycle 制 — 無 break，只 nudge 引導）：
   //   第 1 次 → soft nudge（4 條換策略建議）
   //   每 STUCK_LOOP_CYCLE_THRESHOLD 次 → 升級 nudge + 重置 count（無限循環，永不 break）
@@ -1922,9 +1925,13 @@ export async function* agentLoop(
           yield { type: "error", message: msg };
           return;
         }
-        yield { type: "error", message: `LLM 呼叫失敗：[${provider.id}] ${msg}` };
+        // 之前 `return` 跳過 post-loop / finalize → trace status="error" terminated before finalize。
+        // 改 break + 標旗 → post-loop bail notice 寫 fail-safe response，trace 正常 finalize。
+        log.warn(`[agent-loop] [loop=${loopCount}] callWithRetry 耗盡，標 llmFailureExhausted 走 post-loop`);
+        llmFailureExhausted = true;
+        llmFailureReason = `[${provider.id}] ${msg}`;
         eventBus.emit("provider:error", provider.id, err instanceof Error ? err : new Error(msg));
-        return;
+        break;
       }
 
       // ── 5b. 消費串流事件 ───────────────────────────────────────────────────
@@ -2760,6 +2767,10 @@ export async function* agentLoop(
     // L5：max_tokens 續接 3 次仍未完成 → 補通知讓使用者知道（之前是 silent break）
     bailNotice = `\n\n⚠️ 回應被截斷 ${MAX_CONTINUATIONS} 次仍未完成（output token 上限），本輪強制中止。建議：拆小任務、spawn_subagent 處理大段內容、或讓使用者分批詢問。`;
     log.warn(`[agent-loop] L5 max_tokens 續接耗盡：sessionKey=${sessionKey}`);
+  } else if (llmFailureExhausted) {
+    // LLM provider 連續 retry 失敗（ChatGPT 後端卡 / network timeout / 5xx）→ fail-safe response
+    bailNotice = `\n\n⚠️ LLM provider 多次重試失敗，本輪中止。可能原因：API 後端暫時不可用、network 卡死、provider 過載。\n錯誤：${llmFailureReason}\n\n建議：稍後重試，或在 Dashboard 切換 fallback provider。`;
+    log.warn(`[agent-loop] LLM provider 重試耗盡：sessionKey=${sessionKey} reason=${llmFailureReason}`);
   }
   if (bailNotice) {
     fullResponse = fullResponse.trim() ? fullResponse + bailNotice : bailNotice.trimStart();
