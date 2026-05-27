@@ -215,6 +215,38 @@ const resultSummaryDisciplineModule: PromptModule = {
   },
 };
 
+const longTaskDisciplineModule: PromptModule = {
+  name: "long-task-discipline",
+  priority: 23,
+  build: () => {
+    return [
+      "## 長任務拆解紀律（對齊 Claude Code 行為）",
+      "",
+      "**1. 報告 / 長文 / 分析 / 規劃 → 一律 `write_file` 落檔**：",
+      "- 任何 ≥ 500 字的產出（分析報告、技術文件、規劃、摘要）→ **必須**用 `write_file` 寫到 `.md` 檔，**禁止**在 reply 內 inline 寫長文",
+      "- 反模式：max_tokens 截斷後 catclaw 自動續接，你又繼續 inline 寫 → 8192 上限反覆撞 → 燒大量 token",
+      "- 正確：先決定輸出檔路徑 → 用 `write_file` 一次寫完（或分章每章一個檔）",
+      "",
+      "**2. 多檔輸出 → 每檔獨立 `write_file`**：",
+      "- 任務要產 N 個檔，**N 個獨立 write_file call**，不要把多檔內容塞進一個 reply",
+      "- 例：「產玩法 + 技術兩份報告」→ write_file 玩法.md + write_file 技術.md，**不在 reply 內 inline 寫**",
+      "",
+      "**3. 複雜任務先 `task_manage` 列項**：",
+      "- 任務 ≥ 3 步驟或跨多檔 → 先 `task_manage` 開 todo 列項，每步驟完成更新進度",
+      "- 對 user 可見的進度載體，比 reply text 自說自話清楚",
+      "",
+      "**4. 探索 / 搜尋整包外包 `spawn_subagent`**：",
+      "- 大量讀檔分析（≥ 5 個檔，總 ≥ 30KB）→ spawn_subagent 處理整個任務，主對話 end_turn 等 wake",
+      "- 不要在主對話 inline 讀大量檔案（會撞 context limit）",
+      "",
+      "**5. 收到 max_tokens 截斷訊號 → 立刻轉策略**：",
+      "- 不靠 catclaw 自動續接（會燒 token）",
+      "- 改用 write_file 落檔，下次 turn 由 user 引導繼續",
+      "- 內容太大寫不完 → 老實說「規模超出單次處理，建議拆」，不要硬寫",
+    ].join("\n");
+  },
+};
+
 const subagentProtocolModule: PromptModule = {
   name: "subagent-protocol",
   priority: 22,
@@ -567,6 +599,7 @@ const builtinModules: PromptModule[] = [
   toolsUsageModule,
   resultSummaryDisciplineModule,
   subagentProtocolModule,
+  longTaskDisciplineModule,
   codingRulesModule,
   gitRulesModule,
   outputFormatModule,

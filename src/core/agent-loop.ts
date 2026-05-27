@@ -2065,14 +2065,26 @@ export async function* agentLoop(
       }
 
       // ── Output Token Recovery：截斷偵測 + 自動續接 ────────────────────────
+      // 條件式續接（trace eb4a5751 案例）：
+      // - 若本 iter LLM 有 tool call → 視為「合法工作中被截斷」→ 允許續接
+      // - 若本 iter 0 tool call → 視為「LLM 進 inline 寫長文反模式」→ 立刻 break + bail notice
+      //   引導 LLM 改用 write_file 落檔，不要硬撞 8192 上限反覆續接燒 token
       if (streamResult.stopReason === "max_tokens") {
+        const hadToolCallThisIter = streamResult.toolCalls.length > 0;
+        if (!hadToolCallThisIter) {
+          // 反模式：LLM 在 inline reply 寫長文（沒呼叫任何 tool）撞 max_tokens
+          // 不續接，break + bail notice 引導 LLM 改用 write_file
+          log.warn(`[agent-loop] [loop=${loopCount}] max_tokens + 0 tool call（inline 長文反模式），立刻 break 不續接`);
+          maxTokensExhausted = true;
+          break;
+        }
         continuationCount++;
         if (continuationCount > MAX_CONTINUATIONS) {
           log.warn(`[agent-loop] max_tokens 續接已達上限 (${MAX_CONTINUATIONS})，結束 turn`);
           maxTokensExhausted = true;
           break;
         }
-        log.info(`[agent-loop] [loop=${loopCount}] output 被截斷（max_tokens），自動續接 (${continuationCount}/${MAX_CONTINUATIONS})`);
+        log.info(`[agent-loop] [loop=${loopCount}] output 被截斷（max_tokens，有 tool call 視為合法工作中），自動續接 (${continuationCount}/${MAX_CONTINUATIONS})`);
         // 將截斷的 assistant 回覆加入 messages，再送 user "繼續" 讓 LLM 接著寫
         const partialText = tracker.getFullResponse();
         if (partialText) {
@@ -2764,9 +2776,11 @@ export async function* agentLoop(
     bailNotice = `\n\n⏹️ 偵測到模型連續 ${ZERO_PROGRESS_BAIL} 輪沒實質進展（無工具呼叫且文本 < ${ZERO_PROGRESS_TEXT_THRESHOLD} 字），自動中止本輪以省 token。請補充更具體的指示再試。`;
     log.warn(`[agent-loop] 0-progress 中止：sessionKey=${sessionKey}`);
   } else if (maxTokensExhausted) {
-    // L5：max_tokens 續接 3 次仍未完成 → 補通知讓使用者知道（之前是 silent break）
-    bailNotice = `\n\n⚠️ 回應被截斷 ${MAX_CONTINUATIONS} 次仍未完成（output token 上限），本輪強制中止。建議：拆小任務、spawn_subagent 處理大段內容、或讓使用者分批詢問。`;
-    log.warn(`[agent-loop] L5 max_tokens 續接耗盡：sessionKey=${sessionKey}`);
+    // L5：max_tokens 撞上限（兩種 case）：
+    // (a) 續接 N 次仍未完成（有 tool call）→ 真的任務太大寫不完
+    // (b) 0 tool call 撞 max_tokens → LLM 進 inline 寫長文反模式（trace eb4a5751）
+    bailNotice = `\n\n⚠️ 回應被截斷未完成（output token 8192 上限）。\n\n**最常見原因**：你在 reply 內 inline 寫長文（報告/規劃/說明）撞上限。**正確做法**：用 \`write_file\` 把內容寫到 \`.md\` 檔，不要在 reply 內 inline 寫超過 500 字的長文。\n\n下個 turn 請用 \`write_file\` 直接落檔，或拆小任務（每段獨立一次 turn 處理）。`;
+    log.warn(`[agent-loop] L5 max_tokens 觸發：sessionKey=${sessionKey}`);
   } else if (llmFailureExhausted) {
     // LLM provider 連續 retry 失敗（ChatGPT 後端卡 / network timeout / 5xx）→ fail-safe response
     bailNotice = `\n\n⚠️ LLM provider 多次重試失敗，本輪中止。可能原因：API 後端暫時不可用、network 卡死、provider 過載。\n錯誤：${llmFailureReason}\n\n建議：稍後重試，或在 Dashboard 切換 fallback provider。`;
