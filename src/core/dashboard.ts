@@ -6054,6 +6054,107 @@ export class DashboardServer {
         return;
       }
 
+      // POST /api/update — 在 catclaw 專案根執行 git pull
+      if (url === "/api/update" && method === "POST") {
+        void (async () => {
+          try {
+            const { spawn } = await import("node:child_process");
+            const { resolve: resolvePath } = await import("node:path");
+            const projectRoot = resolvePath(import.meta.dirname ?? __dirname, "..", "..");
+            const isWin = process.platform === "win32";
+            const proc = spawn(isWin ? "cmd.exe" : "bash", isWin ? ["/c", "git pull"] : ["-c", "git pull"], { cwd: projectRoot, env: process.env });
+            let stdout = "", stderr = "";
+            proc.stdout.on("data", d => { stdout += d.toString(); });
+            proc.stderr.on("data", d => { stderr += d.toString(); });
+            proc.on("close", code => {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: code === 0, code, stdout: stdout.slice(0, 4000), stderr: stderr.slice(0, 2000) }));
+            });
+            proc.on("error", err => {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: false, error: err.message }));
+            });
+          } catch (err) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // POST /api/build — 在 catclaw 專案根執行 pnpm build
+      if (url === "/api/build" && method === "POST") {
+        void (async () => {
+          try {
+            const { spawn } = await import("node:child_process");
+            const { resolve: resolvePath } = await import("node:path");
+            const projectRoot = resolvePath(import.meta.dirname ?? __dirname, "..", "..");
+            const isWin = process.platform === "win32";
+            const proc = spawn(isWin ? "cmd.exe" : "bash", isWin ? ["/c", "pnpm build"] : ["-c", "pnpm build"], { cwd: projectRoot, env: process.env });
+            let stdout = "", stderr = "";
+            proc.stdout.on("data", d => { stdout += d.toString(); });
+            proc.stderr.on("data", d => { stderr += d.toString(); });
+            proc.on("close", code => {
+              const stdoutTail = stdout.split("\n").slice(-20).join("\n");
+              const stderrTail = stderr.split("\n").slice(-15).join("\n");
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: code === 0, code, stdoutTail: stdoutTail.slice(0, 4000), stderrTail: stderrTail.slice(0, 2000) }));
+            });
+            proc.on("error", err => {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: false, error: err.message }));
+            });
+          } catch (err) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // POST /api/deploy — 三合一：git pull → pnpm build → restart（任一失敗中止）
+      if (url === "/api/deploy" && method === "POST") {
+        void (async () => {
+          const { spawn } = await import("node:child_process");
+          const { resolve: resolvePath } = await import("node:path");
+          const projectRoot = resolvePath(import.meta.dirname ?? __dirname, "..", "..");
+          const isWin = process.platform === "win32";
+          const runShell = (cmd: string): Promise<{ stdout: string; stderr: string; code: number }> => new Promise(r => {
+            const p = spawn(isWin ? "cmd.exe" : "bash", isWin ? ["/c", cmd] : ["-c", cmd], { cwd: projectRoot, env: process.env });
+            let out = "", err = "";
+            p.stdout.on("data", d => { out += d.toString(); });
+            p.stderr.on("data", d => { err += d.toString(); });
+            p.on("close", code => r({ stdout: out, stderr: err, code: code ?? -1 }));
+            p.on("error", e => r({ stdout: out, stderr: err + e.message, code: -1 }));
+          });
+          const steps: { step: string; success: boolean; code: number; stdout?: string; stderr?: string }[] = [];
+          // Step 1: git pull
+          const pull = await runShell("git pull");
+          steps.push({ step: "git pull", success: pull.code === 0, code: pull.code, stdout: pull.stdout.slice(0, 800), stderr: pull.stderr.slice(0, 400) });
+          if (pull.code !== 0) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, abortedAt: "git pull", steps }));
+            return;
+          }
+          // Step 2: pnpm build
+          const build = await runShell("pnpm build");
+          steps.push({ step: "pnpm build", success: build.code === 0, code: build.code, stdout: build.stdout.split("\n").slice(-10).join("\n").slice(0, 1000), stderr: build.stderr.split("\n").slice(-10).join("\n").slice(0, 1000) });
+          if (build.code !== 0) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, abortedAt: "pnpm build", steps }));
+            return;
+          }
+          // Step 3: restart（async — 訊息 return 後才 kill）
+          steps.push({ step: "restart", success: true, code: 0 });
+          touchRestart();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, steps, note: "restart 即將觸發" }));
+          void import("./restart-history.js").then(m => m.setPendingReason?.("api_deploy")).catch(() => {});
+          setTimeout(() => { process.kill(process.pid, "SIGTERM"); }, 1500);
+        })();
+        return;
+      }
+
       // GET /api/restart-history
       if (url.startsWith("/api/restart-history") && method === "GET") {
         void (async () => {

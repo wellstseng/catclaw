@@ -612,6 +612,36 @@ async function runTool(p: P): Promise<string> {
       return "使用者已被封禁";
     }
 
+    // ── Catclaw 控制 actions（cli-bridge agent 可從 child process 觸發 catclaw 自更新）──
+    // 透過 HTTP 呼叫 catclaw dashboard endpoint（預設 localhost:8088），avoid child-kill-parent 問題
+    case "catclaw_update": {
+      const port = process.env.CATCLAW_DASHBOARD_PORT ?? "8088";
+      const r = await fetch(`http://localhost:${port}/api/update`, { method: "POST" });
+      const data = await r.json() as { success?: boolean; code?: number; stdout?: string; stderr?: string; error?: string };
+      return JSON.stringify(data);
+    }
+    case "catclaw_build": {
+      const port = process.env.CATCLAW_DASHBOARD_PORT ?? "8088";
+      const r = await fetch(`http://localhost:${port}/api/build`, { method: "POST" });
+      const data = await r.json() as { success?: boolean; code?: number; stdoutTail?: string; stderrTail?: string; error?: string };
+      return JSON.stringify(data);
+    }
+    case "catclaw_restart": {
+      const port = process.env.CATCLAW_DASHBOARD_PORT ?? "8088";
+      // catclaw process 收到 /api/restart 會在 500ms 後 SIGTERM 自己重啟
+      // cli-bridge child process 不受影響（PM2 不管理它），catclaw 重啟後 cli-bridge 仍 running
+      const r = await fetch(`http://localhost:${port}/api/restart`, { method: "POST" });
+      const data = await r.json() as { success?: boolean; error?: string };
+      return JSON.stringify({ ...data, note: "catclaw 重啟中（cli-bridge 不受影響繼續 running）" });
+    }
+    case "catclaw_deploy": {
+      const port = process.env.CATCLAW_DASHBOARD_PORT ?? "8088";
+      // 三合一：pull → build → restart。catclaw 端依序執行，任一失敗中止
+      const r = await fetch(`http://localhost:${port}/api/deploy`, { method: "POST" });
+      const data = await r.json() as { success?: boolean; abortedAt?: string; steps?: unknown[]; note?: string };
+      return JSON.stringify(data);
+    }
+
     default:
       throw new Error(`不支援的 action: ${action}`);
   }
@@ -836,6 +866,8 @@ const ALL_ACTIONS = [
   "eventList", "eventCreate",
   // Moderation
   "timeout", "kick", "ban",
+  // Catclaw 控制（cli-bridge agent 可從 child process 觸發 catclaw 自更新）
+  "catclaw_update", "catclaw_build", "catclaw_restart", "catclaw_deploy",
 ];
 
 const TOOL = {
