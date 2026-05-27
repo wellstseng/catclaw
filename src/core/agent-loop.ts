@@ -811,7 +811,12 @@ async function runBeforeToolCall(
   // 資訊查詢類工具豁免（trace ad271522）：read_file / glob / grep / web_search 連續對不同 args
   // 是合法 workflow（agent 一次讀多檔做分析）— 不該被「連續同 tool」誤擋。4a 偵測「same args 重複
   // ≥3」已守住真實卡死樣態，4c 對讀類工具放行。
-  const INFO_TOOLS_EXEMPT = new Set(["read_file", "glob", "grep", "web_search", "tool_search"]);
+  const INFO_TOOLS_EXEMPT = new Set([
+    "read_file", "glob", "grep", "web_search", "tool_search",
+    "memory_search_fulltext", "memory_recall",  // 記憶查詢類，連續多次合法
+    "task_manage",  // todo 更新類，連續多次合法（多 step 任務常用）
+    "subagents",  // status/list 查詢類（wait 由 L3 subagent-poll 邏輯獨立守護）
+  ]);
   if (!INFO_TOOLS_EXEMPT.has(call.name)) {
     let consecutiveSame = 0;
     for (let i = ctx.recentCalls.length - 1; i >= 0; i--) {
