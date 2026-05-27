@@ -807,14 +807,21 @@ async function runBeforeToolCall(
   // 改為「連續」計數（中間穿插別 tool 即清零）— 補上面三層盲點，同時放行批次性質的多檔搬移。
   // 原始 trace a1cfb101 是 mcp_playwright_browser_close 連續穿插呼叫 6 次都成功；
   // 連續計數仍能擋住「卡死在同一工具」的真實 buggy 樣態，誤傷批次操作的機率大幅下降。
-  let consecutiveSame = 0;
-  for (let i = ctx.recentCalls.length - 1; i >= 0; i--) {
-    if (ctx.recentCalls[i].name === call.name) consecutiveSame++;
-    else break;
-  }
-  const sameToolLimit = config.safety?.maxSameToolPerTurn ?? MAX_SAME_TOOL_PER_TURN_DEFAULT;
-  if (consecutiveSame >= sameToolLimit) {
-    return { blocked: true, reason: `[STUCK-LOOP] ${call.name} 已連續呼叫 ${consecutiveSame} 次（上限 ${sameToolLimit}），疑似卡死在同一工具。**請立刻 end_turn 回覆使用者目前進度**，不要切換到別的工具繼續嘗試 — 那只會耗更多 token，且 catclaw 會偵測「交替工具迴圈」再次 BLOCK。` };
+  //
+  // 資訊查詢類工具豁免（trace ad271522）：read_file / glob / grep / web_search 連續對不同 args
+  // 是合法 workflow（agent 一次讀多檔做分析）— 不該被「連續同 tool」誤擋。4a 偵測「same args 重複
+  // ≥3」已守住真實卡死樣態，4c 對讀類工具放行。
+  const INFO_TOOLS_EXEMPT = new Set(["read_file", "glob", "grep", "web_search", "tool_search"]);
+  if (!INFO_TOOLS_EXEMPT.has(call.name)) {
+    let consecutiveSame = 0;
+    for (let i = ctx.recentCalls.length - 1; i >= 0; i--) {
+      if (ctx.recentCalls[i].name === call.name) consecutiveSame++;
+      else break;
+    }
+    const sameToolLimit = config.safety?.maxSameToolPerTurn ?? MAX_SAME_TOOL_PER_TURN_DEFAULT;
+    if (consecutiveSame >= sameToolLimit) {
+      return { blocked: true, reason: `[STUCK-LOOP] ${call.name} 已連續呼叫 ${consecutiveSame} 次（上限 ${sameToolLimit}），疑似卡死在同一工具。**請立刻 end_turn 回覆使用者目前進度**，不要切換到別的工具繼續嘗試 — 那只會耗更多 token，且 catclaw 會偵測「交替工具迴圈」再次 BLOCK。` };
+    }
   }
 
   // 5. Reversibility Assessment
