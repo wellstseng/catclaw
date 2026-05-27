@@ -95,9 +95,11 @@ export const tool: Tool = {
     required: ["pattern"],
   },
 
-  async execute(params: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
-    const pattern = String(params["pattern"] ?? "");
-    const baseDir = String(params["path"] ?? process.cwd());
+  async execute(params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+    const rawPattern = String(params["pattern"] ?? "");
+    // baseDir 優先序：params.path > ctx.projectCwd（bound project 內）> process.cwd()
+    let baseDir = String(params["path"] ?? ctx.projectCwd ?? process.cwd());
+    let pattern = rawPattern;
     const offsetRaw = Number(params["offset"] ?? 0);
     const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0;
     const limitRaw = Number(params["limit"] ?? MAX_FILES);
@@ -106,6 +108,23 @@ export const tool: Tool = {
       : MAX_FILES;
 
     if (!pattern) return { error: "pattern 不能為空" };
+
+    // 絕對路徑 pattern 偵測（Windows: C:/... 或 Unix: /...）— LLM 常傳絕對路徑作為單一 pattern：
+    // 例如 `C:/Projects/TSLG/DesignDoc/*.md`。原邏輯 scanDir(baseDir) 配 absolute pattern
+    // 永遠不會 match（relPath 是 relative，pattern 是 absolute prefix）→ 回 0 筆。
+    // 修法：偵測到絕對路徑且未顯式傳 path，從第一個 wildcard 之前切出 baseDir，pattern 變 relative
+    const isAbsPattern = /^[A-Za-z]:[\\/]/.test(pattern) || pattern.startsWith("/");
+    if (isAbsPattern && !params["path"]) {
+      const normalized = pattern.replace(/\\/g, "/");
+      const firstWildcard = normalized.search(/[*?{]/);
+      const splitAt = firstWildcard > 0
+        ? normalized.lastIndexOf("/", firstWildcard - 1)
+        : normalized.lastIndexOf("/");
+      if (splitAt > 0) {
+        baseDir = normalized.slice(0, splitAt);
+        pattern = normalized.slice(splitAt + 1);
+      }
+    }
 
     const re = globToRegex(pattern);
     const results: Array<{ path: string; mtimeMs: number }> = [];
@@ -123,7 +142,7 @@ export const tool: Tool = {
     const hasMore = allPaths.length > offset + limit;
     const scannedCapHit = allPaths.length >= MAX_FILES;
 
-    log.debug(`[glob] pattern=${pattern} base=${baseDir} offset=${offset} limit=${limit} → ${paged.length} 筆 (total=${allPaths.length}, hasMore=${hasMore})`);
+    log.debug(`[glob] rawPattern=${rawPattern} effective pattern=${pattern} base=${baseDir} offset=${offset} limit=${limit} → ${paged.length} 筆 (total=${allPaths.length}, hasMore=${hasMore})`);
 
     return {
       result: {
