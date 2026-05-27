@@ -204,6 +204,13 @@ const resultSummaryDisciplineModule: PromptModule = {
       "```",
       "",
       "**禁止**：同一回覆內既說「❌ 失敗」又說「✅ 完成」讓使用者無法判斷實際狀況。如果情況複雜，用「⚠️ 部分完成」明確標示。",
+      "",
+      "**禁止編造系統錯誤 / timeout / 中斷訊息**：",
+      "- catclaw 真的 abort turn 會在 reply **開頭**顯示 ⏱️ 系統訊息（「已達 turn timeout」「偵測到工具迴圈」等），由 catclaw 注入不是你寫的",
+      "- 你**沒收到 catclaw 系統訊息**就說「我 timeout 了 / 我被截斷 / 我被中止」是 hallucination — 嚴格禁止",
+      "- thinking 內部處理時間長 ≠ timeout。LLM 內部 reasoning 慢是模型行為，不是系統錯誤",
+      "- tool result 內有「BLOCKED」「STUCK-LOOP」「timeout」字眼是 tool 自己回的（如 subagents wait timeout），不是 turn timeout — 不要把這當「我整個 turn 被中止」",
+      "- 若任務太大寫不完 → 老實說「規模太大未完成，建議拆分」，不要編造系統超時當作理由",
     ].join("\n");
   },
 };
