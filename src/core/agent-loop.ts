@@ -1696,6 +1696,40 @@ export async function* agentLoop(
 
   log.debug(`[agent-loop] ── turn 開始 ── sessionKey=${sessionKey} turnCount=${session.turnCount} accountId=${accountId} history=${processedHistory.length} msgs systemPrompt=${systemPrompt.length} chars`);
 
+  // ── Preemptive Long-Task Detection（turn 開始就提醒拆分，不等撞 max_tokens）──
+  // 偵測 inbound prompt 的長任務關鍵字 → 在 messages 末尾 inject 評估提示，強制 LLM 先列計畫
+  // 配合 long-task-discipline prompt module 形成雙保險：prompt rule（系統層）+ inline reminder（情境層）
+  {
+    const userText = (typeof prompt === "string" ? prompt : "").trim();
+    const LONG_TASK_KEYWORDS = /分析|報告|規格|文件|文檔|文案|規劃|計畫|計劃|藍圖|綜觀|拆解|整理|批次|重構|migrate|產出|寫一份|寫一個.*md|寫.*\.md|多個|每個|N 個|各個|逐一|逐個|完整.*寫|完整.*產|全部.*寫/i;
+    if (userText.length >= 30 && LONG_TASK_KEYWORDS.test(userText)) {
+      const assessmentMsg = [
+        "🎯 [平台：長任務評估]",
+        "你收到的任務含「分析 / 報告 / 規格 / 規劃 / 多檔 / 逐個」等關鍵字 — 屬於長任務範疇。**動手前必須先評估拆分**：",
+        "",
+        "**Step 1：判斷任務形態**",
+        "- 預估產出 ≥ 500 字？→ **必 write_file 落檔**，禁止 inline reply 寫長文",
+        "- 多個獨立目標（≥ 2 個檔/分析/模組）？→ **並行 `spawn_subagent`**（同一回應內輸出多個 spawn）",
+        "- 流程 ≥ 3 步驟？→ 先用 **`task_manage`** 開 todo 列項",
+        "- 探索大量檔案（≥ 5 檔 / ≥ 30KB）？→ **整包 spawn_subagent** 外包，主對話 end_turn 等 wake",
+        "",
+        "**Step 2：第一個動作**",
+        "- 列計畫（task_manage / 用 reply text 簡列）",
+        "- 或 spawn_subagent fan-out（不要先動手）",
+        "- 禁止：直接開始 inline 寫長文 → 8k output 上限會撞 max_tokens",
+        "",
+        "**Step 3：執行**",
+        "- 每個產出檔用獨立 `write_file` call",
+        "- 過程更新 task_manage 進度",
+        "- 結束時用 [整體判定 ✅/❌/⚠️] 結論優先回報",
+        "",
+        "若評估後判定**不是長任務**（如 user 只問 1 個快速問題）→ 忽略此提醒直接處理。",
+      ].join("\n");
+      messages.push({ role: "user", content: assessmentMsg });
+      log.info(`[agent-loop] long-task detection 命中（user text ${userText.length} chars） → 注入評估提示`);
+    }
+  }
+
   try {
     while (true) {
       loopCount++;
