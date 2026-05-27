@@ -15,7 +15,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { openSync } from "node:fs";
+import { openSync, closeSync } from "node:fs";
 import { getBackgroundJobRegistry } from "../../core/background-job-registry.js";
 import { log } from "../../logger.js";
 import type { Tool } from "../types.js";
@@ -75,10 +75,15 @@ export const tool: Tool = {
       return { error: `建立 stdout 檔案失敗：${err instanceof Error ? err.message : String(err)}` };
     }
 
-    // 用 bash -c 跑指令，detached 模式
+    // 用 shell 跑指令，detached 模式 — Windows: cmd.exe（Git Bash 可能不在 PATH 會 ENOENT crash）
+    // 之前寫死 "bash" 在 Windows 沒 bash 環境會 spawn ENOENT → 未掛 child.on("error") listener
+    // → unhandledException → catclaw process 整個掛掉
     let child;
+    const isWin = process.platform === "win32";
+    const shellCmd = isWin ? "cmd.exe" : "bash";
+    const shellArgs = isWin ? ["/c", command] : ["-c", command];
     try {
-      child = spawn("bash", ["-c", command], {
+      child = spawn(shellCmd, shellArgs, {
         cwd,
         detached: true,
         stdio: ["ignore", stdoutFd, stdoutFd],
@@ -87,6 +92,12 @@ export const tool: Tool = {
     } catch (err) {
       return { error: `啟動失敗：${err instanceof Error ? err.message : String(err)}` };
     }
+
+    // 掛 error listener 防 ENOENT / EACCES 等 async error 變 unhandledException 拖垮 catclaw
+    child.on("error", (err) => {
+      log.warn(`[run-bg-cmd] child process error pid=${child.pid ?? "?"}: ${err.message}`);
+      try { closeSync(stdoutFd); } catch { /* already closed */ }
+    });
 
     if (!child.pid) {
       return { error: "process spawn 但沒拿到 pid" };
