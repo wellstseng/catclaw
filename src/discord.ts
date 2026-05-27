@@ -48,7 +48,7 @@ import { resolveProvider, getChannelAccess as getCoreChannelAccess } from "./cor
 import { getProviderRegistry } from "./providers/registry.js";
 import { agentLoop } from "./core/agent-loop.js";
 import { getChannelThinking } from "./skills/builtin/think.js";
-import { getChannelMode, getChannelModePreset, getModeThinking } from "./core/mode.js";
+import { getChannelMode, getChannelModePreset, getModeThinking, getDashboardDefaultThinking } from "./core/mode.js";
 import { getChannelProviderOverride } from "./skills/builtin/use.js";
 import { getChannelSystemOverride } from "./skills/builtin/system.js";
 import { eventBus } from "./core/event-bus.js";
@@ -974,8 +974,9 @@ async function handleMessage(
         } : {}),
         ...(allImages.length > 0 ? { imageAttachments: allImages } : {}),
         ...(() => {
+          // 優先序：channel /think 設定 > mode preset 預設 > Dashboard Think Level（跨 dashboard/discord 共用）
           const channelThinking = getChannelThinking(firstMessage.channelId);
-          const thinking = channelThinking ?? getModeThinking(modePreset);
+          const thinking = channelThinking ?? getModeThinking(modePreset) ?? getDashboardDefaultThinking();
           return {
             ...(thinking ? { thinking } : {}),
             modePreset,

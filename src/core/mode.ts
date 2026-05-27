@@ -6,7 +6,9 @@
  * 模式定義在 config.modes.presets，可自訂。
  */
 
-import { config, BUILTIN_MODE_PRESETS, type ModePreset, type ThinkingLevel } from "./config.js";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { config, BUILTIN_MODE_PRESETS, resolveCatclawDir, type ModePreset, type ThinkingLevel } from "./config.js";
 import { log } from "../logger.js";
 
 // ── per-channel mode store ───────────────────────────────────────────────────
@@ -66,4 +68,16 @@ export function getChannelModePreset(channelId: string): ModePreset {
 /** 模式的 thinking level（null → undefined，供 agent-loop 使用） */
 export function getModeThinking(preset: ModePreset): ThinkingLevel | undefined {
   return preset.thinking ?? undefined;
+}
+
+/** 從 models-config.json 讀預設 thinking（Dashboard Think Level，跨 Dashboard / Discord 共用） */
+export function getDashboardDefaultThinking(): ThinkingLevel | undefined {
+  try {
+    const p = join(resolveCatclawDir(), "models-config.json");
+    if (!existsSync(p)) return undefined;
+    const mc = JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+    const t = String(mc["thinking"] ?? "").trim().toLowerCase();
+    const levels = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+    return levels.has(t) ? t as ThinkingLevel : undefined;
+  } catch { return undefined; }
 }
