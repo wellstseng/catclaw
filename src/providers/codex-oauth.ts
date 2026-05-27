@@ -332,6 +332,7 @@ export class CodexOAuthProvider implements LLMProvider {
     let token = await this.getAccessToken();
     let accountId = extractAccountId(token);
     let triedRefresh = false;
+    let triedMaxTokensFallback = false;
     const controller = new AbortController();
     if (opts.abortSignal) {
       opts.abortSignal.addEventListener("abort", () => controller.abort());
@@ -398,8 +399,12 @@ export class CodexOAuthProvider implements LLMProvider {
       }));
     }
 
-    // ChatGPT backend (chatgpt.com/backend-api/codex/responses) 不接受 max_output_tokens
-    // (`Unsupported parameter: max_output_tokens`)，由 server 自行限制。opts.maxTokens 在此忽略。
+    // max_output_tokens：先試傳，server 拒絕（HTTP 400 `Unsupported parameter`）則 fallback 移除
+    // OpenAI Responses API 公開規格支援此參數（OpenAI 文檔），但 ChatGPT codex backend 可能不同
+    // 之前版本註解寫「不接受」— Wells 質疑此寫法已過時，改試傳並動態適配
+    if (typeof opts.maxTokens === "number" && opts.maxTokens > 0) {
+      body["max_output_tokens"] = opts.maxTokens;
+    }
 
     // Codex 端點：{baseUrl}/codex/responses
     const codexUrl = resolveCodexUrl(this.baseUrl);
@@ -442,6 +447,17 @@ export class CodexOAuthProvider implements LLMProvider {
         token = await this.getAccessToken();
         accountId = extractAccountId(token);
         continue;
+      }
+      // max_output_tokens fallback：若 server 回 400 含 "Unsupported parameter: max_output_tokens"
+      // → 拔掉重發（記錄到 log 讓使用者知道 backend 仍寫死）
+      if (response.status === 400 && !triedMaxTokensFallback && body["max_output_tokens"] !== undefined) {
+        const errText = await response.clone().text().catch(() => "");
+        if (errText.includes("max_output_tokens") || errText.includes("Unsupported parameter")) {
+          triedMaxTokensFallback = true;
+          log.warn(`[codex-oauth:${this.id}] backend 拒絕 max_output_tokens（${errText.slice(0, 100)}），拔掉重發`);
+          delete body["max_output_tokens"];
+          continue;
+        }
       }
       break;
     }

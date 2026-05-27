@@ -35,7 +35,21 @@ import type {
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-const DEFAULT_MAX_TOKENS = 8192;
+// max_output_tokens 預設：models-config.json `maxOutputTokens` > env CATCLAW_DEFAULT_MAX_TOKENS > 8192
+// 不再寫死，user 可在 models-config.json 設 `maxOutputTokens: 32000` 等更高值
+const HARDCODED_FALLBACK_MAX_TOKENS = 8192;
+function getDefaultMaxTokens(): number {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { config } = require("../core/config.js") as typeof import("../core/config.js");
+    const raw = (config as unknown as Record<string, unknown>)?.["modelsConfigRaw"] as Record<string, unknown> | undefined;
+    const fromConfig = typeof raw?.["maxOutputTokens"] === "number" ? raw["maxOutputTokens"] as number : undefined;
+    if (fromConfig && fromConfig > 0) return fromConfig;
+  } catch { /* fall through */ }
+  const fromEnv = Number(process.env["CATCLAW_DEFAULT_MAX_TOKENS"]);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  return HARDCODED_FALLBACK_MAX_TOKENS;
+}
 
 /** 短名稱別名 → 完整 model ID */
 const MODEL_ALIASES: Record<string, string> = {
@@ -355,7 +369,7 @@ export class ClaudeApiProvider implements LLMProvider {
       log.info(`[claude:${this.id}] thinking=${opts.thinking ?? "off"} → reasoning ${opts.thinking ? `已送入 Anthropic 請求（${opts.thinking}）` : "未送"}`);
       const stream = streamSimpleAnthropic(model, context, {
         apiKey: credential,
-        maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+        maxTokens: opts.maxTokens ?? getDefaultMaxTokens(),
         signal: childAc.signal,
         ...(skipTemperature ? {} : { temperature: opts.temperature }),
         cacheRetention: "long",
