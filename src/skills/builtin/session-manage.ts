@@ -78,10 +78,19 @@ function handleClear(ctx: SkillContext): SkillResult {
   const key = currentSessionKey(ctx);
   const count = sm.clearMessages(key);
   const tracesDeleted = getTraceStore()?.deleteBySession(key) ?? 0;
-  if (count === 0 && tracesDeleted === 0) {
+  // task store 也要清（之前 /clear 沒清，舊 task 會從 disk 被抓回來）
+  let taskCount = 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ts = require("../../core/task-store.js") as typeof import("../../core/task-store.js");
+    const existing = ts.getTaskStore(key);
+    taskCount = existing.list().length;
+    ts.deleteTaskStore(key);
+  } catch { /* task-store optional */ }
+  if (count === 0 && tracesDeleted === 0 && taskCount === 0) {
     return { text: `此頻道無 session 或已是空的。（key=\`${key}\`）` };
   }
-  return { text: `已清空 ${count} 條訊息、${tracesDeleted} 筆 trace。（key=\`${key}\`）` };
+  return { text: `已清空 ${count} 條訊息、${tracesDeleted} 筆 trace、${taskCount} 個 task。（key=\`${key}\`）` };
 }
 
 async function handleCompact(ctx: SkillContext): Promise<SkillResult> {
