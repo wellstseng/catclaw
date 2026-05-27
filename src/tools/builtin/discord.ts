@@ -14,17 +14,6 @@ import { config } from "../../core/config.js";
 import { log } from "../../logger.js";
 import type { Tool, ToolContext, ToolResult } from "../types.js";
 
-// ── Owner 檢查（delete action 限定）─────────────────────────────────────────
-// 邏輯對齊 src/tools/builtin/config-patch.ts:isOwner
-function isOwner(accountId: string | undefined): boolean {
-  if (!accountId) return false;
-  const ids = config?.admin?.allowedUserIds ?? [];
-  if (ids.includes(accountId)) return true;
-  const match = accountId.match(/(?:discord-owner-|guest:)(\d+)$/);
-  if (match && ids.includes(match[1]!)) return true;
-  return false;
-}
-
 const API = "https://discord.com/api/v10";
 
 // ── Discord REST ─────────────────────────────────────────────────────────────
@@ -657,19 +646,13 @@ export const tool: Tool = {
   async execute(params: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
     const token = config?.discord?.token;
     if (!token) return { error: "config.discord.token 未設定" };
-    // delete action：owner-only + audit log
-    // 之前 LLM 可自主呼叫 delete 刪任意訊息，難追蹤原因。加 owner check + audit 寫進 log
-    // 讓「訊息消失」可追溯到具體 caller agent / accountId / messageId
+    // delete action：audit log only（owner check 已拔，2026-05-27 Wells 要求恢復原行為）
+    // 「訊息消失」仍可從 log 追溯到具體 caller agent / accountId / messageId
     const action = typeof params["action"] === "string" ? params["action"] : "";
     if (action === "delete") {
       const channelId = String(params["channelId"] ?? params["to"] ?? "").replace(/^channel:/, "");
       const messageId = String(params["messageId"] ?? "");
-      const callerInfo = `agent=${ctx.agentId ?? "?"} account=${ctx.accountId} channel=${channelId} messageId=${messageId}`;
-      if (!isOwner(ctx.accountId)) {
-        log.warn(`[discord:delete] BLOCKED non-owner attempt — ${callerInfo}`);
-        return { error: "刪除 Discord 訊息僅限 owner（admin.allowedUserIds）；本次呼叫已被擋下並記錄到 log。如需刪訊息請由人類在 Discord 客戶端操作。" };
-      }
-      log.warn(`[discord:delete] AUDIT owner-approved — ${callerInfo}`);
+      log.warn(`[discord:delete] AUDIT agent=${ctx.agentId ?? "?"} account=${ctx.accountId} channel=${channelId} messageId=${messageId}`);
     }
     try {
       const text = await runAction(token, params);
