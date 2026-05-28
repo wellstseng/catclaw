@@ -426,15 +426,28 @@ export class CodexOAuthProvider implements LLMProvider {
     // 401 retry：Codex CLI（共用 auth.json）剛好在我們發送的瞬間 refresh 過 → server 認新 token
     // → 我們手上的舊 token 直接被吊銷 → 401。這時丟掉 cache 重讀檔再試一次。
     // Connection timeout：fetch 自己沒 timeout，若 server 不回 response headers（trace fba4c71e
-    // ChatGPT 後端卡死案例）會等到上層 turn-level timeout（300s）。加 connection timeout
-    // 合併到 signal，提早 abort 讓 callWithRetry 接手 retry。stream idle watchdog 在 response.ok
-    // 後接手（上方），不重疊。
+    // ChatGPT 後端卡死案例）會等到上層 turn-level timeout（300s）。
+    //
+    // 關鍵設計（修自 trace a4ca3481）：connection timeout 只該管 headers，**不該管 body stream**。
+    // 舊版用 `AbortSignal.timeout(60_000)` 合入 fetch signal，問題是該 signal 在 headers 返回後
+    // 仍 attach 在 body 上 — gpt-5.5 reasoning=xhigh 跑大 context 時 headers 早就 OK 了，但 body
+    // 第一個 event 可能要 60s+，這時舊 timeout 會把整個 body 砍了，agent 看到 raw "operation aborted"
+    // 但 stream idle watchdog 反而沒機會啟動（已被連線 signal 連坐砍掉）。
+    //
+    // 新做法：手動 setTimeout 控 AbortController；response.ok 確定後立刻 clearTimeout，body 就不再
+    // 被連線 timeout 管轄，後續 stream phase 由 STREAM_IDLE_MS watchdog 接手。
+    //
     // 用 env `CATCLAW_CODEX_CONNECTION_TIMEOUT_MS` 覆寫（毫秒），default 60s。
     const FETCH_CONNECTION_TIMEOUT_MS = Number(process.env["CATCLAW_CODEX_CONNECTION_TIMEOUT_MS"]) || 60_000;
     let response: Response;
+    let connectionTimer: ReturnType<typeof setTimeout> | null = null;
+    let connectionAbort: AbortController | null = null;
     while (true) {
-      const connectionTimeoutSignal = AbortSignal.timeout(FETCH_CONNECTION_TIMEOUT_MS);
-      const combinedSignal = AbortSignal.any([controller.signal, connectionTimeoutSignal]);
+      if (connectionTimer) clearTimeout(connectionTimer);
+      connectionAbort = new AbortController();
+      const localAbort = connectionAbort;
+      connectionTimer = setTimeout(() => localAbort.abort(), FETCH_CONNECTION_TIMEOUT_MS);
+      const combinedSignal = AbortSignal.any([controller.signal, localAbort.signal]);
       response = await fetch(codexUrl, {
         method: "POST",
         headers: {
@@ -448,7 +461,7 @@ export class CodexOAuthProvider implements LLMProvider {
         body: JSON.stringify(body),
         signal: combinedSignal,
       }).catch((err) => {
-        if (connectionTimeoutSignal.aborted) {
+        if (localAbort.signal.aborted && !controller.signal.aborted) {
           throw new Error(`[codex-oauth:${this.id}] connection timeout (${FETCH_CONNECTION_TIMEOUT_MS}ms 內未收到 response headers)`);
         }
         throw err;
@@ -475,6 +488,9 @@ export class CodexOAuthProvider implements LLMProvider {
       }
       break;
     }
+    // 關鍵：response.ok 確定後關掉 connection timer，避免 body stream 被 60s 連坐砍。
+    // 後續 body 階段由 STREAM_IDLE_MS watchdog（line ~348）負責 abort 卡死流。
+    if (connectionTimer) { clearTimeout(connectionTimer); connectionTimer = null; }
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
