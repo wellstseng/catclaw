@@ -1316,7 +1316,7 @@ export async function* agentLoop(
 
   const _agentLoopBlocks: string[] = [];
 
-  // Agent 專屬 skills（agents/{agentId}/skills/*.md）+ 自建提示
+  // Agent 專屬 skills（agents/{agentId}/skills/ 下的 {name}/SKILL.md 或舊 .md）+ 自建提示
   // 之前只有 spawn_subagent 路徑會載入，主對話 turn 看不到 → wendy 等主 agent
   // 完全不知道自己有 skills 能用、也不知能自建。改成主對話一視同仁。
   if (opts.agentId) {
