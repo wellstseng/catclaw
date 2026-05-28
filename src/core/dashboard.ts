@@ -7173,22 +7173,23 @@ export class DashboardServer {
               markCandidateAccepted(fileName, agentId);
 
               const { resolveAgentDataDir } = await import("./agent-loader.js");
-              const targetPath = join(resolveAgentDataDir(agentId), "skills", `${candidate.slug}.md`);
+              const targetPath = join(resolveAgentDataDir(agentId), "skills", candidate.slug, "SKILL.md");
               const existingList = existing.length > 0 ? existing.join(", ") : "(無)";
 
               const authorPrompt =
-                `任務：根據以下技能候選提案，創建新的 skill 檔案。\n\n` +
+                `任務：根據以下技能候選提案，創建新的 skill。\n\n` +
                 `**提案內容**：\n` +
                 `- slug：\`${candidate.slug}\`\n` +
                 `- description：${candidate.description}\n` +
                 (candidate.rawText.includes("## 何時使用") ? `- whenToUse / sampleWorkflow / reason 詳見原始提案：\n\n${candidate.rawText}\n\n` : "") +
                 `**現有 ${agentId} skill 清單**（避免重疊或撞名）：${existingList}\n\n` +
-                `**目標檔案路徑**：\n\`${targetPath}\`\n\n` +
-                `**Skill 檔案格式**（frontmatter + body）：\n` +
+                `**目標檔案路徑**：\n\`${targetPath}\`\n（folder 格式，write_file 應會自動建立父資料夾；若不會請先用 run_command \`mkdir -p\` 建好）\n\n` +
+                `**Skill 檔案格式**（Claude Code SKILL.md 規格，frontmatter + body）：\n` +
                 `\`\`\`markdown\n` +
                 `---\n` +
                 `name: ${candidate.slug}\n` +
-                `description: 一句話 invocation hint\n` +
+                `description: 一句話 invocation hint（精準，會出現在 LLM 觸發判斷）\n` +
+                `allowed-tools: [read_file, write_file, run_command]\n` +
                 `userInvocable: true\n` +
                 `---\n\n` +
                 `# /${candidate.slug} — 標題\n\n` +
@@ -7196,10 +7197,11 @@ export class DashboardServer {
                 `## 執行步驟\n1. ...\n2. ...\n\n` +
                 `## 注意事項\n- ...\n\`\`\`\n\n` +
                 `**請按以下流程**：\n` +
-                `1. 用 \`read_file\` 確認目標路徑檔案不存在\n` +
-                `2. 用 \`write_file\` 創建檔案，frontmatter description 要精準（會出現在 LLM 的 tool list）\n` +
+                `1. 用 \`read_file\` 確認目標路徑不存在（檔案 / 同名平鋪 .md 都要檢）\n` +
+                `2. 用 \`write_file\` 創建 SKILL.md，frontmatter description 要精準。\n` +
+                `   - 若 skill 需要配套腳本／資產，連同 \`${join(resolveAgentDataDir(agentId), "skills", candidate.slug)}/scripts/\` 等子路徑一併建好，body 用相對路徑引用\n` +
                 `3. 用 \`read_file\` 驗證寫入內容\n` +
-                `4. 簡短回報：「已建立 ${candidate.slug}.md，重點是 …」\n\n` +
+                `4. 簡短回報：「已建立 ${candidate.slug}/SKILL.md，重點是 …」\n\n` +
                 `不要做以外的事（不要重構別的 skill / 不要修 config）。`;
 
               // 程式化呼叫 spawn_subagent — 透過 toolRegistry
