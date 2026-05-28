@@ -84,20 +84,16 @@ export const tool: Tool = {
         } catch { /* agent-loader 未就緒，允許寫入 */ }
       }
 
-      if (effectiveScope === "agent" && ctx.agentId) {
-        const { resolveAgentDataDir } = await import("../../core/agent-loader.js");
-        dir = join(resolveAgentDataDir(ctx.agentId), "memory");
-        namespace = `agent/${ctx.agentId}`;
-      } else if (effectiveScope === "project" && ctx.projectId) {
-        dir = join(globalDir, "projects", ctx.projectId);
-        namespace = `project/${ctx.projectId}`;
-      } else if (effectiveScope === "account") {
-        dir = join(globalDir, "accounts", ctx.accountId);
-        namespace = `account/${ctx.accountId}`;
-      } else {
-        dir = globalDir;
-        namespace = "global";
-      }
+      // V5 follow-up: scope→dir 4-branch 抽到 atom-locations 單一來源
+      const { resolveScopeDir } = await import("../../memory/atom-locations.js");
+      const resolved = await resolveScopeDir(effectiveScope, {
+        globalDir,
+        agentId: ctx.agentId,
+        projectId: ctx.projectId,
+        accountId: ctx.accountId,
+      });
+      dir = resolved.dir;
+      namespace = resolved.namespace;
 
       // write-gate 去重檢查（bypass=true 時使用者明確要求，跳過 dedup）
       const gate = await engine.checkWrite(content, namespace, bypass);
