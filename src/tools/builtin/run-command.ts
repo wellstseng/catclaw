@@ -10,12 +10,55 @@
  */
 
 import { spawn } from "node:child_process";
+import iconv from "iconv-lite";
 import { log } from "../../logger.js";
 import type { Tool } from "../types.js";
 
 const STDOUT_CAP = 100_000; // 100KB
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 分鐘硬上限（LLM 未傳 timeoutMs 時的預設）
 const SIGKILL_GRACE_MS = 2_000;  // SIGTERM 後等 2 秒再 SIGKILL
+
+// ── Windows stdout decoding ─────────────────────────────────────────────────
+
+const REPLACEMENT_CHAR = "�";
+// 雙門檻防誤觸：U+FFFD 絕對 count ≥ MIN_COUNT 且占比 ≥ THRESHOLD 才視為亂碼
+// 短 buffer 偶有 1-2 個 FFFD（如二進位輸出邊界）不該誤觸 fallback
+const MOJIBAKE_THRESHOLD = 0.03;
+const MOJIBAKE_MIN_COUNT = 3;
+
+/**
+ * 在 Windows 環境下，cmd.exe / find.exe / dir.exe 等 native 工具印錯誤訊息
+ * 用 OEM/ACP code page（zh-TW 是 CP950），即使 chcp 65001 切過 console，
+ * pipe-mode stdio 仍可能走 ACP。
+ *
+ * 策略：
+ *   1. 先試 UTF-8 decode
+ *   2. 若 U+FFFD 比例過高 → 視為亂碼，fallback CP950 (zh-TW) / CP936 (zh-CN) 重 decode
+ *   3. 環境變數 `CATCLAW_FORCE_DECODE=<encoding>` 可強制指定（debug 用）
+ */
+function decodeWindowsStdout(buf: Buffer): string {
+  const forced = process.env["CATCLAW_FORCE_DECODE"];
+  if (forced && iconv.encodingExists(forced)) {
+    return iconv.decode(buf, forced);
+  }
+
+  const utf8 = buf.toString("utf8");
+  // 計算 U+FFFD 比例
+  let replacementCount = 0;
+  for (let i = 0; i < utf8.length; i++) {
+    if (utf8[i] === REPLACEMENT_CHAR) replacementCount++;
+  }
+  const ratio = utf8.length > 0 ? replacementCount / utf8.length : 0;
+  // 雙門檻：絕對 count 與比例都過才 fallback
+  if (replacementCount < MOJIBAKE_MIN_COUNT || ratio < MOJIBAKE_THRESHOLD) return utf8;
+
+  // mojibake 偵測：UTF-8 decode 大量失敗，嘗試 CP950（zh-TW 預設）
+  try {
+    return iconv.decode(buf, "cp950");
+  } catch {
+    return utf8; // CP950 decode 也失敗 → 回傳原 UTF-8（可能含 U+FFFD，但比錯誤好）
+  }
+}
 
 // ── Git Safety Protocol ─────────────────────────────────────────────────────
 
@@ -163,16 +206,30 @@ export const tool: Tool = {
         windowsHide: true,
       });
 
+      // V5: Windows 下累積 Buffer 再整體 decode（支援 CP950 fallback）；
+      //     其他平台保持原本逐 chunk toString（行為不變）
+      const isWin = process.platform === "win32";
+      const bufChunks: Buffer[] = [];
+      let bufBytes = 0;
       let output = "";
       let truncated = false;
 
       const onData = (chunk: Buffer) => {
         if (truncated) return;
-        output += chunk.toString();
-        if (output.length > STDOUT_CAP) {
-          output = output.slice(0, STDOUT_CAP);
-          truncated = true;
-          proc.kill();
+        if (isWin) {
+          bufChunks.push(chunk);
+          bufBytes += chunk.length;
+          if (bufBytes > STDOUT_CAP) {
+            truncated = true;
+            proc.kill();
+          }
+        } else {
+          output += chunk.toString();
+          if (output.length > STDOUT_CAP) {
+            output = output.slice(0, STDOUT_CAP);
+            truncated = true;
+            proc.kill();
+          }
         }
       };
 
@@ -195,6 +252,12 @@ export const tool: Tool = {
       proc.on("close", (code) => {
         if (timer) clearTimeout(timer);
         if (killEscalationTimer) clearTimeout(killEscalationTimer);
+        // Windows: 整體 buffer 過 decodeWindowsStdout（UTF-8 → CP950 fallback）
+        if (isWin) {
+          let buf = Buffer.concat(bufChunks, bufBytes);
+          if (buf.length > STDOUT_CAP) buf = buf.subarray(0, STDOUT_CAP);
+          output = decodeWindowsStdout(buf);
+        }
         const suffix = truncated ? "\n...[輸出超過 100KB，已截斷]" : "";
         resolve({ result: { exitCode: code, output: output + suffix } });
       });

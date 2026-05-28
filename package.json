@@ -23,6 +23,7 @@
     "apache-arrow": "^18.1.0",
     "croner": "^10.0.1",
     "discord.js": "^14.16.3",
+    "iconv-lite": "^0.7.2",
     "yazl": "^3.3.1"
   },
   "devDependencies": {
