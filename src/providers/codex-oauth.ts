@@ -341,9 +341,11 @@ export class CodexOAuthProvider implements LLMProvider {
 
     // Stream idle watchdog：stream 階段 N 秒沒收到 event 就主動 abort，由 callWithRetry 接手 retry。
     // 解決「Codex Responses API 收下 request 但 stream 從未 yield」（rate-limit 軟卡 / 連線僵死）
-    // 造成 LLM 錯誤不回覆、turn 卡住一直等待的情境。對齊 claude-api 60s 設定。
+    // 造成 LLM 錯誤不回覆、turn 卡住一直等待的情境。
+    // Default 120s（gpt-5.5 reasoning + 大 context 下單次 stream 可能 60s+ 空檔，原 60s 會誤殺）。
+    // 用 env `CATCLAW_CODEX_STREAM_IDLE_MS` 覆寫（毫秒）。
     // 在 response.ok 後才啟動，避免 fetch 階段早於 stream 觸發 / 失敗路徑漏 clearInterval。
-    const STREAM_IDLE_MS = 60_000;
+    const STREAM_IDLE_MS = Number(process.env["CATCLAW_CODEX_STREAM_IDLE_MS"]) || 120_000;
     let lastEventMs = 0;
     let idledOut = false;
     let watchdog: NodeJS.Timeout | null = null;
@@ -424,10 +426,11 @@ export class CodexOAuthProvider implements LLMProvider {
     // 401 retry：Codex CLI（共用 auth.json）剛好在我們發送的瞬間 refresh 過 → server 認新 token
     // → 我們手上的舊 token 直接被吊銷 → 401。這時丟掉 cache 重讀檔再試一次。
     // Connection timeout：fetch 自己沒 timeout，若 server 不回 response headers（trace fba4c71e
-    // ChatGPT 後端卡死案例）會等到上層 turn-level timeout（300s）。加 60s connection timeout
+    // ChatGPT 後端卡死案例）會等到上層 turn-level timeout（300s）。加 connection timeout
     // 合併到 signal，提早 abort 讓 callWithRetry 接手 retry。stream idle watchdog 在 response.ok
-    // 後接手（line 343），不重疊。
-    const FETCH_CONNECTION_TIMEOUT_MS = 60_000;
+    // 後接手（上方），不重疊。
+    // 用 env `CATCLAW_CODEX_CONNECTION_TIMEOUT_MS` 覆寫（毫秒），default 60s。
+    const FETCH_CONNECTION_TIMEOUT_MS = Number(process.env["CATCLAW_CODEX_CONNECTION_TIMEOUT_MS"]) || 60_000;
     let response: Response;
     while (true) {
       const connectionTimeoutSignal = AbortSignal.timeout(FETCH_CONNECTION_TIMEOUT_MS);

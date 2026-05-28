@@ -146,13 +146,22 @@ export function externalizeToolOutput(opts: ExternalizeToolOpts): ExternalizedTo
   const meta = buildStubMetadata(opts.toolName, opts.text, opts.args);
   const sizeKB = opts.text.length / 1024;
   const isLargeFile = sizeKB >= 100;
+  // 內嵌前 2KB chars 預覽：避免「LLM 看不到內容只看到路徑 → 直覺再 read_file 一次 → 浪費一輪 LLM call」
+  // 鬼打牆。中型檔（8~30KB）通常 preview 已足以回答；大檔則作為 head 給 LLM 判斷下一步策略。
+  const PREVIEW_CHARS = 2000;
+  const hasMore = opts.text.length > PREVIEW_CHARS;
+  const preview = opts.text.slice(0, PREVIEW_CHARS);
+  const tailNote = hasMore
+    ? `\n\n──────── (上方為前 ${PREVIEW_CHARS} 字預覽；尚有 ${opts.text.length - PREVIEW_CHARS} 字未顯示) ────────`
+    : `\n\n──────── (上方為完整內容預覽) ────────`;
   const guidance = isLargeFile
-    ? `如需檢視請呼叫 read_file 讀取——**檔案 ${sizeKB.toFixed(1)} KB 偏大，建議帶 offset/limit 分段讀**（如 offset:1, limit:200），整檔讀會再次被外部化形成 stub 鏈。先用 grep 找關鍵字定位行號，再用 offset/limit 精準取段，最有效率。`
-    : `如需檢視請呼叫 read_file 讀取。`;
+    ? `若預覽不足以回答：用 read_file 帶 offset/limit 取段（如 offset:1, limit:200）——**檔案 ${sizeKB.toFixed(1)} KB 偏大，整檔讀會再次外部化形成 stub 鏈**。先用 grep 找關鍵字定位行號，再 offset/limit 精準取段。`
+    : `若預覽已足以回答則直接基於預覽回應；確需完整內容才呼叫 read_file 取 \`${filePath}\`。`;
   const stub =
     `${TOOL_OUTPUT_STUB_PREFIX} ${opts.toolName} | ${meta} | 完整內容 @ ${filePath}]\n` +
-    `↑ 上方為 tool_result 的外部化指標（CatClaw 自動截斷）。完整原始輸出已寫入該絕對路徑，` +
-    `${guidance}Stub 不含原文，勿從 stub 推測缺失內容。`;
+    `↑ tool_result 已外部化（自動截斷）。完整原文在絕對路徑，stub 內含前 ${PREVIEW_CHARS} 字預覽：\n\n` +
+    `${preview}${tailNote}\n\n` +
+    `${guidance}`;
 
   return {
     stub,
