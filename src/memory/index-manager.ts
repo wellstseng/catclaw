@@ -1,21 +1,30 @@
 /**
  * @file memory/index-manager.ts
- * @description MEMORY.md 索引管理 — 解析、查詢、更新
+ * @description V5 P3b — atom index 管理門面（轉接 JSON SoT）
  *
- * MEMORY.md 格式（原子記憶 V2.18）：
- *   # Atom Index
- *   | Atom | Path | Trigger | Confidence |
- *   |------|------|---------|------------|
- *   | name | path/to/name.md | trigger1, trigger2 | [固] |
+ * 機器源已遷至 `_atom_index.json`（同層 MEMORY.md 之目錄）。
+ * MEMORY.md 降級為自動產生的人類可讀鏡像。
  *
- * 支援三層（global / project / account）各自獨立的 MEMORY.md
+ * 對外簽名不變（loadIndex / matchTriggers / upsertIndex / removeIndex），
+ * 三個 caller（atom.ts / atom-delete.ts / recall.ts）零修改。
+ *
+ * Fallback：若 `_atom_index.json` 缺失但 MEMORY.md 仍是手寫 table → loadIndex
+ * 仍能 parse 舊格式，確保升級過渡期不中斷。
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { log } from "../logger.js";
+import {
+  ATOM_INDEX_JSON,
+  loadAtomIndexJson,
+  parseLegacyMemoryMd,
+  upsertAtom,
+  deleteAtom,
+  type AtomIndexEntry,
+} from "./atom-index-json.js";
 
-// ── 型別定義 ────────────────────────────────────────────────────────────────
+// ── 型別定義（對外不變）─────────────────────────────────────────────────────
 
 export interface IndexEntry {
   /** Atom 名稱 */
@@ -28,44 +37,48 @@ export interface IndexEntry {
   confidence: string;
 }
 
-// ── 解析工具 ─────────────────────────────────────────────────────────────────
+// ── 內部 helpers ─────────────────────────────────────────────────────────────
 
-/**
- * 解析 MEMORY.md 中的 markdown table 行
- * 格式：| name | path | trigger1, trigger2 | [固] |
- */
-function parseTableRow(line: string): IndexEntry | null {
-  const parts = line.split("|").map(s => s.trim()).filter(Boolean);
-  if (parts.length < 3) return null;
-  // 跳過表頭行（含 "---"）
-  if (parts[0].includes("---") || parts[0] === "Atom" || parts[0] === "atom") return null;
+function memDirOf(memoryMdPath: string): string {
+  return dirname(memoryMdPath);
+}
 
-  const [name, path, triggerStr, confidence] = parts;
-  const triggers = (triggerStr ?? "")
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  if (!name || !path) return null;
-  return { name, path, triggers, confidence: confidence?.trim() ?? "" };
+function toIndexEntry(a: AtomIndexEntry): IndexEntry {
+  return {
+    name: a.name,
+    path: a.path,
+    triggers: [...a.triggers],
+    confidence: a.confidence ?? "",
+  };
 }
 
 // ── 公開 API ─────────────────────────────────────────────────────────────────
 
 /**
- * 讀取並解析 MEMORY.md，回傳 IndexEntry 清單
+ * 讀取 atom index。優先 `_atom_index.json`；若缺則 fallback 解析舊 MEMORY.md。
  */
 export function loadIndex(memoryMdPath: string): IndexEntry[] {
+  const memDir = memDirOf(memoryMdPath);
+
+  // 主路徑：JSON SoT
+  const jsonPath = join(memDir, ATOM_INDEX_JSON);
+  if (existsSync(jsonPath)) {
+    try {
+      const data = loadAtomIndexJson(memDir);
+      const entries = data.atoms.map(toIndexEntry);
+      log.debug(`[index-manager] 載入 ${jsonPath}：${entries.length} 筆 (JSON SoT)`);
+      return entries;
+    } catch (err) {
+      log.warn(`[index-manager] JSON 讀取失敗，fallback 到 MEMORY.md：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Fallback：舊 MEMORY.md（升級過渡期 / 未跑 migration）
   if (!existsSync(memoryMdPath)) return [];
   try {
-    const raw = readFileSync(memoryMdPath, "utf-8");
-    const entries: IndexEntry[] = [];
-    for (const line of raw.split("\n")) {
-      if (!line.includes("|")) continue;
-      const entry = parseTableRow(line);
-      if (entry) entries.push(entry);
-    }
-    log.debug(`[index-manager] 載入 ${memoryMdPath}：${entries.length} 筆`);
+    const atoms = parseLegacyMemoryMd(memoryMdPath);
+    const entries = atoms.map(toIndexEntry);
+    log.debug(`[index-manager] 載入 ${memoryMdPath}：${entries.length} 筆 (legacy MD fallback)`);
     return entries;
   } catch (err) {
     log.warn(`[index-manager] 讀取失敗 ${memoryMdPath}：${err instanceof Error ? err.message : String(err)}`);
@@ -74,9 +87,7 @@ export function loadIndex(memoryMdPath: string): IndexEntry[] {
 }
 
 /**
- * Trigger 關鍵詞匹配
- * 輸入 prompt 文字，從索引中找出 trigger 有命中的 entry
- * 比對策略：全詞比對（大小寫不敏感）
+ * Trigger 關鍵詞匹配（全詞 substring 大小寫不敏感）。
  */
 export function matchTriggers(prompt: string, entries: IndexEntry[]): IndexEntry[] {
   const lower = prompt.toLowerCase();
@@ -86,62 +97,32 @@ export function matchTriggers(prompt: string, entries: IndexEntry[]): IndexEntry
 }
 
 /**
- * 更新或新增 MEMORY.md 的某個 atom entry
- * 若 entry 已存在（相同 name）→ 更新；不存在 → 新增
+ * Upsert atom entry：寫 JSON SoT + 同步重生 MEMORY.md 鏡像。
  */
 export function upsertIndex(memoryMdPath: string, entry: IndexEntry): void {
-  const dir = dirname(memoryMdPath);
-  let content = existsSync(memoryMdPath) ? readFileSync(memoryMdPath, "utf-8") : "";
-
-  const row = `| ${entry.name} | ${entry.path} | ${entry.triggers.join(", ")} | ${entry.confidence} |`;
-
-  if (!content) {
-    // 建立新 MEMORY.md
-    content = [
-      "# Atom Index",
-      "",
-      "| Atom | Path | Trigger | Confidence |",
-      "|------|------|---------|------------|",
-      row,
-      "",
-    ].join("\n");
-    writeFileSync(memoryMdPath, content, "utf-8");
-    return;
-  }
-
-  // 已有同名 entry → 替換
-  const namePattern = new RegExp(`^\\|\\s*${entry.name}\\s*\\|.*$`, "m");
-  if (namePattern.test(content)) {
-    content = content.replace(namePattern, row);
-  } else {
-    // 在最後一個 table 行後插入（找最後的 | 行）
-    const lines = content.split("\n");
-    let lastTableLine = -1;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].trim().startsWith("|")) { lastTableLine = i; break; }
+  const memDir = memDirOf(memoryMdPath);
+  try {
+    const changed = upsertAtom(memDir, {
+      name: entry.name,
+      path: entry.path,
+      triggers: entry.triggers,
+      confidence: entry.confidence,
+    });
+    if (changed) {
+      log.debug(`[index-manager] upsert ${entry.name} (JSON SoT)`);
     }
-    if (lastTableLine >= 0) {
-      lines.splice(lastTableLine + 1, 0, row);
-      content = lines.join("\n");
-    } else {
-      content += `\n${row}\n`;
-    }
+  } catch (err) {
+    log.warn(`[index-manager] upsertIndex 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
-
-  writeFileSync(memoryMdPath, content, "utf-8");
-  log.debug(`[index-manager] 更新 ${memoryMdPath}：${entry.name}`);
 }
 
 /**
- * 從 MEMORY.md 移除某個 atom entry
+ * 移除 atom entry：寫 JSON SoT + 同步重生 MEMORY.md 鏡像。
  */
 export function removeIndex(memoryMdPath: string, atomName: string): void {
-  if (!existsSync(memoryMdPath)) return;
+  const memDir = memDirOf(memoryMdPath);
   try {
-    const content = readFileSync(memoryMdPath, "utf-8");
-    const namePattern = new RegExp(`^\\|\\s*${atomName}\\s*\\|.*\\n?`, "m");
-    const updated = content.replace(namePattern, "");
-    writeFileSync(memoryMdPath, updated, "utf-8");
+    deleteAtom(memDir, atomName);
   } catch (err) {
     log.warn(`[index-manager] removeIndex 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
