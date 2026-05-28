@@ -8,9 +8,10 @@
  * F3:  覆轍信號（same_file_3x / retry_escalation）— 寫入 episodic
  */
 
-import { readFileSync, writeFileSync, readdirSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, readdirSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { log } from "../logger.js";
+import { rawWrite } from "./atom-io.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -193,7 +194,8 @@ export async function generateEpisodic(
   try {
     mkdirSync(opts.episodicDir, { recursive: true });
     const filePath = join(opts.episodicDir, fileName);
-    writeFileSync(filePath, content, "utf-8");
+    // V5 P4: 走 atom-io.rawWrite（非 atom 格式 + 記 audit）
+    rawWrite(filePath, content, "hook:episodic");
     log.info(`[episodic] 生成 ${fileName}${ruts.length ? `（${ruts.length} 覆轍信號）` : ""}`);
     return filePath;
   } catch (err) {

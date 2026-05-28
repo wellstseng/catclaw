@@ -22,6 +22,9 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, statSy
 import { join, basename, extname } from "node:path";
 import { log } from "../logger.js";
 import { upsertIndex } from "./index-manager.js";
+import { buildAtomContent, shouldSkip } from "./atom-spec.js";
+import { readAccess, incrementReadHits, incrementConfirmation } from "./atom-access.js";
+import { writeAtom as ioWriteAtom } from "./atom-io.js";
 
 // ── 型別定義 ────────────────────────────────────────────────────────────────
 
@@ -99,6 +102,8 @@ function parseAtomMetadata(raw: string): {
       case "triggers":
         triggers = val.split(",").map(s => s.trim()).filter(Boolean); break;
       case "created-at":   createdAt = parseInt(val.trim(), 10) || undefined; break;
+      // V5 P3: last-used / confirmations 從 .access.json 讀；
+      // 此處保留 .md 解析作為過渡（既有檔案、migrate-to-access-json 之前的環境）。
       case "last-used":    lastUsed = val.trim(); break;
       case "confirmations": confirmations = parseInt(val.trim(), 10) || 0; break;
       case "related":
@@ -119,6 +124,17 @@ export function readAtom(filePath: string): Atom | null {
     const raw = readFileSync(filePath, "utf-8");
     const name = basename(filePath, extname(filePath));
     const meta = parseAtomMetadata(raw);
+
+    // V5 P3: access.json 為遙測單一來源；若存在，覆寫 .md 解析值
+    const access = readAccess(filePath);
+    if (access) {
+      meta.lastUsed = access.last_used;
+      meta.confirmations = access.confirmations;
+      if (!meta.createdAt && access.first_seen) {
+        meta.createdAt = new Date(access.first_seen).getTime() || undefined;
+      }
+    }
+
     return { name, path: filePath, raw, ...meta };
   } catch (err) {
     log.warn(`[atom] 讀取失敗 ${filePath}：${err instanceof Error ? err.message : String(err)}`);
@@ -143,8 +159,7 @@ export function readAllAtoms(dir: string): Atom[] {
     }
 
     for (const entry of entries) {
-      if (entry.startsWith("_") || entry === "failures") continue; // 跳過 _staging / _vectordb / failures 等
-      if (entry === "MEMORY.md") continue;       // 索引檔不是 atom
+      if (shouldSkip(entry)) continue; // V5 P5: 走 atom-spec.shouldSkip 單一規則來源
 
       const fullPath = join(currentDir, entry);
       let isDir = false;
@@ -170,24 +185,15 @@ export function readAllAtoms(dir: string): Atom[] {
  * 更新 atom 的 Last-used 日期 + Confirmations 計數（+1）
  * 用於 recall 命中時更新統計
  */
-export function touchAtom(filePath: string): void {
+/**
+ * 更新 atom 的 last-used + confirmations + read-hits（命中時呼叫）。
+ *
+ * V5 P3：寫入 `<atom>.access.json` 而非 sed atom .md。
+ */
+export function touchAtom(filePath: string, source: string = "recall"): void {
   try {
-    const raw = readFileSync(filePath, "utf-8");
-    const today = new Date().toISOString().slice(0, 10);
-
-    // 替換或插入 Last-used
-    let updated = raw.replace(/^-\s+Last-used:\s+.+$/m, `- Last-used: ${today}`);
-    if (!/^-\s+Last-used:/m.test(updated)) {
-      // 在 Confirmations 行前插入
-      updated = updated.replace(/^(-\s+Confirmations:)/m, `- Last-used: ${today}\n$1`);
-    }
-
-    // Confirmations +1
-    updated = updated.replace(/^(-\s+Confirmations:\s+)(\d+)/m, (_, prefix, n) =>
-      `${prefix}${parseInt(n, 10) + 1}`
-    );
-
-    writeFileSync(filePath, updated, "utf-8");
+    incrementReadHits(filePath, source);
+    incrementConfirmation(filePath, source);
   } catch (err) {
     log.warn(`[atom] touchAtom 失敗 ${filePath}：${err instanceof Error ? err.message : String(err)}`);
   }
@@ -206,32 +212,22 @@ export function writeAtom(dir: string, name: string, opts: {
   /** 向量搜尋 namespace（應匹配 recall layerToNs，e.g. "project/id", "account/id"） */
   namespace?: string;
 }): string {
-  mkdirSync(dir, { recursive: true });
-  const today = new Date().toISOString().slice(0, 10);
-  const filePath = join(dir, `${name}.md`);
-
-  const lines = [
-    `# ${name}`,
-    "",
-    `- Scope: ${opts.scope ?? "global"}`,
-    `- Confidence: ${opts.confidence ?? "[臨]"}`,
-    ...(opts.triggers?.length ? [`- Trigger: ${opts.triggers.join(", ")}`] : []),
-    `- Created-at: ${Date.now()}`,
-    `- Last-used: ${today}`,
-    `- Confirmations: 0`,
-    ...(opts.related?.length ? [`- Related: ${opts.related.join(", ")}`] : []),
-    "",
-    `## 知識`,
-    "",
-    opts.content,
-    "",
-  ];
-
   if (!opts.description) {
     log.warn(`[atom] writeAtom ${name} 缺少 description`);
   }
 
-  writeFileSync(filePath, lines.join("\n"), "utf-8");
+  // V5 P4: 走 atom-io 統一 funnel（含 buildAtomContent + audit + access.init）
+  const { path: filePath } = ioWriteAtom({
+    dir,
+    name,
+    content: opts.content,
+    scope: opts.scope,
+    confidence: opts.confidence,
+    triggers: opts.triggers,
+    related: opts.related,
+    description: opts.description,
+    source: "tool:atom-write",
+  });
   log.debug(`[atom] 寫入 ${filePath}`);
 
   // 同步更新 MEMORY.md index（trigger matching 依賴此 index）

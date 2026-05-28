@@ -73,8 +73,9 @@ export const tool: Tool = {
         }
       } catch { /* ignore */ }
 
-      // 1. 刪除檔案
-      unlinkSync(filePath);
+      // 1. V5 P4: 走 atom-io 統一 funnel（含 .access.json 同步刪除 + audit log）
+      const { deleteAtom: ioDelete } = await import("../../memory/atom-io.js");
+      ioDelete(filePath, "tool:atom-delete");
 
       // PostAtomDelete hook（observer）
       try {

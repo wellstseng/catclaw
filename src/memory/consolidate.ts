@@ -9,10 +9,11 @@
  * C5: Archive candidates（score < archiveThreshold）
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../logger.js";
 import { readAllAtoms, computeActivation, type Atom, type AtomConfidence } from "./atom.js";
+import { updateAtomConfidence } from "./atom-io.js";
 
 // ── 晉升 ──────────────────────────────────────────────────────────────────────
 
@@ -29,16 +30,11 @@ export interface ArchiveCandidate {
   score: number;
 }
 
-/** 自動晉升 [臨]→[觀]：直接改寫檔案 */
+/** 自動晉升 [臨]→[觀]：走 atom-io.updateAtomConfidence 統一 funnel */
 function autoPromote(atom: Atom): void {
   try {
-    const raw = readFileSync(atom.path, "utf-8");
-    const updated = raw.replace(
-      /^(-\s+Confidence:\s+)\[臨\]/m,
-      "$1[觀]"
-    );
-    if (updated !== raw) {
-      writeFileSync(atom.path, updated, "utf-8");
+    const { changed } = updateAtomConfidence(atom.path, "[觀]", "tool:consolidate-promote");
+    if (changed) {
       log.info(`[consolidate] 自動晉升 [臨]→[觀]：${atom.name}`);
     }
   } catch (err) {

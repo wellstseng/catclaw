@@ -20,6 +20,7 @@ import { log } from "../logger.js";
 import { readAtom, touchAtom } from "./atom.js";
 import { loadIndex, matchTriggers } from "./index-manager.js";
 import { buildBM25Index, bm25Search } from "./bm25.js";
+import { searchGlobal as bm25SearchGlobal } from "./bm25-service.js";
 import { embedOne } from "../vector/embedding.js";
 
 // ── 型別定義 ─────────────────────────────────────────────────────────────────
@@ -30,15 +31,15 @@ export interface AtomFragment {
   id: string;
   layer: MemoryLayer;
   atom: import("./atom.js").Atom;
-  /** cosine 相似度 (0–1)；matchedBy="bm25" 時為 normalized BM25 score */
+  /** cosine 相似度 (0–1)；matchedBy="bm25" / "bm25-global" 時為 normalized BM25 score */
   score: number;
   /** 記憶來源（主要）：用最終 dedup 後分數最高的那筆 */
-  matchedBy: "vector" | "bm25" | "keyword";
+  matchedBy: "vector" | "bm25" | "bm25-global" | "keyword";
   /**
    * 所有來源（trace 觀測用）— 同 atom 被多種召回方式命中時，這裡保留全部標記。
    * 例：vector 0.72 + bm25 0.65 同 atom → matchedBy="vector", matchedBySources=["vector","bm25"]
    */
-  matchedBySources?: Array<"vector" | "bm25" | "keyword">;
+  matchedBySources?: Array<"vector" | "bm25" | "bm25-global" | "keyword">;
 }
 
 export interface RecallContext {
@@ -287,6 +288,29 @@ export async function recall(
   }
   if (bm25Fragments.length > 0) {
     log.debug(`[recall] BM25 排序命中 ${bm25Fragments.length} 個：${bm25Fragments.map(f => `${f.atom.name}@${f.score.toFixed(3)}`).join(", ")}`);
+  }
+
+  // ── Step 2.5: V5 P6 — 全域 BM25（全 atom 內容 + triggers，disk-persisted）──
+  // Phase 1 in-memory BM25 只索引 name+triggers；全 content 搜尋走這層。
+  for (const { layer, dir } of layerDefs) {
+    try {
+      const hits = bm25SearchGlobal(dir, prompt, { topK: bm25TopK, minScore: bm25MinScore });
+      for (const hit of hits) {
+        const atomPath = join(dir, `${hit.name}.md`);
+        if (!existsSync(atomPath)) continue;
+        const atom = readAtom(atomPath);
+        if (!atom) continue;
+        bm25Fragments.push({
+          id: atom.name,
+          layer,
+          atom,
+          score: hit.normalizedScore,
+          matchedBy: "bm25-global",
+        });
+      }
+    } catch (err) {
+      log.debug(`[recall] bm25-global 失敗 (${layer})：${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // ── Step 3: Embed prompt ──

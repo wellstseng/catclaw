@@ -46,7 +46,9 @@ export const tool: Tool = {
 
     if (!name) return { error: "name 不能為空" };
     if (!content) return { error: "content 不能為空" };
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) return { error: "name 必須是英文 kebab-case（例如 my-atom-name）" };
+    // V5 P5: 走 atom-spec.slugify 單一規則來源
+    const { slugify } = await import("../../memory/atom-spec.js");
+    if (!slugify(name)) return { error: "name 必須是英文 kebab-case（例如 my-atom-name）" };
 
     const triggers = triggersRaw ? triggersRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
     const related = relatedRaw ? relatedRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
