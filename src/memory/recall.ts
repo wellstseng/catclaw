@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import { log } from "../logger.js";
 import { readAtom, touchAtom } from "./atom.js";
 import { loadIndex, matchTriggers } from "./index-manager.js";
+import { buildBM25Index, bm25Search } from "./bm25.js";
 import { embedOne } from "../vector/embedding.js";
 
 // ── 型別定義 ─────────────────────────────────────────────────────────────────
@@ -29,10 +30,15 @@ export interface AtomFragment {
   id: string;
   layer: MemoryLayer;
   atom: import("./atom.js").Atom;
-  /** cosine 相似度 (0–1) */
+  /** cosine 相似度 (0–1)；matchedBy="bm25" 時為 normalized BM25 score */
   score: number;
-  /** 記憶來源：vector=向量搜尋 | keyword=MD fallback */
-  matchedBy: "vector" | "keyword";
+  /** 記憶來源（主要）：用最終 dedup 後分數最高的那筆 */
+  matchedBy: "vector" | "bm25" | "keyword";
+  /**
+   * 所有來源（trace 觀測用）— 同 atom 被多種召回方式命中時，這裡保留全部標記。
+   * 例：vector 0.72 + bm25 0.65 同 atom → matchedBy="vector", matchedBySources=["vector","bm25"]
+   */
+  matchedBySources?: Array<"vector" | "bm25" | "keyword">;
 }
 
 export interface RecallContext {
@@ -117,35 +123,63 @@ const DEFAULT_MAX_RESULTS = 5;
 // ── Keyword 快篩微調（加分但不主導排序）────────────────────────────────────
 const KEYWORD_BONUS = 0.05;
 
-// ── Keyword Fallback（向量不可用時的兜底路徑） ────────────────────────────────
+// ── BM25 層預設參數 ───────────────────────────────────────────────────────
+// BM25 raw score 經驗值通常在 0~5 之間；
+// minRawScore=0.5 過濾掉幾乎無命中的雜訊
+const DEFAULT_BM25_MIN_RAW_SCORE = 0.5;
+const DEFAULT_BM25_TOP_K = 5;
 
-function keywordFallback(
+// ── Degraded Fallback（向量不可用時的兜底路徑） ─────────────────────────────
+//
+// 優先順序：BM25 ranking 結果（含 normalized score）→ keyword trigger（固定 0.5）
+// BM25 已預先在 Step 2 算好，這裡只需 merge / dedup / 排序。
+
+function degradedFallback(
+  bm25Fragments: AtomFragment[],
   keywordHits: Set<string>,
   layerDefs: Array<{ layer: MemoryLayer; dir: string }>,
   maxResults: number,
   channelId: string | undefined,
   prompt: string,
 ): RecallResult {
-  if (keywordHits.size === 0) {
-    log.debug("[recall] ⚠ 向量服務不可用，keyword 也無命中 → 空結果");
-    const result: RecallResult = { fragments: [], blindSpot: true, degraded: true };
-    setCache(channelId, prompt, result);
-    return result;
+  // 先把 BM25 命中放進來（同 atom 多層命中 → 取分數高的）
+  const byId = new Map<string, AtomFragment>();
+  for (const f of bm25Fragments) {
+    const prev = byId.get(f.id);
+    if (!prev) {
+      byId.set(f.id, { ...f, matchedBySources: ["bm25"] });
+    } else if (f.score > prev.score) {
+      byId.set(f.id, { ...f, matchedBySources: ["bm25"] });
+    }
   }
 
-  const fragments: AtomFragment[] = [];
+  // 再補 keyword fallback（同 atom 若已是 BM25 命中 → 多記一個 source，不覆寫 primary）
   for (const name of keywordHits) {
+    const existing = byId.get(name);
+    if (existing) {
+      const sources = new Set(existing.matchedBySources ?? [existing.matchedBy]);
+      sources.add("keyword");
+      existing.matchedBySources = Array.from(sources);
+      continue;
+    }
     for (const { layer, dir } of layerDefs) {
       const atomPath = join(dir, `${name}.md`);
       if (!existsSync(atomPath)) continue;
       const atom = readAtom(atomPath);
       if (!atom) continue;
-      fragments.push({ id: atom.name, layer, atom, score: 0.5, matchedBy: "keyword" });
-      break; // 同名 atom 只取第一層命中
+      byId.set(name, {
+        id: atom.name,
+        layer,
+        atom,
+        score: 0.5,
+        matchedBy: "keyword",
+        matchedBySources: ["keyword"],
+      });
+      break;
     }
   }
 
-  fragments.sort((a, b) => b.score - a.score);
+  const fragments = Array.from(byId.values()).sort((a, b) => b.score - a.score);
   const topFragments = fragments.slice(0, maxResults);
 
   for (const f of topFragments) {
@@ -153,7 +187,9 @@ function keywordFallback(
   }
 
   const blindSpot = topFragments.length === 0;
-  log.debug(`[recall] ⚠ 向量服務不可用，改用 keyword fallback（${topFragments.length} 個命中）`);
+  log.debug(
+    `[recall] ⚠ 向量服務不可用，降級到 BM25+keyword fallback（bm25=${bm25Fragments.length}, kw=${keywordHits.size}, return=${topFragments.length}）`,
+  );
 
   const result: RecallResult = { fragments: topFragments, blindSpot, degraded: true };
   setCache(channelId, prompt, result);
@@ -173,6 +209,12 @@ export async function recall(
     topK?: number;
     minScore?: number;
     maxResults?: number;
+    /** BM25 層啟用旗標，預設 true。設 false 可退回舊行為（純 keyword + vector）*/
+    bm25Enabled?: boolean;
+    /** BM25 raw score 下限（過濾雜訊命中），預設 0.5 */
+    bm25MinScore?: number;
+    /** BM25 每層回傳前 K 個，預設 5 */
+    bm25TopK?: number;
     // 保留舊欄位相容（engine.ts 傳入），但不再使用
     triggerMatch?: boolean;
     vectorSearch?: boolean;
@@ -195,6 +237,9 @@ export async function recall(
   const topK = opts.topK ?? opts.vectorTopK ?? DEFAULT_TOP_K;
   const minScore = opts.minScore ?? opts.vectorMinScore ?? DEFAULT_MIN_SCORE;
   const maxResults = opts.maxResults ?? opts.llmSelectMax ?? DEFAULT_MAX_RESULTS;
+  const bm25Enabled = opts.bm25Enabled ?? true;
+  const bm25MinScore = opts.bm25MinScore ?? DEFAULT_BM25_MIN_RAW_SCORE;
+  const bm25TopK = opts.bm25TopK ?? DEFAULT_BM25_TOP_K;
 
   // ── 各層定義（Step 2~6 共用） ──
   const layerDefs: Array<{ layer: MemoryLayer; dir: string }> = [
@@ -204,16 +249,44 @@ export async function recall(
     ...(paths.agentDir ? [{ layer: "agent" as MemoryLayer, dir: paths.agentDir }] : []),
   ];
 
-  // ── Step 2: Progressive Retrieval — keyword 快篩 ──
+  // ── Step 2: Progressive Retrieval — keyword 快篩 + BM25 in-memory rank ──
+  // keyword 用 substring 全詞比對（accuracy 高、recall 低），BM25 用 tokenized ranking
+  // （recall 廣、含 IDF 權重）。兩者互補：keyword 命中 = trigger 命中加分；
+  // BM25 命中 = 額外候選 fragment（含 normalizedScore）。
   const keywordHits = new Set<string>();
-  for (const { dir } of layerDefs) {
+  const bm25Fragments: AtomFragment[] = [];
+  for (const { layer, dir } of layerDefs) {
     const indexPath = join(dir, "MEMORY.md");
     const entries = loadIndex(indexPath);
+    if (entries.length === 0) continue;
+
+    // keyword 快篩
     const matched = matchTriggers(prompt, entries);
     for (const m of matched) keywordHits.add(m.name);
+
+    // BM25 in-memory ranking
+    if (!bm25Enabled) continue;
+    const index = buildBM25Index(entries);
+    const hits = bm25Search(index, prompt, { topK: bm25TopK, minScore: bm25MinScore });
+    for (const hit of hits) {
+      const atomPath = join(dir, `${hit.name}.md`);
+      if (!existsSync(atomPath)) continue;
+      const atom = readAtom(atomPath);
+      if (!atom) continue;
+      bm25Fragments.push({
+        id: atom.name,
+        layer,
+        atom,
+        score: hit.normalizedScore,
+        matchedBy: "bm25",
+      });
+    }
   }
   if (keywordHits.size > 0) {
     log.debug(`[recall] keyword 快篩命中 ${keywordHits.size} 個：${[...keywordHits].join(", ")}`);
+  }
+  if (bm25Fragments.length > 0) {
+    log.debug(`[recall] BM25 排序命中 ${bm25Fragments.length} 個：${bm25Fragments.map(f => `${f.atom.name}@${f.score.toFixed(3)}`).join(", ")}`);
   }
 
   // ── Step 3: Embed prompt ──
@@ -223,7 +296,7 @@ export async function recall(
     if (!queryVec.length) throw new Error("empty embedding");
   } catch (err) {
     log.debug(`[recall] embedding 失敗：${err instanceof Error ? err.message : String(err)}`);
-    return keywordFallback(keywordHits, layerDefs, maxResults, ctx.channelId, prompt);
+    return degradedFallback(bm25Fragments, keywordHits, layerDefs, maxResults, ctx.channelId, prompt);
   }
 
   // ── Step 4: Vector search（各層並行） ──
@@ -257,14 +330,29 @@ export async function recall(
     for (const frags of layerResults) allFragments.push(...frags);
   } catch (err) {
     log.debug(`[recall] vector search 失敗：${err instanceof Error ? err.message : String(err)}`);
-    return keywordFallback(keywordHits, layerDefs, maxResults, ctx.channelId, prompt);
+    return degradedFallback(bm25Fragments, keywordHits, layerDefs, maxResults, ctx.channelId, prompt);
   }
 
+  // 把 BM25 候選合進來 — 後續 dedup map 會用 max score 保留高分那筆
+  allFragments.push(...bm25Fragments);
+
   // ── Step 5: Merge + dedup + keyword 微調 + 排序 ──
+  // 同 atom 多次命中時：保留分數最高的那筆當 primary（matchedBy + score），
+  // 但 matchedBySources 集合所有來源以保留 trace 可觀測性。
   const best = new Map<string, AtomFragment>();
   for (const f of allFragments) {
     const prev = best.get(f.id);
-    if (!prev || f.score > prev.score) best.set(f.id, f);
+    if (!prev) {
+      best.set(f.id, { ...f, matchedBySources: [f.matchedBy] });
+    } else {
+      const sources = new Set(prev.matchedBySources ?? [prev.matchedBy]);
+      sources.add(f.matchedBy);
+      if (f.score > prev.score) {
+        best.set(f.id, { ...f, matchedBySources: Array.from(sources) });
+      } else {
+        prev.matchedBySources = Array.from(sources);
+      }
+    }
   }
 
   // 純 cosine score + keyword 微調（不使用 ACT-R activation）

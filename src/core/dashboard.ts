@@ -4119,7 +4119,7 @@ async function showTraceDetail(traceId) {
         html += '<div>🧠 Memory Recall (' + r.durationMs + 'ms)</div>';
         html += '<div>Fragments: ' + r.fragmentCount + ' | Tokens: ' + r.injectedTokens + '</div>';
         if (r.hits?.length > 0) {
-          const badgeColor = { vector: 'var(--accent)', keyword: 'var(--warn)', related: 'var(--accent2)' };
+          const badgeColor = { vector: 'var(--accent)', bm25: 'var(--accent2)', keyword: 'var(--warn)', related: 'var(--accent2)' };
           html += '<div style="margin-top:3px;font-size:0.78rem;display:flex;flex-wrap:wrap;gap:4px">';
           for (const h of r.hits) {
             const c = badgeColor[h.matchedBy] || 'var(--fg2)';
