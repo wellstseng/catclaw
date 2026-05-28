@@ -698,9 +698,11 @@ export const tool: Tool = {
         if (warnings.length > 0) {
           result["warnings"] = warnings;
         }
+        registry.markAcked(record.runId);
         return { result: result as unknown as SpawnResult };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        registry.markAcked(record.runId);
         if (msg === "__TIMEOUT__") {
           return { error: "subagent timeout", result: { status: "timeout", result: null } };
         }
