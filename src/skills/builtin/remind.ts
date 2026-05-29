@@ -114,13 +114,33 @@ function isActionKeyword(s: string): s is ActionKeyword {
   return (ACTION_KEYWORDS as readonly string[]).includes(s.toLowerCase());
 }
 
+/**
+ * 從 exec content 開頭解析 --silent / -s flag。
+ *
+ * 範例：
+ *   "--silent ls -la" → { silent: true, command: "ls -la" }
+ *   "-s mkdir foo"    → { silent: true, command: "mkdir foo" }
+ *   "ls -la"          → { silent: false, command: "ls -la" }
+ *
+ * 注意：只 match 開頭整個 token（避免誤吃指令參數中含 --silent 的場景）
+ */
+export function parseExecFlags(content: string): { silent: boolean; command: string } {
+  const trimmed = content.trim();
+  const m = trimmed.match(/^(--silent|-s)\s+(.+)$/);
+  if (m) return { silent: true, command: m[2] };
+  return { silent: false, command: trimmed };
+}
+
 /** 從 action keyword + content 組合出 CronAction */
 function buildAction(keyword: ActionKeyword, content: string, channelId: string): CronAction {
   switch (keyword) {
     case "msg":
       return { type: "message", channelId, text: content };
-    case "exec":
-      return { type: "exec", command: content, channelId };
+    case "exec": {
+      // exec 額外解析 --silent flag（成功 exec 但 stdout 為空時不推 Discord）
+      const { silent, command } = parseExecFlags(content);
+      return { type: "exec", command, channelId, silent };
+    }
     case "claude":
       return { type: "claude-acp", channelId, prompt: content };
     case "agent":
@@ -148,6 +168,7 @@ export const skill: Skill = {
     "`/cron add every <interval> <action> <content>`（重複）、" +
     "`/cron add expr <分 時 日 月 週> <action> <content>`（cron 表達式）。" +
     "action：msg / exec / claude / agent。" +
+    "exec 可加 `--silent`（或 `-s`）讓成功 exec 但 stdout 為空時不推 Discord，如 `exec --silent mkdir foo`。" +
     "範例：`/cron add expr 0 9 * * 1-5 claude 整理本週 PR`。" +
     "管理：/cron list、/cron delete <id>、/cron enable <id>、/cron disable <id>。",
   tier: "standard",
