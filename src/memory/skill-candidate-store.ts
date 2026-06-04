@@ -25,6 +25,8 @@ import { log } from "../logger.js";
 
 export type SkillCandidateTrigger = "turn-base" | "idle";
 
+export type SkillPriority = "low" | "med" | "high";
+
 export interface ProposeSkillCandidateOpts {
   slug: string;
   description: string;
@@ -37,6 +39,10 @@ export interface ProposeSkillCandidateOpts {
   sessionKey: string;
   /** 預設 24h；caller 可從 config 傳 */
   cooldownHours?: number;
+  /** 推薦執行程度（LLM judge 評分） */
+  priority?: SkillPriority;
+  /** 緊急性數值 1-10（LLM judge 評分） */
+  urgencyScore?: number;
 }
 
 export interface SkillCandidateEntry {
@@ -52,6 +58,10 @@ export interface SkillCandidateEntry {
   createdAt?: string;
   authoredAt?: string;
   authoredPath?: string;
+  /** 推薦執行程度 */
+  priority?: SkillPriority;
+  /** 緊急性 1-10 */
+  urgencyScore?: number;
   rawText: string;
   size: number;
   mtimeMs: number;
@@ -136,6 +146,8 @@ export function proposeSkillCandidate(opts: ProposeSkillCandidateOpts): string |
     const fileName = `${slug}-${ts}.md`;
     const filePath = join(dir, fileName);
 
+    const priority = opts.priority ?? "med";
+    const urgencyScore = Math.max(1, Math.min(10, opts.urgencyScore ?? 5));
     const content = `---
 name: skill-candidate-${slug}-${ts}
 description: LLM 判官提案的新 skill 候選
@@ -147,12 +159,15 @@ created_at: ${new Date().toISOString()}
 channel_id: ${opts.channelId}
 agent_id: ${opts.agentId}
 session_key: ${opts.sessionKey}
+priority: ${priority}
+urgency_score: ${urgencyScore}
 ---
 
 ## 提案 Skill
 
 - **slug**：\`${slug}\`
 - **description**：${opts.description}
+- **推薦執行**：${priority} (urgency=${urgencyScore}/10)
 
 ## 何時使用 (whenToUse)
 
@@ -185,6 +200,39 @@ ${opts.reason}
   }
 }
 
+// ── TTL Sweep ────────────────────────────────────────────────────────────────
+
+const DEFAULT_TTL_DAYS = 30;
+
+/**
+ * 清理過期 candidate 提案。
+ * @param ttlDays 提案保留天數（預設 30）
+ * @returns 已刪除的檔案數
+ */
+export function sweepExpiredCandidates(ttlDays = DEFAULT_TTL_DAYS): number {
+  const dir = getStagingDir();
+  if (!existsSync(dir)) return 0;
+  const cutoffMs = Date.now() - ttlDays * 86_400_000;
+  let removed = 0;
+  try {
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".md")) continue;
+      const filePath = join(dir, f);
+      try {
+        const st = statSync(filePath);
+        if (st.mtimeMs < cutoffMs) {
+          unlinkSync(filePath);
+          removed++;
+        }
+      } catch { /* skip */ }
+    }
+    if (removed > 0) log.info(`[skill-candidate] TTL sweep: 移除 ${removed} 份過期提案 (>${ttlDays}d)`);
+  } catch (err) {
+    log.warn(`[skill-candidate] sweep 失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+  return removed;
+}
+
 /** 列 _staging 內所有提案（newest first），不含 _accepted/ 子目錄。 */
 export function listSkillCandidates(): SkillCandidateEntry[] {
   const dir = getStagingDir();
@@ -197,6 +245,14 @@ export function listSkillCandidates(): SkillCandidateEntry[] {
       const stat = statSync(filePath);
       const rawText = readFileSync(filePath, "utf-8");
       const fm = parseFrontmatter(rawText);
+      const priorityRaw = fm["priority"];
+      const priority = (priorityRaw === "low" || priorityRaw === "med" || priorityRaw === "high")
+        ? priorityRaw
+        : undefined;
+      const urgencyScoreRaw = fm["urgency_score"] ? parseInt(fm["urgency_score"], 10) : undefined;
+      const urgencyScore = (typeof urgencyScoreRaw === "number" && !isNaN(urgencyScoreRaw))
+        ? Math.max(1, Math.min(10, urgencyScoreRaw))
+        : undefined;
       entries.push({
         fileName: f,
         filePath,
@@ -208,6 +264,8 @@ export function listSkillCandidates(): SkillCandidateEntry[] {
         createdAt: fm["created_at"],
         authoredAt: fm["authored_at"],
         authoredPath: fm["authored_path"],
+        priority,
+        urgencyScore,
         rawText,
         size: stat.size,
         mtimeMs: stat.mtimeMs,

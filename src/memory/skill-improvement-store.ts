@@ -51,6 +51,75 @@ function getStagingDir(): string {
   );
 }
 
+// ── Cooldown：避免同 skill+triggeredBy 短時間內反覆累積提案 ──────────────────
+
+function getCooldownPath(): string {
+  return join(getStagingDir(), ".cooldown.json");
+}
+
+function readCooldown(): Record<string, number> {
+  const p = getCooldownPath();
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, "utf-8")) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+function writeCooldown(ledger: Record<string, number>): void {
+  const p = getCooldownPath();
+  try {
+    const dir = join(p, "..");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(p, JSON.stringify(ledger, null, 2), "utf-8");
+  } catch (err) {
+    log.warn(`[skill-improvement] cooldown 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** 同 skill+triggeredBy 在 cooldownHours 內已提案過 → return true（跳過） */
+export function isInCooldown(skillName: string, triggeredBy: string, cooldownHours = 24): boolean {
+  const ledger = readCooldown();
+  const key = `${skillName}::${triggeredBy}`;
+  const last = ledger[key];
+  if (!last) return false;
+  return Date.now() - last < cooldownHours * 3_600_000;
+}
+
+// ── TTL Sweep：自動清理過期提案 ────────────────────────────────────────────
+
+const DEFAULT_TTL_DAYS = 14;
+
+/**
+ * 清理過期 staging 提案。
+ * @param ttlDays 提案保留天數（預設 14）
+ * @returns 已刪除的檔案數
+ */
+export function sweepExpiredImprovements(ttlDays = DEFAULT_TTL_DAYS): number {
+  const dir = getStagingDir();
+  if (!existsSync(dir)) return 0;
+  const cutoffMs = Date.now() - ttlDays * 86_400_000;
+  let removed = 0;
+  try {
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".md")) continue; // 不掃 .cooldown.json
+      const filePath = join(dir, f);
+      try {
+        const st = statSync(filePath);
+        if (st.mtimeMs < cutoffMs) {
+          unlinkSync(filePath);
+          removed++;
+        }
+      } catch { /* skip */ }
+    }
+    if (removed > 0) log.info(`[skill-improvement] TTL sweep: 移除 ${removed} 份過期提案 (>${ttlDays}d)`);
+  } catch (err) {
+    log.warn(`[skill-improvement] sweep 失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+  return removed;
+}
+
 function getCatclawHome(): string {
   return process.env["CATCLAW_HOME"] ?? join(homedir(), ".catclaw");
 }
@@ -210,8 +279,14 @@ export function listImprovementAtoms(skillName: string): Array<{ fileName: strin
   return out;
 }
 
-/** 產生 skill 改進提案，寫入 _staging。失敗只 warn，不拋出。回傳 path 或 null。 */
-export function proposeSkillImprovement(opts: ProposeSkillOpts): string | null {
+/** 產生 skill 改進提案，寫入 _staging。失敗只 warn，不拋出。回傳 path 或 null（cooldown 命中時 null）。 */
+export function proposeSkillImprovement(opts: ProposeSkillOpts & { cooldownHours?: number }): string | null {
+  const cooldownHours = opts.cooldownHours ?? 24;
+  if (isInCooldown(opts.skillName, opts.triggeredBy, cooldownHours)) {
+    log.debug(`[skill-improvement] ${opts.skillName}::${opts.triggeredBy} 冷卻中（${cooldownHours}h），跳過提案`);
+    return null;
+  }
+
   try {
     const dir = getStagingDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -260,6 +335,10 @@ ${opts.recommendationText ?? "（待 Wells review 補充：可能的改進方向
 `;
 
     writeFileSync(filePath, content, "utf-8");
+    // 更新 cooldown ledger
+    const ledger = readCooldown();
+    ledger[`${opts.skillName}::${opts.triggeredBy}`] = Date.now();
+    writeCooldown(ledger);
     log.info(`[skill-improvement] 提案已寫入 ${filePath}`);
     return filePath;
   } catch (err) {

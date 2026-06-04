@@ -3483,13 +3483,20 @@ async function loadSkillCandidates() {
     }
     sum.innerHTML = '待審核 <b>' + entries.length + '</b> 筆';
     const agentOptions = agents.map(a => '<option value="' + a.id + '">' + a.id + (a.label ? ' (' + a.label + ')' : '') + '</option>').join('');
+    // 按 urgency_score (desc) 排序；無分數的排最後
+    entries.sort((a, b) => (b.urgencyScore ?? -1) - (a.urgencyScore ?? -1));
     let html = '';
+    const priorityColor = { high: '#f55', med: '#f80', low: '#888' };
     for (const e of entries) {
       const ts = e.createdAt ? new Date(e.createdAt).toLocaleString() : '?';
       const escaped = (e.rawText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
       const defaultAgent = e.agentId || 'default';
+      const pColor = e.priority ? (priorityColor[e.priority] || '#888') : '#888';
+      const priorityBadge = e.priority
+        ? '<span style="background:' + pColor + ';color:#000;padding:1px 5px;border-radius:3px;font-size:0.72rem;font-weight:600;margin-left:6px">' + e.priority.toUpperCase() + (typeof e.urgencyScore === 'number' ? ' ' + e.urgencyScore + '/10' : '') + '</span>'
+        : '';
       html += '<div style="border:1px solid #333;border-radius:4px;padding:8px;margin-bottom:8px">';
-      html += '<div><b>' + (e.slug || '?') + '</b> <span style="color:#888;font-size:0.78rem">[' + (e.triggeredBy || '?') + ']</span> <span style="color:#888;font-size:0.78rem;margin-left:6px">' + ts + '</span></div>';
+      html += '<div><b>' + (e.slug || '?') + '</b>' + priorityBadge + ' <span style="color:#888;font-size:0.78rem">[' + (e.triggeredBy || '?') + ']</span> <span style="color:#888;font-size:0.78rem;margin-left:6px">' + ts + '</span></div>';
       html += '<div style="font-size:0.82rem;color:#ccc;margin:4px 0">' + (e.description || '(無描述)') + '</div>';
       html += '<div style="font-size:0.78rem;color:#888">channel: ' + (e.channelId || '-') + ' | proposed agent: ' + (e.agentId || '-') + '</div>';
       html += '<details style="margin:4px 0"><summary style="cursor:pointer;color:#4fc3f7">展開內容</summary><pre style="background:#0e0e0e;padding:6px;font-size:0.72rem;overflow-x:auto;max-height:400px">' + escaped + '</pre></details>';
@@ -7089,7 +7096,8 @@ export class DashboardServer {
       // GET /api/skill-improvements — 列 _staging 內提案（項目 10 Week 2）
       if (url === "/api/skill-improvements" && method === "GET") {
         void (async () => {
-          const { listSkillImprovements } = await import("../memory/skill-improvement-store.js");
+          const { listSkillImprovements, sweepExpiredImprovements } = await import("../memory/skill-improvement-store.js");
+          sweepExpiredImprovements(); // TTL sweep（預設 14 天）
           const entries = listSkillImprovements();
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ entries }));
@@ -7131,7 +7139,8 @@ export class DashboardServer {
       // GET /api/skill-candidates — 列 _staging/skill-candidates/ 內提案
       if (url === "/api/skill-candidates" && method === "GET") {
         void (async () => {
-          const { listSkillCandidates } = await import("../memory/skill-candidate-store.js");
+          const { listSkillCandidates, sweepExpiredCandidates } = await import("../memory/skill-candidate-store.js");
+          sweepExpiredCandidates(); // TTL sweep（預設 30 天）
           const entries = listSkillCandidates();
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ entries }));

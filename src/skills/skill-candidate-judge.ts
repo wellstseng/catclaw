@@ -53,6 +53,10 @@ interface JudgeResult {
   whenToUse: string;
   sampleWorkflow: string;
   reason: string;
+  /** 推薦執行程度（LLM judge 評分） */
+  priority?: "low" | "med" | "high";
+  /** 緊急性 1-10（LLM judge 評分） */
+  urgencyScore?: number;
 }
 
 export async function judgeSkillCandidate(opts: JudgeOpts): Promise<void> {
@@ -95,8 +99,12 @@ export async function judgeSkillCandidate(opts: JudgeOpts): Promise<void> {
     `3. slug 不與既有 skill 撞名 / 高度重疊\n` +
     `4. workflow 通用，下次類似情境可直接 invoke 而非重新組合\n\n` +
     `寧可 false，避免噪音。一般對話 / 探索 / 一次性任務 → false。\n\n` +
+    `**priority / urgency_score 評分標準**（needPropose=true 時必填）：\n` +
+    `- high: 對話脈絡反覆出現缺一個現有 skill 解不開的問題（urgency 8-10）\n` +
+    `- med: 偶發但有複用空間，user 後續可能再用（urgency 4-7）\n` +
+    `- low: 一次性 / 邊角情境，存著可能用不到（urgency 1-3）\n\n` +
     `回覆嚴格 JSON：\n` +
-    `{"needPropose": <true|false>, "slug": "kebab-case-name", "description": "一句話描述 skill 做什麼", "whenToUse": "何時該觸發這個 skill", "sampleWorkflow": "簡述 tool 序列", "reason": "為什麼值得 / 不值得"}`;
+    `{"needPropose": <true|false>, "slug": "kebab-case-name", "description": "一句話描述 skill 做什麼", "whenToUse": "何時該觸發這個 skill", "sampleWorkflow": "簡述 tool 序列", "reason": "為什麼值得 / 不值得", "priority": "low|med|high", "urgencyScore": <1-10>}`;
 
   try {
     const stream = await provider.stream(
@@ -144,6 +152,8 @@ export async function judgeSkillCandidate(opts: JudgeOpts): Promise<void> {
       agentId: opts.agentId,
       sessionKey: opts.sessionKey,
       cooldownHours,
+      priority: parsed.priority,
+      urgencyScore: parsed.urgencyScore,
     });
     log.info(`[skill-candidate] propose ${parsed.slug}（trigger=${opts.triggeredBy}）`);
   } catch (err) {
@@ -169,6 +179,12 @@ function parseJudgeJson(text: string): JudgeResult | null {
     }
     if (typeof parsed.slug !== "string" || !parsed.slug.trim()) return null;
     if (typeof parsed.description !== "string" || !parsed.description.trim()) return null;
+    const priority = parsed.priority === "low" || parsed.priority === "med" || parsed.priority === "high"
+      ? parsed.priority
+      : undefined;
+    const urgencyScore = typeof parsed.urgencyScore === "number" && parsed.urgencyScore >= 1 && parsed.urgencyScore <= 10
+      ? Math.round(parsed.urgencyScore)
+      : undefined;
     return {
       needPropose: true,
       slug: parsed.slug.trim(),
@@ -176,6 +192,8 @@ function parseJudgeJson(text: string): JudgeResult | null {
       whenToUse: typeof parsed.whenToUse === "string" ? parsed.whenToUse.trim() : "",
       sampleWorkflow: typeof parsed.sampleWorkflow === "string" ? parsed.sampleWorkflow.trim() : "",
       reason: typeof parsed.reason === "string" ? parsed.reason.trim() : "",
+      priority,
+      urgencyScore,
     };
   } catch {
     return null;
