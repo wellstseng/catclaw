@@ -115,20 +115,29 @@ function isActionKeyword(s: string): s is ActionKeyword {
 }
 
 /**
- * 從 exec content 開頭解析 --silent / -s flag。
+ * 從 exec content 開頭解析 silent / verbose flag。
+ *
+ * **預設 silent=true**（成功 exec 但 stdout 為空時不推 Discord，避免「(no output)」雜訊）。
  *
  * 範例：
- *   "--silent ls -la" → { silent: true, command: "ls -la" }
- *   "-s mkdir foo"    → { silent: true, command: "mkdir foo" }
- *   "ls -la"          → { silent: false, command: "ls -la" }
+ *   "ls -la"          → { silent: true,  command: "ls -la" }（預設）
+ *   "--verbose ls"    → { silent: false, command: "ls" }（強制推通知）
+ *   "-v echo hi"      → { silent: false, command: "echo hi" }
+ *   "--silent ls"     → { silent: true,  command: "ls" }（向後相容：跟預設相同）
+ *   "-s mkdir foo"    → { silent: true,  command: "mkdir foo" }
  *
- * 注意：只 match 開頭整個 token（避免誤吃指令參數中含 --silent 的場景）
+ * 注意：只 match 開頭整個 token（避免誤吃指令參數中含 flag 的場景）
  */
 export function parseExecFlags(content: string): { silent: boolean; command: string } {
   const trimmed = content.trim();
-  const m = trimmed.match(/^(--silent|-s)\s+(.+)$/);
-  if (m) return { silent: true, command: m[2] };
-  return { silent: false, command: trimmed };
+  // --verbose / -v：覆寫預設，強制推 Discord 通知
+  const verboseMatch = trimmed.match(/^(--verbose|-v)\s+(.+)$/);
+  if (verboseMatch) return { silent: false, command: verboseMatch[2] };
+  // --silent / -s：explicit 標註（向後相容，與預設語義相同）
+  const silentMatch = trimmed.match(/^(--silent|-s)\s+(.+)$/);
+  if (silentMatch) return { silent: true, command: silentMatch[2] };
+  // 預設 silent=true
+  return { silent: true, command: trimmed };
 }
 
 /** 從 action keyword + content 組合出 CronAction */
@@ -168,7 +177,7 @@ export const skill: Skill = {
     "`/cron add every <interval> <action> <content>`（重複）、" +
     "`/cron add expr <分 時 日 月 週> <action> <content>`（cron 表達式）。" +
     "action：msg / exec / claude / agent。" +
-    "exec 可加 `--silent`（或 `-s`）讓成功 exec 但 stdout 為空時不推 Discord，如 `exec --silent mkdir foo`。" +
+    "exec 預設不推 Discord（避免「(no output)」雜訊）；想看執行通知加 `--verbose` 或 `-v`，如 `exec --verbose npm run build`。" +
     "範例：`/cron add expr 0 9 * * 1-5 claude 整理本週 PR`。" +
     "管理：/cron list、/cron delete <id>、/cron enable <id>、/cron disable <id>。",
   tier: "standard",

@@ -9,11 +9,14 @@
 
 // 重現 src/skills/builtin/remind.ts:parseExecFlags（remind.ts 依賴 catclaw config，
 // 隔離環境 import 會 throw；smoke 同步邏輯而非載入）
+// 預設 silent=true；--verbose / -v 反向 flag
 function parseExecFlags(content) {
   const trimmed = content.trim();
-  const m = trimmed.match(/^(--silent|-s)\s+(.+)$/);
-  if (m) return { silent: true, command: m[2] };
-  return { silent: false, command: trimmed };
+  const verboseMatch = trimmed.match(/^(--verbose|-v)\s+(.+)$/);
+  if (verboseMatch) return { silent: false, command: verboseMatch[2] };
+  const silentMatch = trimmed.match(/^(--silent|-s)\s+(.+)$/);
+  if (silentMatch) return { silent: true, command: silentMatch[2] };
+  return { silent: true, command: trimmed };
 }
 
 let passed = 0, failed = 0;
@@ -38,22 +41,45 @@ console.log("\n═══ Test 2: -s 短形式 ═══");
   assertEq(r.command, "mkdir foo", "command 去掉 flag");
 }
 
-// ── Test 3: 無 flag ────────────────────────────────────────────────────
+// ── Test 3: 無 flag → 預設 silent=true ─────────────────────────────────
 
-console.log("\n═══ Test 3: 無 flag ═══");
+console.log("\n═══ Test 3: 無 flag → 預設 silent=true ═══");
 {
   const r = parseExecFlags("ls -la");
-  assertEq(r.silent, false, "silent=false");
+  assertEq(r.silent, true, "預設 silent=true（不推 Discord）");
   assertEq(r.command, "ls -la", "command 不變");
+}
+
+// ── Test 3b: --verbose 反向 flag ────────────────────────────────────────
+
+console.log("\n═══ Test 3b: --verbose 反向 flag ═══");
+{
+  const r = parseExecFlags("--verbose npm run build");
+  assertEq(r.silent, false, "--verbose → silent=false（強制推通知）");
+  assertEq(r.command, "npm run build", "command 去掉 flag");
+}
+
+// ── Test 3c: -v 短形式 ──────────────────────────────────────────────────
+
+console.log("\n═══ Test 3c: -v 短形式 ═══");
+{
+  const r = parseExecFlags("-v echo hi");
+  assertEq(r.silent, false, "-v → silent=false");
+  assertEq(r.command, "echo hi", "command 去掉 flag");
 }
 
 // ── Test 4: flag 在指令中段不誤觸 ──────────────────────────────────────
 
-console.log("\n═══ Test 4: --silent 在中段不誤觸 ═══");
+console.log("\n═══ Test 4: --silent / --verbose 在中段不誤觸 ═══");
 {
+  // 中段不 match flag regex；走預設 silent=true
   const r = parseExecFlags("npm test --silent");
-  assertEq(r.silent, false, "中段 --silent 不觸發 flag");
+  assertEq(r.silent, true, "中段 --silent 不觸發 flag → 走預設 silent=true");
   assertEq(r.command, "npm test --silent", "command 完整保留");
+
+  const r2 = parseExecFlags("npm test --verbose");
+  assertEq(r2.silent, true, "中段 --verbose 不觸發 → 走預設 silent=true");
+  assertEq(r2.command, "npm test --verbose", "command 完整保留");
 }
 
 // ── Test 5: 前後空白 ──────────────────────────────────────────────────
@@ -67,21 +93,25 @@ console.log("\n═══ Test 5: 前後空白 trim ═══");
 
 // ── Test 6: 邊界 — 只有 flag 沒 command ──────────────────────────────
 
-console.log("\n═══ Test 6: 只有 --silent 沒 command（不該 match）═══");
+console.log("\n═══ Test 6: 孤立 flag 沒 command（不該 match → 走預設）═══");
 {
+  // regex 要求 flag 後至少 1 空白 + 非空 → 不 match → 走預設 silent=true
   const r = parseExecFlags("--silent");
-  // regex 要求 flag 後至少 1 空白 + 非空 → 不 match → silent=false, command="--silent"
-  assertEq(r.silent, false, "孤立 --silent 不視為 flag");
+  assertEq(r.silent, true, "孤立 --silent 不視為 flag → 預設 silent=true");
   assertEq(r.command, "--silent", "command 原樣保留");
+
+  const r2 = parseExecFlags("--verbose");
+  assertEq(r2.silent, true, "孤立 --verbose 不視為 flag → 預設 silent=true");
+  assertEq(r2.command, "--verbose", "command 原樣保留");
 }
 
 // ── Test 7: --silentX 不誤觸（boundary） ──────────────────────────────
 
-console.log("\n═══ Test 7: --silent-mode 之類不誤觸 ═══");
+console.log("\n═══ Test 7: --silent-mode 之類不誤觸 flag regex ═══");
 {
   const r = parseExecFlags("--silent-mode foo");
-  // 我們的 regex `^(--silent|-s)\s+`，--silent 後緊接 -mode 不是 \s → 不 match
-  assertEq(r.silent, false, "--silent-mode 不誤觸");
+  // regex `^(--silent|-s)\s+`，--silent 後緊接 -mode 不是 \s → 不 match → 走預設 silent=true
+  assertEq(r.silent, true, "--silent-mode 不誤觸 flag regex → 走預設 silent=true");
   assertEq(r.command, "--silent-mode foo", "command 原樣");
 }
 
