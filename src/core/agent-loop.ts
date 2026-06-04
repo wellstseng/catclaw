@@ -1795,8 +1795,12 @@ export async function* agentLoop(
             "3. 判斷上次任務是否其實已完成、或進度到哪",
             "",
             "**重要**：只用唯讀工具（read_file / grep / glob / run_command 的查詢命令 / subagents action=list），不要再啟動長腳本或寫檔。完成驗證後直接 end_turn 回報。超時會強制中止。",
-          ].join("\n");
-          messages.push({ role: "user", content: graceNotice });
+          ];
+          // 包 <system-reminder>：純平台行為提醒，防止被 LLM 引用 / echo 到 Discord
+          graceNotice.unshift("<system-reminder>");
+          graceNotice.push("</system-reminder>");
+          const graceNoticeStr = graceNotice.join("\n");
+          messages.push({ role: "user", content: graceNoticeStr });
           log.info(`[agent-loop] [loop=${loopCount}] 進入 grace period 60s（${toolsRunSoFar} 個工具已執行）`);
           continue;
         }
@@ -2702,6 +2706,7 @@ export async function* agentLoop(
         if (stuckLoopBlockCount >= 1 && !stuckLoopSoftNudgeInjected) {
           stuckLoopSoftNudgeInjected = true;
           messages.push({ role: "user", content: [
+            "<system-reminder>",
             "🔁 [平台訊息：策略提醒]",
             `偵測到工具迴圈（STUCK-LOOP 第 ${stuckLoopBlockCount} 次）。**禁止對同 args 重複呼叫同 tool**。`,
             "請主動換策略：",
@@ -2710,6 +2715,7 @@ export async function* agentLoop(
             "  (c) **拆小任務**：一次只做一件事",
             "  (d) **end_turn 回報使用者**：說明進度與卡點，由人決定下一步",
             "立刻評估哪條路最務實，下一輪採用該策略。",
+            "</system-reminder>",
           ].join("\n") });
           log.info(`[agent-loop] [loop=${loopCount}] L3 stuck-loop soft nudge (count=${stuckLoopBlockCount})`);
         }
@@ -2717,6 +2723,7 @@ export async function* agentLoop(
         if (stuckLoopBlockCount >= STUCK_LOOP_CYCLE_THRESHOLD) {
           stuckLoopCycleCount++;
           messages.push({ role: "user", content: [
+            "<system-reminder>",
             "🚨 [平台訊息：強制升級]",
             `STUCK-LOOP 第 ${stuckLoopCycleCount} 個 cycle（累計 ${stuckLoopBlockCount} 次）。前面的策略提醒沒生效。`,
             "**絕對禁止**繼續用同類工具序列。立刻改變方法：",
@@ -2724,6 +2731,7 @@ export async function* agentLoop(
             "  • 卡在中文/特殊路徑 → 用 read_file 直接讀絕對路徑（不要 glob/dir）",
             "  • 無法繼續 → end_turn 回報目前進度跟卡點，請使用者協助",
             "本 turn 不會被強制中止，請持續嘗試新策略。",
+            "</system-reminder>",
           ].join("\n") });
           log.warn(`[agent-loop] [loop=${loopCount}] L3 stuck-loop cycle ${stuckLoopCycleCount} 升級 nudge，重置 count`);
           stuckLoopBlockCount = 0;
@@ -2733,10 +2741,12 @@ export async function* agentLoop(
         if (subagentPollCount >= 3 && !subagentPollSoftNudgeInjected) {
           subagentPollSoftNudgeInjected = true;
           messages.push({ role: "user", content: [
+            "<system-reminder>",
             "🔁 [平台訊息：策略提醒]",
             `偵測到 subagent polling 反模式（累計 ${subagentPollCount} 次 subagents.{wait,list,status}）。`,
             "spawn_subagent 後是 fire-and-forget — **平台會在子完成時自動 wake 你**，不需 polling。",
             "請立即 **end_turn**：不會錯過任何結果，下一輪 wake 會把子的摘要直接注入。",
+            "</system-reminder>",
           ].join("\n") });
           log.info(`[agent-loop] [loop=${loopCount}] L3 subagent-poll soft nudge (count=${subagentPollCount})`);
         }
@@ -2744,10 +2754,12 @@ export async function* agentLoop(
         if (subagentPollCount >= SUBAGENT_POLL_CYCLE_THRESHOLD) {
           subagentPollCycleCount++;
           messages.push({ role: "user", content: [
+            "<system-reminder>",
             "🚨 [平台訊息：強制升級]",
             `subagent polling cycle ${subagentPollCycleCount}（累計 ${subagentPollCount} 次）。`,
             "**立刻 end_turn**。子完成會自動 wake 你，繼續 polling 沒有意義。",
             "本 turn 不會被強制中止，但持續 polling 會被反覆提醒。",
+            "</system-reminder>",
           ].join("\n") });
           log.warn(`[agent-loop] [loop=${loopCount}] L3 subagent-poll cycle ${subagentPollCycleCount} 升級 nudge，重置 count`);
           subagentPollCount = 0;
