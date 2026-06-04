@@ -1725,7 +1725,12 @@ export async function* agentLoop(
       }
     }
     if (triggered) {
+      // 包 <system-reminder> tag：Claude 訓練上對此 tag 有強 prior，視為 ephemeral 平台提醒，
+      // 不會引用 / 回覆 / echo 其內容（防止 leak 到 Discord channel）。
+      // Anthropic API messages[] 沒有 system/developer mid-turn role，必須用 user role 注入，
+      // 用 tag 區分「真實 user」vs「平台 reminder」。
       const assessmentMsg = [
+        "<system-reminder>",
         "🎯 [平台：長任務評估]",
         "你收到的任務含「分析 / 報告 / 規格 / 規劃 / 多檔 / 逐個」等關鍵字 — 屬於長任務範疇。**動手前必須先評估拆分**：",
         "",
@@ -1746,6 +1751,7 @@ export async function* agentLoop(
         "- 結束時用 [整體判定 ✅/❌/⚠️] 結論優先回報",
         "",
         "若評估後判定**不是長任務**（如 user 只問 1 個快速問題）→ 忽略此提醒直接處理。",
+        "</system-reminder>",
       ].join("\n");
       messages.push({ role: "user", content: assessmentMsg });
       log.info(`[agent-loop] long-task detection 命中（trigger=${triggerReason}） → 注入評估提示`);
