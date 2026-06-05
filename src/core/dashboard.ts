@@ -2129,6 +2129,7 @@ const _cronSchedSchema = {
 const _cronActionSchema = {
   message:      [{ k:'channelId', t:'text', l:'Channel ID', req:true }, { k:'text', t:'textarea', l:'訊息內容', req:true }],
   'claude-acp': [{ k:'channelId', t:'text', l:'Channel ID', req:true }, { k:'prompt', t:'textarea', l:'Prompt', req:true }, { k:'timeoutSec', t:'num', l:'Timeout（秒）' }],
+  'codex-acp': [{ k:'channelId', t:'text', l:'Channel ID', req:true }, { k:'prompt', t:'textarea', l:'Prompt', req:true }, { k:'timeoutSec', t:'num', l:'Timeout（秒）' }],
   exec:         [{ k:'command', t:'textarea', l:'執行指令', req:true }, { k:'channelId', t:'text', l:'回報頻道 ID' }, { k:'silent', t:'bool', l:'靜默（成功不回報）' }, { k:'timeoutSec', t:'num', l:'Timeout（秒）' }, { k:'shell', t:'text', l:'Shell（預設 sh）' }, { k:'background', t:'bool', l:'背景執行' }],
   subagent:     [{ k:'task', t:'textarea', l:'任務描述', req:true }, { k:'provider', t:'text', l:'Provider ID' }, { k:'timeoutMs', t:'num', l:'Timeout（毫秒）' }, { k:'notify', t:'text', l:'通知頻道', placeholder:'discord:ch:CHANNEL_ID' }],
   'cli-bridge': [{ k:'label', t:'text', l:'Bridge Label' }, { k:'channelId', t:'text', l:'Channel ID（label/channelId 至少一個）' }, { k:'task', t:'textarea', l:'注入訊息', req:true }, { k:'awaitResult', t:'bool', l:'等待 turn 完成' }, { k:'timeoutMs', t:'num', l:'awaitResult Timeout（毫秒）' }],

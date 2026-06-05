@@ -25,6 +25,7 @@ import { config, resolveWorkspaceDir } from "./core/config.js";
 import { MessageTrace } from "./core/message-trace.js";
 import type { CronSchedule, CronAction } from "./core/config.js";
 import { runClaudeTurn } from "./acp.js";
+import { runCodexTurn } from "./codex-acp.js";
 import { getCliBridge, getCliBridgeByLabel } from "./cli-bridge/index.js";
 import { log } from "./logger.js";
 
@@ -377,6 +378,51 @@ async function execClaude(channelId: string, prompt: string, timeoutSec?: number
 }
 
 /**
+ * 執行 codex-acp action：對稱 execClaude 但走 Codex CLI app-server JSON-RPC
+ */
+async function execCodex(channelId: string, prompt: string, timeoutSec?: number): Promise<string> {
+  if (!discordClient) throw new Error("Discord client 未初始化");
+
+  const channel = await discordClient.channels.fetch(channelId);
+  if (!channel || !("send" in channel)) {
+    throw new Error(`找不到頻道或無法發送：${channelId}`);
+  }
+
+  const timeoutMs = timeoutSec ? timeoutSec * 1000 : config.turnTimeoutMs;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+
+  try {
+    let responseText = "";
+    for await (const event of runCodexTurn(
+      null, // 不 resume，每次獨立 thread
+      prompt,
+      channelId,
+      ac.signal,
+    )) {
+      if (event.type === "text_delta") {
+        responseText += event.text;
+      } else if (event.type === "error") {
+        throw new Error(event.message);
+      }
+    }
+
+    const trimmed = responseText.trim();
+    if (trimmed) {
+      const sendable = channel as SendableChannels;
+      let remaining = trimmed;
+      while (remaining.length > 0) {
+        await sendable.send(remaining.slice(0, 2000));
+        remaining = remaining.slice(2000);
+      }
+    }
+    return trimmed;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * 執行 exec action：直接跑 shell 指令
  *
  * Shell 選擇邏輯：
@@ -675,6 +721,8 @@ async function runJob(job: CronJobRuntime): Promise<void> {
       result = await execSubagent(entry.action);
     } else if (entry.action.type === "claude-acp") {
       result = await execClaude(entry.action.channelId, entry.action.prompt, entry.action.timeoutSec);
+    } else if (entry.action.type === "codex-acp") {
+      result = await execCodex(entry.action.channelId, entry.action.prompt, entry.action.timeoutSec);
     } else if (entry.action.type === "cli-bridge") {
       result = await execCliBridge(entry.action);
     } else {

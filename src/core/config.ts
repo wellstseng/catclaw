@@ -71,6 +71,7 @@ export type CronSchedule =
 export type CronAction =
   | { type: "message"; channelId: string; text: string }
   | { type: "claude-acp"; channelId: string; prompt: string; timeoutSec?: number }  // 透過 ACP（Claude CLI spawn）執行 turn
+  | { type: "codex-acp"; channelId: string; prompt: string; timeoutSec?: number }   // 透過 Codex app-server JSON-RPC 執行 turn（對稱 claude-acp）
   | { type: "exec"; command: string; channelId?: string; silent?: boolean; timeoutSec?: number; shell?: string; background?: boolean }
   | {
       type: "subagent";
@@ -1043,6 +1044,10 @@ export function resolveWorkspaceDirSafe(): string {
 
 export function resolveClaudeBin(): string {
   return process.env.CATCLAW_CLAUDE_BIN ?? "claude";
+}
+
+export function resolveCodexBin(): string {
+  return process.env.CATCLAW_CODEX_BIN ?? "codex";
 }
 
 // ── models-config.json 外部載入 ──────────────────────────────────────────────

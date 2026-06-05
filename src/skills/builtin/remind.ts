@@ -107,7 +107,7 @@ function looksLikeTime(s: string): boolean {
 
 // ── Action 類型關鍵字 ────────────────────────────────────────────────────────
 
-const ACTION_KEYWORDS = ["msg", "exec", "claude", "agent"] as const;
+const ACTION_KEYWORDS = ["msg", "exec", "claude", "codex", "agent"] as const;
 type ActionKeyword = typeof ACTION_KEYWORDS[number];
 
 function isActionKeyword(s: string): s is ActionKeyword {
@@ -152,6 +152,8 @@ function buildAction(keyword: ActionKeyword, content: string, channelId: string)
     }
     case "claude":
       return { type: "claude-acp", channelId, prompt: content };
+    case "codex":
+      return { type: "codex-acp", channelId, prompt: content };
     case "agent":
       return { type: "subagent", task: content, notify: `discord:ch:${channelId}` };
   }
@@ -163,6 +165,7 @@ function actionLabel(keyword: ActionKeyword): string {
     case "msg": return "訊息";
     case "exec": return "指令";
     case "claude": return "Claude";
+    case "codex": return "Codex";
     case "agent": return "Subagent";
   }
 }
@@ -176,9 +179,10 @@ export const skill: Skill = {
     "建立：`/cron add at <time> <action> <content>`（一次性）、" +
     "`/cron add every <interval> <action> <content>`（重複）、" +
     "`/cron add expr <分 時 日 月 週> <action> <content>`（cron 表達式）。" +
-    "action：msg / exec / claude / agent。" +
+    "action：msg / exec / claude / codex / agent。" +
     "exec 預設不推 Discord（避免「(no output)」雜訊）；想看執行通知加 `--verbose` 或 `-v`，如 `exec --verbose npm run build`。" +
-    "範例：`/cron add expr 0 9 * * 1-5 claude 整理本週 PR`。" +
+    "claude 走 Claude CLI ACP；codex 走 Codex CLI app-server JSON-RPC（每次獨立 thread，不 resume）。" +
+    "範例：`/cron add expr 0 9 * * 1-5 claude 整理本週 PR` 或 `/cron add at 30m codex 跑 codebase 健檢`。" +
     "管理：/cron list、/cron delete <id>、/cron enable <id>、/cron disable <id>。",
   tier: "standard",
   trigger: ["/cron", "/排程", "/remind", "/提醒"],
@@ -242,7 +246,7 @@ function handleAdd(rest: string, channelId: string, agentId?: string): SkillResu
     if (!parsed) return { text: `無法解析時間：\`${timeStr}\`\n支援格式：\`15:55\`、\`30m\`、\`2h\`、\`1d\`、\`2026-04-15\``, isError: true, validation: true };
 
     const actionKw = parts[2]?.toLowerCase();
-    if (!isActionKeyword(actionKw)) return { text: `未知動作類型：\`${parts[2]}\`\n支援：\`msg\`、\`exec\`、\`claude\`、\`agent\``, isError: true, validation: true };
+    if (!isActionKeyword(actionKw)) return { text: `未知動作類型：\`${parts[2]}\`\n支援：\`msg\`、\`exec\`、\`claude\`、\`codex\`、\`agent\``, isError: true, validation: true };
 
     const content = parts.slice(3).join(" ");
     if (!content) return { text: `缺少內容。用法：\`/cron add at ${timeStr} ${actionKw} <內容>\``, isError: true, validation: true };
@@ -268,7 +272,7 @@ function handleAdd(rest: string, channelId: string, agentId?: string): SkillResu
     if (!interval) return { text: `無法解析間隔：\`${intervalStr}\`\n支援格式：30s、5m、2h、1d`, isError: true, validation: true };
 
     const actionKw = parts[2]?.toLowerCase();
-    if (!isActionKeyword(actionKw)) return { text: `未知動作類型：\`${parts[2]}\`\n支援：\`msg\`、\`exec\`、\`claude\`、\`agent\``, isError: true, validation: true };
+    if (!isActionKeyword(actionKw)) return { text: `未知動作類型：\`${parts[2]}\`\n支援：\`msg\`、\`exec\`、\`claude\`、\`codex\`、\`agent\``, isError: true, validation: true };
 
     const content = parts.slice(3).join(" ");
     if (!content) return { text: `缺少內容。用法：\`/cron add every ${intervalStr} ${actionKw} <內容>\``, isError: true, validation: true };
@@ -290,7 +294,7 @@ function handleAdd(rest: string, channelId: string, agentId?: string): SkillResu
     if (parts.length < 8) return { text: "用法：`/cron add expr <分> <時> <日> <月> <週> <action> <內容>`\n範例：`/cron add expr 0 9 * * * msg 早安`", isError: true, validation: true };
     const expr = parts.slice(1, 6).join(" ");
     const actionKw = parts[6]?.toLowerCase();
-    if (!isActionKeyword(actionKw)) return { text: `未知動作類型：\`${parts[6]}\`\n支援：\`msg\`、\`exec\`、\`claude\`、\`agent\``, isError: true, validation: true };
+    if (!isActionKeyword(actionKw)) return { text: `未知動作類型：\`${parts[6]}\`\n支援：\`msg\`、\`exec\`、\`claude\`、\`codex\`、\`agent\``, isError: true, validation: true };
 
     const content = parts.slice(7).join(" ");
     if (!content) return { text: `缺少內容。用法：\`/cron add expr ${expr} ${actionKw} <內容>\``, isError: true, validation: true };
