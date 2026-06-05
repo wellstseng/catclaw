@@ -6193,7 +6193,9 @@ export class DashboardServer {
         return;
       }
 
-      // POST /api/cron, /api/cron/delete, /api/cron/trigger, /api/cron/toggle
+      // POST /api/cron{,/update,/delete,/trigger,/toggle}
+      // 全部走 cron 模組的 export API（in-memory + disk 同步），不再讀 disk 改 disk
+      // 修正 race：dashboard 直接改 disk 會被 cron timer 內部 saveStore() stale in-memory 覆寫
       if (url.startsWith("/api/cron") && method === "POST") {
         const chunks: Buffer[] = [];
         let sz = 0;
@@ -6202,46 +6204,53 @@ export class DashboardServer {
           void (async () => {
             try {
               const body = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as Record<string, unknown>;
-              const { getCronStorePath } = await import("../cron.js");
-              const p = getCronStorePath();
-              const store = existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")) : { version: 1, jobs: {} };
-              const jobs = store.jobs as Record<string, Record<string, unknown>>;
+              const cron = await import("../cron.js");
 
               if (url === "/api/cron") {
-                // create
-                const id = `job-${Date.now()}`;
-                jobs[id] = body as Record<string, unknown>;
-              } else if (url === "/api/cron/update") {
-                // edit：保留 runtime 狀態欄位（lastRunAtMs / lastResult / lastError / nextRunAtMs / retryCount）
+                // create — body 是完整 CronJobEntry（不含 runtime status 欄位）
+                // addCronJob 內部會補 nextRunAtMs / retryCount，回傳生成的 id
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const id = cron.addCronJob(body as any);
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: true, id }));
+                return;
+              }
+              if (url === "/api/cron/update") {
                 const id = String(body["id"] ?? "");
                 const job = body["job"] as Record<string, unknown> | undefined;
-                if (!jobs[id]) throw new Error(`Job not found: ${id}`);
                 if (!job || typeof job !== "object") throw new Error("missing job body");
-                const runtimeKeys = ["lastRunAtMs", "lastResult", "lastError", "nextRunAtMs", "retryCount"];
-                const merged: Record<string, unknown> = { ...job };
-                for (const k of runtimeKeys) {
-                  if (jobs[id]![k] !== undefined) merged[k] = jobs[id]![k];
-                }
-                jobs[id] = merged;
-              } else if (url === "/api/cron/delete") {
-                const id = String(body["id"] ?? "");
-                if (!jobs[id]) throw new Error(`Job not found: ${id}`);
-                delete jobs[id];
-              } else if (url === "/api/cron/trigger") {
-                const id = String(body["id"] ?? "");
-                if (!jobs[id]) throw new Error(`Job not found: ${id}`);
-                jobs[id]!["nextRunAtMs"] = Date.now() - 1;
-              } else if (url === "/api/cron/toggle") {
-                const id = String(body["id"] ?? "");
-                if (!jobs[id]) throw new Error(`Job not found: ${id}`);
-                jobs[id]!["enabled"] = Boolean(body["enabled"]);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const ok = cron.updateCronJob(id, job as any);
+                if (!ok) throw new Error(`Job not found: ${id}`);
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: true }));
+                return;
               }
-
-              const tmp = p + ".tmp";
-              writeFileSync(tmp, JSON.stringify(store, null, 2), "utf-8");
-              renameSync(tmp, p);
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ success: true }));
+              if (url === "/api/cron/delete") {
+                const id = String(body["id"] ?? "");
+                const ok = cron.removeCronJob(id);
+                if (!ok) throw new Error(`Job not found: ${id}`);
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: true }));
+                return;
+              }
+              if (url === "/api/cron/trigger") {
+                const id = String(body["id"] ?? "");
+                const ok = cron.triggerCronJob(id);
+                if (!ok) throw new Error(`Job not found: ${id}`);
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: true }));
+                return;
+              }
+              if (url === "/api/cron/toggle") {
+                const id = String(body["id"] ?? "");
+                const ok = cron.updateCronJob(id, { enabled: Boolean(body["enabled"]) });
+                if (!ok) throw new Error(`Job not found: ${id}`);
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: true }));
+                return;
+              }
+              res.writeHead(404); res.end(JSON.stringify({ success: false, error: "unknown cron endpoint" }));
             } catch (err) {
               res.writeHead(400); res.end(JSON.stringify({ success: false, error: String(err) }));
             }

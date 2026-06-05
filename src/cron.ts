@@ -924,4 +924,17 @@ export function updateCronJob(id: string, patch: Partial<Pick<CronJobEntry, "ena
   return true;
 }
 
+/**
+ * 強制觸發 job：把 nextRunAtMs 設為過去，下一輪 timer 即會挑起。
+ * @returns 是否成功（job 存在則 true）
+ */
+export function triggerCronJob(id: string): boolean {
+  const entry = store.jobs[id];
+  if (!entry) return false;
+  entry.nextRunAtMs = Date.now() - 1;
+  saveStore();
+  log.info(`[cron] 動態觸發 job: ${entry.name} (${id})`);
+  return true;
+}
+
 export type { CronJobEntry };
