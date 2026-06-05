@@ -237,6 +237,11 @@ async function runChildAgentLoop(opts: ChildRunOpts): Promise<{ text: string; tu
     systemPrompt += `\n\n可用附件目錄：${opts.attachmentsDir}`;
   }
 
+  // 防 subagent 在 result 開頭 echo 收到的 task — parent 透過 subagent_relay
+  // 把 result inline 送 Discord（reply-handler.ts:430），若 subagent echo 了
+  // task prompt，那段內容就會 leak 到 Discord 看起來像「給 subagent 的提示詞」。
+  systemPrompt += `\n\n## Output Discipline（強制）\n直接給結論 / 結果。**不得 echo、重述、確認你收到的 task 字串**（parent 已經知道任務內容）。\n禁止這類 preamble：「我要去查 X」、「Let me start by Y」、「[task 內容重述]：[結果]」。\n你的 reply 開頭就應該是實質的分析、產出或答案。`;
+
   // 根據 agent type 的 allowedTools 篩選工具
   const allowedToolSet = agentType.allowedTools ? new Set(agentType.allowedTools) : null;
   const filteredToolRegistry = allowedToolSet
