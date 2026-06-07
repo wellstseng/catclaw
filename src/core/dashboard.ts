@@ -3808,7 +3808,10 @@ function _traceRowHtml(t) {
   html += '<td style="padding:4px;text-align:right">' + (t.totalToolCalls ?? 0) + '</td>';
   html += '<td style="padding:4px;text-align:right">' + (t.llmCalls?.length ?? 0) + '</td>';
   html += '<td style="padding:4px;text-align:center"' + (ceTooltip ? ' title="' + ceTooltip.replace(/"/g, '&quot;') + '"' : '') + '>' + ce + '</td>';
-  html += '<td style="padding:4px;text-align:center">' + statusIcon + '</td>';
+  const abortBtn = isLive
+    ? '<button class="btn btn-sm" style="padding:0 4px;font-size:0.7rem;background:#b91c1c;color:#fff;margin-left:4px" title="強制中止此 turn" onclick="event.stopPropagation();abortTrace(\\'' + t.traceId + '\\')">⏹</button>'
+    : '';
+  html += '<td style="padding:4px;text-align:center">' + statusIcon + abortBtn + '</td>';
   html += '<td style="padding:4px;text-align:center">' + errorBadge + '</td>';
   html += '<td style="padding:4px;text-align:right;color:var(--warn)">' + cost + '</td>';
   html += '<td style="padding:4px;text-align:center">' + ctxIcon + '</td>';
@@ -3991,6 +3994,20 @@ async function bulkExportTraces() {
     URL.revokeObjectURL(objUrl);
   } catch (e) { alert('批次匯出失敗：' + e); }
 }
+async function abortTrace(traceId) {
+  if (!confirm('確定強制中止此 turn（' + traceId.slice(0, 8) + '）？已產生的 partial output 會留著，但 turn 立即停止。')) return;
+  try {
+    const r = await authFetch('/api/traces/' + traceId + '/abort', { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok || !j.success) {
+      alert('Abort 失敗：' + (j.error || r.status));
+      return;
+    }
+    // 立刻 reload
+    loadTraces();
+  } catch (e) { alert('Abort 失敗：' + e); }
+}
+
 async function bulkDeleteTraces() {
   const ids = _getCheckedTraceIds();
   if (ids.length === 0) return;
@@ -7021,6 +7038,45 @@ export class DashboardServer {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ traces: live }));
         return;
+      }
+
+      // POST /api/traces/:traceId/abort — 強制中止 active turn
+      // 用於 dashboard 看到卡住的 trace 時手動 abort
+      {
+        const abortMatch = url.match(/^\/api\/traces\/([a-f0-9-]+)\/abort$/);
+        if (abortMatch && method === "POST") {
+          void (async () => {
+            try {
+              const traceId = abortMatch[1]!;
+              const live = MessageTrace.getLiveTraces();
+              const entry = live.find(t => t.traceId === traceId);
+              if (!entry) {
+                res.writeHead(404); res.end(JSON.stringify({ success: false, error: "active trace not found（可能已結束）" }));
+                return;
+              }
+              const sessionKey = entry.sessionKey;
+              if (!sessionKey) {
+                res.writeHead(400); res.end(JSON.stringify({ success: false, error: "trace 沒有 sessionKey，無法 abort" }));
+                return;
+              }
+              const { abortRunningTurn } = await import("../skills/builtin/stop.js");
+              const ok = abortRunningTurn(sessionKey);
+              if (!ok) {
+                res.writeHead(404); res.end(JSON.stringify({
+                  success: false,
+                  error: `找不到 active turn controller（sessionKey=${sessionKey}），可能 turn 在無 controller 階段（如 stream 完成等收尾）`,
+                }));
+                return;
+              }
+              log.warn(`[dashboard] user abort trace ${traceId.slice(0,8)} (session=${sessionKey})`);
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: true, sessionKey, message: "abort signal sent" }));
+            } catch (err) {
+              res.writeHead(500); res.end(JSON.stringify({ success: false, error: String(err) }));
+            }
+          })();
+          return;
+        }
       }
 
       // GET /api/traces — 最近 N 筆 trace（預設 50）
