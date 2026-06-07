@@ -91,6 +91,13 @@ export interface Tool {
   resultTokenCap?: number;
   /** 單次執行超時毫秒（覆寫全域設定）。0 = 無限制。 */
   timeoutMs?: number;
+  /**
+   * Soft-timeout（毫秒）— 觸發後 catclaw 主動 abort tool 並回傳 actionable 錯誤訊息
+   * 讓 LLM 自己判斷下一步（continue with smaller scope / 換工具 / end_turn）。
+   * 預設值見 agent-loop.ts DEFAULT_SOFT_TIMEOUT_MS_BY_TOOL；per-tool 可在自己的
+   * Tool 物件中 override。設 0 = 停用 soft watchdog（仍受 hard timeoutMs 限制）。
+   */
+  softTimeoutMs?: number;
   /** 是否可安全並行執行（唯讀 tool 設 true，寫入 tool 預設 false） */
   concurrencySafe?: boolean;
   /**

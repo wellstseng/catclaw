@@ -345,22 +345,47 @@ export class CodexOAuthProvider implements LLMProvider {
     // Default 120s（gpt-5.5 reasoning + 大 context 下單次 stream 可能 60s+ 空檔，原 60s 會誤殺）。
     // 用 env `CATCLAW_CODEX_STREAM_IDLE_MS` 覆寫（毫秒）。
     // 在 response.ok 後才啟動，避免 fetch 階段早於 stream 觸發 / 失敗路徑漏 clearInterval。
+    //
+    // V5 progress watchdog：除 idle（任何 chunk 都重置）外，加 progress（只有實質
+    // 內容 chunk 才重置）。OpenAI Responses API 在 reasoning 階段會持續吐
+    // keepalive/status chunk → 原 idle watchdog 永遠不觸發 → stream 卡死無上限。
+    // progress watchdog 預設 300s（5min），超過 → 視為「stream 中段死循環」abort retry。
+    // 用 env `CATCLAW_CODEX_STREAM_NO_PROGRESS_MS` 覆寫。
     const STREAM_IDLE_MS = Number(process.env["CATCLAW_CODEX_STREAM_IDLE_MS"]) || 120_000;
+    const STREAM_NO_PROGRESS_MS = Number(process.env["CATCLAW_CODEX_STREAM_NO_PROGRESS_MS"]) || 300_000;
     let lastEventMs = 0;
+    let lastProgressMs = 0;
     let idledOut = false;
+    let noProgressOut = false;
     let watchdog: NodeJS.Timeout | null = null;
     const startWatchdog = (): void => {
       lastEventMs = Date.now();
+      lastProgressMs = Date.now();
       watchdog = setInterval(() => {
         if (Date.now() - lastEventMs > STREAM_IDLE_MS) {
           log.warn(`[codex-oauth:${this.id}] stream idle ${STREAM_IDLE_MS}ms 無事件，主動 abort 讓上層 retry`);
           idledOut = true;
+          controller.abort();
+          return;
+        }
+        if (Date.now() - lastProgressMs > STREAM_NO_PROGRESS_MS) {
+          log.warn(`[codex-oauth:${this.id}] stream no-progress ${STREAM_NO_PROGRESS_MS}ms 無實質進展，主動 abort 讓上層 retry`);
+          noProgressOut = true;
           controller.abort();
         }
       }, 5000);
     };
     const stopWatchdog = (): void => {
       if (watchdog) { clearInterval(watchdog); watchdog = null; }
+    };
+    // 判斷一個 chunk 是不是「實質內容進展」（非 keepalive / status）
+    const isProgressChunk = (chunkType: string | undefined): boolean => {
+      if (!chunkType) return false;
+      return chunkType === "response.output_text.delta"
+        || chunkType === "response.function_call_arguments.delta"
+        || chunkType === "response.output_item.added"
+        || chunkType === "response.output_item.done"
+        || chunkType === "response.reasoning_summary_text.delta";
     };
 
     // 轉換 Anthropic 格式 → Responses API input 格式
@@ -518,6 +543,10 @@ export class CodexOAuthProvider implements LLMProvider {
     try {
       await parseResponsesApiStream(response.body, (chunk) => {
         lastEventMs = Date.now();
+        // 只有實質進展 chunk 才重置 progress watchdog
+        if (isProgressChunk(chunk.type)) {
+          lastProgressMs = Date.now();
+        }
         const event = processResponsesChunk(chunk, toolCalls);
         if (event) {
           events.push(event);
@@ -532,6 +561,9 @@ export class CodexOAuthProvider implements LLMProvider {
     } catch (err) {
       if (idledOut) {
         throw new Error(`[codex-oauth:${this.id}] stream idle timeout (${STREAM_IDLE_MS}ms 無事件)`);
+      }
+      if (noProgressOut) {
+        throw new Error(`[codex-oauth:${this.id}] stream no-progress timeout (${STREAM_NO_PROGRESS_MS}ms 無實質進展，可能 reasoning 死循環）`);
       }
       throw err;
     } finally {
