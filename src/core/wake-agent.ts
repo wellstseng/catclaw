@@ -92,6 +92,7 @@ export async function wakeAgentForCompletion(opts: WakeAgentOpts): Promise<WakeA
       isAdmin: getBootIsAdmin(),
       provider,
       _sessionKeyOverride: opts.sessionKey,
+      _completionAck: { source: opts.source, recordId: opts.recordId },
       ...(opts.trace ? { trace: opts.trace } : {}),
     }, {
       sessionManager: getPlatformSessionManager(),

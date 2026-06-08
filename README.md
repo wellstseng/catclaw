@@ -413,6 +413,48 @@ templates/
 
 詳見 `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md` + `_AIDocs/_CHANGELOG.md`。
 
+## 2026-05-26 ~ 2026-06-08 v4 系列更新
+
+13 天累積 20 個 commits，三大主題：
+
+### 原子記憶 V5 對齊（atom 重構）
+
+對拍 `~/.claude` V5 GA。Phase 1-6 + follow-up refactor：
+
+- **BM25 in-memory ranking** → recall pipeline 加排序層
+- **`_atom_index.json` SoT** → markdown table 降級為自動鏡像
+- **新增 4 個核心模組**（~2300 行 + 13 smoke tests / 290+ assertions）：
+  - `atom-access.ts`：遙測抽到 `<atom>.access.json`
+  - `atom-io.ts`：統一 funnel + audit log
+  - `atom-spec.ts`：規則單一來源
+  - `bm25-service.ts`：disk-persisted 全內容 BM25
+- 對應 migration scripts；hooks 經 `atom-locations.ts` 收斂重複的 scope→dir 邏輯
+
+### Timeout / Stream / Anti-leak 防禦深化
+
+- **Tool soft-watchdog**：per-tool softTimeoutMs，觸發回 actionable error 讓 LLM 自決策（縮 scope / 換工具 / spawn_subagent / end_turn）
+- **codex-oauth stream progress watchdog**：既有 idle 之外加 progress watchdog（300s 無實質進展 abort），解 OpenAI Responses API reasoning 階段 keepalive 灌爆 idle 的盲點
+- **subagent anti-echo**：禁止 result 開頭 echo task 字串
+- **`<system-reminder>` tag 包**：6 處 agent-loop 平台注入訊息防 LLM 引用 leak 到 Discord
+- **Windows CP950 fallback**：`run_command` 加 iconv-lite 雙門檻 fallback，解 cmd.exe 中文錯誤訊息亂碼
+
+### Cron / Dashboard / Skill / BG-Job 治本修補
+
+- **codex-acp action**：Codex CLI app-server JSON-RPC ACP runtime（對稱 claude-acp）+ `acp` keyword 別名走 codex
+- **exec silent 預設**：避免「(no output)」雜訊，`--verbose` 反向 flag 顯示
+- **Cron dashboard race fix**：5 個 POST endpoint 改走 cron 模組 export API，解「刪除被 cron timer stale in-memory 覆寫」
+- **Dashboard `⏹ 強制中止`**：trace 列加按鈕，POST `/api/traces/:traceId/abort` 走既有 `abortRunningTurn(sessionKey)`
+- **Skill candidate priority + urgency_score**：LLM judge 評分 high/med/low + 1-10，dashboard 排序 + 彩色 badge
+- **Skill proposal cooldown + TTL**：improvements 14 天 / candidates 30 天 sweep
+- **skill-creator meta-skill**：上游引入，教 agent 寫/改/審 skill 標準作業
+- **bg-job stale ack fix**：catclaw 重啟後 stale 化 record 補 `acked=false` + persist disk + startup recovery retry 節流防連續重啟重放
+
+### 新增頂層文件
+
+- [`_AIDocs/03-CONTEXT-ENGINE.md`](_AIDocs/03-CONTEXT-ENGINE.md)：Context Engineering 全策略解（Decay / Compaction / OverflowHardStop + 外部化 + Rollback）
+
+詳見 [`_AIDocs/WIKI.md` § 9](_AIDocs/WIKI.md) + 各 commit message。
+
 ## License
 
 MIT

@@ -497,6 +497,14 @@ export interface AgentLoopOpts {
   /** Message Lifecycle Trace 收集器（由呼叫端建立並傳入） */
   trace?: MessageTrace;
   /**
+   * 內部欄位：wake-agent 代替完成事件開新 turn 時，用來把該 record
+   * 視為已注入本 turn；若本 turn 有實際回覆，finally 會 markAcked。
+   */
+  _completionAck?: {
+    source: "background-job" | "subagent";
+    recordId: string;
+  };
+  /**
    * Inbound History context（頻道脈絡）。
    * 注入為 messages 層的 user context（非 system prompt），CE 可壓縮。
    */
@@ -1089,6 +1097,11 @@ export async function* agentLoop(
   const _injectedJobIds = new Set<string>();
   const _injectedRunIds = new Set<string>();
   let _finalFullResponseForAck = "";
+  if (opts._completionAck?.source === "background-job") {
+    _injectedJobIds.add(opts._completionAck.recordId);
+  } else if (opts._completionAck?.source === "subagent") {
+    _injectedRunIds.add(opts._completionAck.recordId);
+  }
 
   // ── 以下受 Turn Queue 保護（讀 session → 執行 → 寫回 → dequeueTurn）──────
   try {

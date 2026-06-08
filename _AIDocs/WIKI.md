@@ -1,7 +1,7 @@
 # CatClaw WIKI
 
 > Codex 版 Claude Code CLI + 多人 AI 開發平台
-> 最近更新：2026-04-20
+> 最近更新：2026-06-08
 
 ---
 
@@ -625,3 +625,55 @@ strip 註解後仍需合法 JSON，否則 hot-reload 持續失敗。
 - 項目 12：trace.guardianHits schema + falsePositive 標註 → trajectory-fingerprint plumbing
 
 詳見 `_AIDocs/_CHANGELOG.md` 4 條 v3-followup entries + `~/WellsDB/知識庫/CatClaw 整合 Hermes 實作報告 v3.md`。
+
+
+---
+
+## 9. 2026-05-26 ~ 2026-06-08 v4 系列（V5 atom 重構 + 可靠性強化）
+
+13 天內 20 個 commits，三大主題：**原子記憶 V5 對齊 upstream**、**timeout / leak 防禦深化**、**cron + dashboard 治本修補**。
+
+### 9.1 原子記憶 V5 對齊（atom 系列）
+
+對拍 `~/.claude` V5 GA。Phase 1-6 + follow-up refactor：
+
+- **Phase 1 BM25 in-memory ranking**（commit `1cba29d`）— recall pipeline 加 BM25 ranking 層
+- **Phase 2 `_atom_index.json` SoT**（`c13b0ea`）— markdown table → JSON 機器源 + MEMORY.md 自動鏡像
+- **Phase 3-6 一次 port**（`a65de40`）— 4 個新檔 ~2300 行：
+  - `atom-access.ts`：遙測抽到 `<atom>.access.json`（read_hits / confirmations / last_used / first_seen 分離）
+  - `atom-io.ts`：統一 funnel + audit log `_meta/atom_io_audit.jsonl`
+  - `atom-spec.ts`：規則單一來源（slugify / buildAtomContent / validate / shouldSkip）
+  - `bm25-service.ts`：disk-persisted 全 atom 內容 BM25 索引
+- **scope→dir 4-branch 抽 `atom-locations.ts`**（`12c7f85`）— atom-write/atom-delete 重複邏輯收斂
+- Migration scripts：`migrate-to-json-index.mjs` / `migrate-to-access-json.mjs`
+- 13 個 smoke tests / 290+ assertions
+
+### 9.2 Timeout / Stream / Anti-leak 防禦
+
+- **Tool soft-watchdog**（`6800854`）— per-tool softTimeoutMs（run_command 120s / glob 30s 等），觸發回 actionable error 給 LLM 自行決策（縮 scope / 換工具 / spawn_subagent / end_turn）
+- **codex-oauth stream progress watchdog**（`6800854`）— 既有 idle 之外加 progress watchdog（300s 無實質進展 abort），解 OpenAI Responses API reasoning 階段 keepalive 灌爆 idle watchdog 的盲點
+- **subagent anti-echo**（`23864a1`）— system prompt 加 Output Discipline，禁止 subagent 在 result 開頭 echo task 字串
+- **agent-loop platform reminder 全包 `<system-reminder>` tag**（`7605598` + `2278b24`）— 6 處內部注入訊息（長任務評估 / grace period / stuck-loop / subagent-poll nudge）防 LLM 引用 leak 到 Discord
+- **Windows CP950 fallback decode**（`b5f44ee`）— `run_command` 加 iconv-lite 雙門檻 fallback，解 cmd.exe 中文錯誤訊息亂碼
+
+### 9.3 Cron + Dashboard 治本修補
+
+- **codex-acp action**（`c6a2356`）— 新 Codex CLI app-server JSON-RPC ACP runtime；cron skill 加 `codex` keyword
+- **acp keyword 別名**（`8d7a9ff`）— `/cron add at 30m acp ...` = 走 codex-acp
+- **`silent` / `--verbose` flag**（`8903190` + `16e758f`）— exec action 預設不推「(no output)」雜訊；想看通知加 `--verbose`
+- **Dashboard race fix**（`a12c205`）— 5 個 cron POST endpoint 改走 cron 模組 export API（in-memory + disk 同步），解「dashboard 刪除被 cron timer stale in-memory 覆寫」
+- **Trace abort button**（`b3ff7f3`）— Dashboard 列加「⏹ 強制中止」按鈕（in_progress 才顯），對應 `POST /api/traces/:traceId/abort`
+
+### 9.4 Skill 提案系統強化
+
+- **Skill candidate priority + urgency_score**（`6dab12b`）— LLM judge 加評分標準（high/med/low + 1-10），dashboard 按 urgency desc 排序 + 彩色 badge
+- **Skill improvement cooldown + TTL**（`6dab12b`）— 仿 candidate-store pattern，避免同 skill 反覆累積；improvements 14 天 / candidates 30 天 TTL sweep
+- **skill-creator meta-skill**（`0a7d5cf`）— 從上游引入，教 agent 寫/改/審 skill 的標準作業（3 Python scripts + 5 pattern refs + audit-skill）
+
+### 9.5 Background Job 通知補洞
+
+- **bg-job stale ack fix**（`7200f96`）— catclaw 重啟後 `running → stale` 化的 record 補 `acked=false` + persist disk，讓 startup recovery 撿起來 emit onComplete 給 parent agent
+- **Startup recovery retry 防連續重啟**（user follow-up）— `STARTUP_RECOVERY_RETRY_MS` 10 分鐘節流 + `recoveryDispatchedAt` 欄位，防 catclaw 連續重啟重放同一筆通知
+
+詳見 `_AIDocs/_CHANGELOG.md` + 各 commit message。
+

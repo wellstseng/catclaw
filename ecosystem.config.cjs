@@ -32,7 +32,11 @@ module.exports = {
       const workspace = expandHome(process.env.CATCLAW_WORKSPACE);
       if (!configDir) { console.error("❌ .env 缺少 CATCLAW_CONFIG_DIR"); process.exit(1); }
       if (!workspace) { console.error("❌ .env 缺少 CATCLAW_WORKSPACE"); process.exit(1); }
-      return { CATCLAW_CONFIG_DIR: configDir, CATCLAW_WORKSPACE: workspace };
+      return {
+        CATCLAW_CONFIG_DIR: configDir,
+        CATCLAW_WORKSPACE: workspace,
+        CATCLAW_SKILL_CANDIDATE: "false",
+      };
     })(),
   }]
 };

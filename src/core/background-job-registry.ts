@@ -18,6 +18,9 @@ import { log } from "../logger.js";
 const PERSIST_PATH = join(homedir(), ".catclaw", "workspace", "data", "jobs", "registry.json");
 const MAX_RETAINED_JOBS = 200;
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
+// Startup recovery 只負責補「可能漏掉的通知」。如果 CatClaw 在 recovery
+// wake 期間又被連續重啟，不能每次 clientReady 都重放同一筆完成事件。
+const STARTUP_RECOVERY_RETRY_MS = 10 * 60_000;
 // 「process 活著 + output 已到」分支的穩定門檻：output 非空且 mtime ≥ 5s 沒變才算完成。
 // 防 `cmd > out.md` 開頭立即建 0-byte 檔被誤判 completed（bug case：jobId 03bb6aa2，startedAt+636ms 誤判）。
 const OUTPUT_STABLE_MS = 5_000;
@@ -58,6 +61,8 @@ export interface BackgroundJobRecord {
    * undefined = 舊紀錄（不掃，避免重啟後大量補 wake）
    */
   acked?: boolean;
+  /** 最近一次 startup recovery 已派發時間；用來擋連續重啟重放同一筆通知 */
+  recoveryDispatchedAt?: number;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -350,10 +355,12 @@ export class BackgroundJobRegistry {
    * 時窗 1h：避免重啟後對遠古 records 大量補通知打擾使用者
    */
   runStartupRecovery(timeWindowMs: number = 60 * 60_000): void {
-    const cutoff = Date.now() - timeWindowMs;
+    const now = Date.now();
+    const cutoff = now - timeWindowMs;
     const candidates = Array.from(this.records.values()).filter(r => {
       if (r.acked !== false) return false;  // undefined 不掃、true 不掃
       if (!r.endedAt || r.endedAt < cutoff) return false;
+      if (r.recoveryDispatchedAt && now - r.recoveryDispatchedAt < STARTUP_RECOVERY_RETRY_MS) return false;
       return r.status === "completed" || r.status === "failed" || r.status === "timeout" || r.status === "stale";
     });
     if (candidates.length === 0) {
@@ -361,6 +368,8 @@ export class BackgroundJobRegistry {
       return;
     }
     log.info(`[bg-job] startup recovery：發現 ${candidates.length} 筆 acked=false 且 ${Math.round(timeWindowMs / 60_000)} 分鐘內結束的 record，重觸發 handler 補通知`);
+    for (const r of candidates) r.recoveryDispatchedAt = now;
+    this.persist();
     for (const r of candidates) {
       try {
         if (r.status === "completed" || r.status === "stale") {
