@@ -18,9 +18,6 @@ import { log } from "../logger.js";
 const PERSIST_PATH = join(homedir(), ".catclaw", "workspace", "data", "jobs", "registry.json");
 const MAX_RETAINED_JOBS = 200;
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
-// Startup recovery 只負責補「可能漏掉的通知」。如果 CatClaw 在 recovery
-// wake 期間又被連續重啟，不能每次 clientReady 都重放同一筆完成事件。
-const STARTUP_RECOVERY_RETRY_MS = 10 * 60_000;
 // 「process 活著 + output 已到」分支的穩定門檻：output 非空且 mtime ≥ 5s 沒變才算完成。
 // 防 `cmd > out.md` 開頭立即建 0-byte 檔被誤判 completed（bug case：jobId 03bb6aa2，startedAt+636ms 誤判）。
 const OUTPUT_STABLE_MS = 5_000;
@@ -61,8 +58,8 @@ export interface BackgroundJobRecord {
    * undefined = 舊紀錄（不掃，避免重啟後大量補 wake）
    */
   acked?: boolean;
-  /** 最近一次 startup recovery 已派發時間；用來擋連續重啟重放同一筆通知 */
-  recoveryDispatchedAt?: number;
+  /** 最近一次 startup recovery 被動觀察時間；重啟 recovery 不喚醒 agent */
+  recoveryObservedAt?: number;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -328,17 +325,18 @@ export class BackgroundJobRegistry {
       const parsed = JSON.parse(raw) as { version?: number; records?: BackgroundJobRecord[] };
       let staleConverted = 0;
       for (const stored of parsed.records ?? []) {
-        // running 但 PID 已死 → 標 stale（無法判斷成功與否）+ 設 acked=false 讓 startup recovery 補通知
+        // running 但 PID 已死 → 標 stale（無法判斷成功與否）。
+        // 不在 load 階段喚醒 agent；startup recovery 只做被動收斂，避免重啟觸發工作流。
         if (stored.status === "running" && stored.pid && !isProcessAlive(stored.pid)) {
           stored.status = "stale";
           stored.endedAt = stored.endedAt ?? Date.now();
-          stored.acked = false;  // 進 startup recovery 名單，補 emit onComplete 給 parent agent
+          stored.acked = false;
           staleConverted++;
         }
         this.records.set(stored.jobId, stored);
       }
       const running = Array.from(this.records.values()).filter(r => r.status === "running").length;
-      log.info(`[bg-job] 載入 ${this.records.size} 筆，其中 ${running} 筆仍 running${staleConverted > 0 ? `，stale 化 ${staleConverted} 筆（將觸發 recovery 補通知）` : ""}`);
+      log.info(`[bg-job] 載入 ${this.records.size} 筆，其中 ${running} 筆仍 running${staleConverted > 0 ? `，stale 化 ${staleConverted} 筆（startup recovery 將被動標記，不喚醒 agent）` : ""}`);
       // stale 變動需 persist 回 disk，否則下次重啟仍誤認 running
       if (staleConverted > 0) this.persist();
     } catch (err) {
@@ -347,12 +345,13 @@ export class BackgroundJobRegistry {
   }
 
   /**
-   * Startup Recovery：catclaw crash 在 onComplete 觸發前 → 重啟後 record 已是
-   * completed/failed 狀態、poller 不會再觸發 callback、wake 永不跑。本方法在
-   * setEventHandlers 後呼叫，掃 1h 內結束的 unacked records 重觸發 onComplete/onFail。
+   * Startup Recovery（被動收斂）：
+   * 重啟期間不應主動啟動 agent turn，否則 restart 本身會造成「不該跑的 job」。
+   * 因此本方法只掃 1h 內結束的 unacked records，標記為已觀察 / acked，
+   * 不 emit background-job:* event，也不呼叫 onComplete/onFail。
    *
    * 條件：acked === false（明確 false，舊紀錄 undefined 不掃）+ endedAt 在 cutoff 內
-   * 時窗 1h：避免重啟後對遠古 records 大量補通知打擾使用者
+   * 時窗 1h：避免重啟後對遠古 records 大量改寫
    */
   runStartupRecovery(timeWindowMs: number = 60 * 60_000): void {
     const now = Date.now();
@@ -360,27 +359,18 @@ export class BackgroundJobRegistry {
     const candidates = Array.from(this.records.values()).filter(r => {
       if (r.acked !== false) return false;  // undefined 不掃、true 不掃
       if (!r.endedAt || r.endedAt < cutoff) return false;
-      if (r.recoveryDispatchedAt && now - r.recoveryDispatchedAt < STARTUP_RECOVERY_RETRY_MS) return false;
       return r.status === "completed" || r.status === "failed" || r.status === "timeout" || r.status === "stale";
     });
     if (candidates.length === 0) {
       log.debug(`[bg-job] startup recovery：無 unacked recent record 需處理`);
       return;
     }
-    log.info(`[bg-job] startup recovery：發現 ${candidates.length} 筆 acked=false 且 ${Math.round(timeWindowMs / 60_000)} 分鐘內結束的 record，重觸發 handler 補通知`);
-    for (const r of candidates) r.recoveryDispatchedAt = now;
-    this.persist();
+    log.info(`[bg-job] startup recovery：發現 ${candidates.length} 筆 acked=false 且 ${Math.round(timeWindowMs / 60_000)} 分鐘內結束的 record，已被動標記 acked（不喚醒 agent）`);
     for (const r of candidates) {
-      try {
-        if (r.status === "completed" || r.status === "stale") {
-          this.onComplete?.(r);
-        } else if (r.status === "failed" || r.status === "timeout") {
-          this.onFail?.(r, `recovered after catclaw restart（status=${r.status}，原 reason 已遺失）`);
-        }
-      } catch (err) {
-        log.warn(`[bg-job] startup recovery 觸發 ${r.jobId.slice(0, 8)} 失敗：${err instanceof Error ? err.message : String(err)}`);
-      }
+      r.recoveryObservedAt = now;
+      r.acked = true;
     }
+    this.persist();
   }
 }
 

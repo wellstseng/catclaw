@@ -333,8 +333,8 @@ export function createBot(): Client {
     setTaskUiDiscordClient(client);
     registerTaskUiListener((channelId) => `discord:ch:${channelId}`);
 
-    // bg-job startup recovery：必須在 Discord client 連上後跑，
-    // 否則 wake-agent / sendBgJobNotification 因 client=null 默默 bail（jobId 03bb6aa2 案例）。
+    // bg-job startup recovery 是被動收斂：重啟後只標記 stale/final records 已觀察，
+    // 不喚醒 agent、不送 Discord completion ping，避免 restart 本身觸發工作流。
     void (async () => {
       try {
         const { getBackgroundJobRegistry } = await import("./core/background-job-registry.js");

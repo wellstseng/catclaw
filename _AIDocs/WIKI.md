@@ -672,8 +672,7 @@ strip 註解後仍需合法 JSON，否則 hot-reload 持續失敗。
 
 ### 9.5 Background Job 通知補洞
 
-- **bg-job stale ack fix**（`7200f96`）— catclaw 重啟後 `running → stale` 化的 record 補 `acked=false` + persist disk，讓 startup recovery 撿起來 emit onComplete 給 parent agent
-- **Startup recovery retry 防連續重啟**（user follow-up）— `STARTUP_RECOVERY_RETRY_MS` 10 分鐘節流 + `recoveryDispatchedAt` 欄位，防 catclaw 連續重啟重放同一筆通知
+- **bg-job stale ack fix**（`7200f96`）— catclaw 重啟後 `running → stale` 化的 record 補 `acked=false` + persist disk，讓 registry 正確記錄已死的 background job
+- **Startup recovery passive mode**（user follow-up）— 重啟 recovery 只標記 `acked=true` / `recoveryObservedAt`，不 emit / wake，避免 catclaw 重啟觸發新 agent turn
 
 詳見 `_AIDocs/_CHANGELOG.md` + 各 commit message。
-

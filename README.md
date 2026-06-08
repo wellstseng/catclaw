@@ -447,7 +447,7 @@ templates/
 - **Skill candidate priority + urgency_score**：LLM judge 評分 high/med/low + 1-10，dashboard 排序 + 彩色 badge
 - **Skill proposal cooldown + TTL**：improvements 14 天 / candidates 30 天 sweep
 - **skill-creator meta-skill**：上游引入，教 agent 寫/改/審 skill 標準作業
-- **bg-job stale ack fix**：catclaw 重啟後 stale 化 record 補 `acked=false` + persist disk + startup recovery retry 節流防連續重啟重放
+- **bg-job restart passive recovery**：catclaw 重啟後 stale/final record 只被動標記，不 emit / wake，避免重啟觸發新 agent turn
 
 ### 新增頂層文件
 

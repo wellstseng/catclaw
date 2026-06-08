@@ -67,7 +67,7 @@ interface BackgroundJobRecord {
 | `markAcked(jobId)` | 標 `acked=true`（agent-loop 把結果注入 LLM 且有 reply 時呼叫） |
 | `startPoller()` / `stopPoller()` | 啟停每秒 tick 的 setInterval |
 | `loadFromDisk()` | 重建記憶；running 但 PID 死 → 標 `stale` |
-| `runStartupRecovery(timeWindowMs=1h)` | 掃 1h 內結束的 `acked===false` record，重觸發 handler 補通知 |
+| `runStartupRecovery(timeWindowMs=1h)` | 掃 1h 內結束的 `acked===false` record，僅被動標記已觀察，不 emit / wake |
 
 模組單例：`initBackgroundJobRegistry()`（loadFromDisk + startPoller）、`getBackgroundJobRegistry()`。
 
@@ -147,10 +147,12 @@ onComplete / onFail
 
 ### 重啟復原
 
-`discord.ts` 在 Discord clientReady 後呼叫 `runStartupRecovery()`（1h 時窗）：
-catclaw 在 `onComplete` 觸發前 crash → 重啟後 record 已是終態、poller 不再觸發 callback、wake 永不跑。
-此方法掃 `acked===false`（明確 false，舊紀錄 undefined 不掃）且 `endedAt` 在 1h 內的終態 record，
-重觸發 `onComplete`/`onFail` 補通知（避免對遠古 record 大量補通知打擾使用者）。
+`discord.ts` 在 Discord clientReady 後呼叫 `runStartupRecovery()`（1h 時窗），但此流程是**被動收斂**：
+catclaw 重啟後若看到 `acked===false`（明確 false，舊紀錄 undefined 不掃）且 `endedAt` 在 1h 內的終態 record，
+只標記 `acked=true` / `recoveryObservedAt=now` 並 persist。
+
+重啟 recovery **不重觸發 `onComplete`/`onFail`、不 emit `background-job:*`、不喚醒 agent**。
+原因：restart 是平台生命週期事件，不應造成使用者沒有要求的新 agent turn 或工作流執行。
 
 ## 兩個對應 Tool
 
@@ -193,7 +195,7 @@ stdout 寫到 `~/.catclaw/workspace/data/jobs/stdout/{時間36進位}-{label}.lo
 | `OUTPUT_STABLE_MS` | 5_000 | 「process 活 + output 已到」分支的穩定門檻（防空檔誤判） |
 | poller tick | 1_000 | setInterval 每秒跑一次，再按各 job pollIntervalMs throttle |
 | wake fallback 延遲 | 300 | onComplete/onFail 後等 300ms 才判 parent stream 是否退場 |
-| `runStartupRecovery` 時窗 | 60 × 60_000（1h） | 只補 1h 內結束的 unacked record |
+| `runStartupRecovery` 時窗 | 60 × 60_000（1h） | 只被動收斂 1h 內結束的 unacked record |
 
 ## 與其他模組的關係
 
@@ -202,7 +204,7 @@ stdout 寫到 `~/.catclaw/workspace/data/jobs/stdout/{時間36進位}-{label}.lo
 - **event-bus.ts**：`background-job:completed [parentSessionKey, jobId, label, exitCode, stdoutPath?]`、`background-job:failed [parentSessionKey, jobId, label, reason]`
 - **wake-agent.ts**：`wakeAgentForCompletion({ source: "background-job" })` 在 parent stream 退場時喚醒新 turn 讓 agent 自報
 - **subagent-discord-bridge.ts**：共用 `getDiscordClient()` / `isParentStreamActive()`
-- **discord.ts**：clientReady 後呼叫 `runStartupRecovery()`
+- **discord.ts**：clientReady 後呼叫 `runStartupRecovery()`，只被動標記，不啟動新 turn
 - **dashboard.ts**：`listAll()` 跨 session 列 job
 
 ## 相關文件

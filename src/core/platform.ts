@@ -416,9 +416,8 @@ export async function initPlatform(
     },
   });
   // Startup Recovery：deferred 到 Discord clientReady 後才呼叫（見 discord.ts:clientReady listener）。
-  // 之前在這裡同步呼叫，但 Discord client 還沒 authenticate → wake-agent 收到 client=null 直接 bail，
-  // fallback sendBgJobNotification 也因 client=null bail → 訊息黑洞（觀察案例：jobId 03bb6aa2）。
-  log.info("[platform] BackgroundJobRegistry 初始化完成（runStartupRecovery 將於 Discord clientReady 後執行）");
+  // 只做被動收斂，不 emit / wake，避免重啟本身觸發 agent 工作流。
+  log.info("[platform] BackgroundJobRegistry 初始化完成（runStartupRecovery 將於 Discord clientReady 後被動收斂）");
 
   // ── 9.66 Collab Conflict Detector ─────────────────────────────────────────
   if (config.safety?.collabConflict?.enabled !== false) {
