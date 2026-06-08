@@ -321,16 +321,21 @@ export class BackgroundJobRegistry {
       if (!existsSync(PERSIST_PATH)) return;
       const raw = readFileSync(PERSIST_PATH, "utf-8");
       const parsed = JSON.parse(raw) as { version?: number; records?: BackgroundJobRecord[] };
+      let staleConverted = 0;
       for (const stored of parsed.records ?? []) {
-        // running 但 PID 已死 → 標 stale（無法判斷成功與否）
+        // running 但 PID 已死 → 標 stale（無法判斷成功與否）+ 設 acked=false 讓 startup recovery 補通知
         if (stored.status === "running" && stored.pid && !isProcessAlive(stored.pid)) {
           stored.status = "stale";
           stored.endedAt = stored.endedAt ?? Date.now();
+          stored.acked = false;  // 進 startup recovery 名單，補 emit onComplete 給 parent agent
+          staleConverted++;
         }
         this.records.set(stored.jobId, stored);
       }
       const running = Array.from(this.records.values()).filter(r => r.status === "running").length;
-      log.info(`[bg-job] 載入 ${this.records.size} 筆，其中 ${running} 筆仍 running`);
+      log.info(`[bg-job] 載入 ${this.records.size} 筆，其中 ${running} 筆仍 running${staleConverted > 0 ? `，stale 化 ${staleConverted} 筆（將觸發 recovery 補通知）` : ""}`);
+      // stale 變動需 persist 回 disk，否則下次重啟仍誤認 running
+      if (staleConverted > 0) this.persist();
     } catch (err) {
       log.warn(`[bg-job] loadFromDisk 失敗：${err instanceof Error ? err.message : String(err)}`);
     }
