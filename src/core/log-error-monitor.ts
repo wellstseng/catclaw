@@ -15,7 +15,7 @@ import { watchFile, unwatchFile } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
-import { log } from "../logger.js";
+import { log, ERROR_SENTINEL } from "../logger.js";
 import { eventBus } from "./event-bus.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -25,43 +25,19 @@ const CONTEXT_AFTER_LINES = 5;       // error 後再收集 N 行
 const DEDUP_WINDOW_MS = 30 * 60_000; // 同一 error 30 分鐘內不重複
 const WATCH_INTERVAL_MS = 1000;      // 檔案變化偵測間隔
 
-/** 錯誤行偵測 pattern */
-const ERROR_PATTERNS = [
-  /\[error\]/i,
-  /\berror[:\s]/i,
-  /\bunhandledRejection\b/i,
-  /\buncaughtException\b/i,
-  /\bFATAL\b/,
-  /\bTypeError\b/,
-  /\bReferenceError\b/,
-  /\bSyntaxError\b/,
-  /\bRangeError\b/,
-  /\bECONNREFUSED\b/,
-  /\bENOENT\b.*(?:spawn|exec)/i,
-  /\bstack trace\b/i,
-  /^\s+at\s+.*\(.*:\d+:\d+\)/,  // stack trace 行
-];
-
-/** 忽略的 false positive */
-const IGNORE_PATTERNS = [
-  /\[reply-handler\].*streaming edit 失敗/,  // rate limit, 非真正錯誤
-  /\[cli-bridge-reply\].*streaming edit 失敗/,
-  /rate.?limit/i,
-  /\bDEBUG\b/i,  // debug 訊息帶 "error" 字樣
-  // LLM POST 預覽行含 lastUser="..." — user prompt 內可能有 error 字眼（誤觸發）
-  /\[claude:.*\]\s+POST.*lastUser=/i,
-  // turn-auditor / skill-judge 的歷史 turn 標記 (T20 [hadError]:)
-  /T\d+\s*\[hadError\]/,
-  // skill-judge prompt 結尾常有「不需提案」「值得 / 不值得」這類 reason 字串
-  /\[skill-(candidate|judge|improvement)\]/i,
-  // turn 失敗指標但不是程式 error — 來自 audit / candidate / advice 等
-  /\[turn-audit\]/i,
-  // tool 執行失敗（白名單擋 / permission denied / tool 自己 fail）— 不是 catclaw runtime error，
-  // trace 系統已經記錄；包含「(toolName) :: error」格式
-  /\[agent-loop\]\s+\[使用工具\][^:]*::\s+error/i,
-  // fix-escalation 是 catclaw 內部 retry 計數機制，不是錯誤本身
-  /\[fix-escalation\]/i,
-];
+/**
+ * 觸發條件：白名單，只認 catclaw 自己 log.error() 印出的 sentinel。
+ *
+ * 舊版對全域 PM2 log 做關鍵字撈取（/\berror[:\s]/i 等）再用 IGNORE_PATTERNS
+ * 一條條扣假陽性——但 agent 工具輸出 / LLM relay / 子 provider stderr 是無界
+ * 自然語言，永遠會出現 "error" 字，blocklist 註定追不完（曾因 wendy 投資日報
+ * pipeline 印出 "HTTP Error 403" 而誤觸發）。改成只認 sentinel：
+ *   - 真 crash（uncaughtException / unhandledRejection）走 index.ts 的
+ *     log.error handler，自帶 sentinel，照樣捕捉。
+ *   - 全部 log.error 呼叫點都是 catclaw runtime error，沒有業務內容混入。
+ *   - 代價：第三方 lib 直接印 "Error:" 到 stderr（繞過 logger）會漏報，
+ *     但那本來就是假陽性重災區。
+ */
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -96,8 +72,12 @@ function hashError(msg: string): string {
 }
 
 function isErrorLine(line: string): boolean {
-  if (IGNORE_PATTERNS.some(p => p.test(line))) return false;
-  return ERROR_PATTERNS.some(p => p.test(line));
+  return line.includes(ERROR_SENTINEL);
+}
+
+/** 去掉 sentinel，讓 snapshot / Discord 通知乾淨 */
+function stripSentinel(line: string): string {
+  return line.replace(ERROR_SENTINEL, "").replace(/\s{2,}/, " ");
 }
 
 function isStackTraceLine(line: string): boolean {
@@ -164,8 +144,11 @@ function flushError(): void {
   });
 }
 
-function processLine(line: string): void {
-  // 加入 ring buffer
+function processLine(rawLine: string): void {
+  const isError = isErrorLine(rawLine);
+  const line = isError ? stripSentinel(rawLine) : rawLine;
+
+  // 加入 ring buffer（已去 sentinel）
   _ringBuffer.push(line);
   if (_ringBuffer.length > RING_BUFFER_SIZE) _ringBuffer.shift();
 
@@ -182,7 +165,7 @@ function processLine(line: string): void {
   }
 
   // 偵測新的 error
-  if (isErrorLine(line)) {
+  if (isError) {
     _currentError = {
       message: line,
       contextBefore: [..._ringBuffer], // 含 error 本身

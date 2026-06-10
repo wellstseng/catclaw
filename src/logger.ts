@@ -17,6 +17,16 @@ const LEVELS: Record<LogLevel, number> = {
   silent: 4,
 };
 
+/**
+ * Error-level sentinel — 印在每行 log.error 開頭。
+ *
+ * log-error-monitor 只認這個標記來觸發「Log Error 偵測」，不再對全域 PM2 log
+ * 做關鍵字撈取。agent 工具輸出 / LLM relay / 子 provider stderr 等業務內容
+ * 永遠打不出這個 token，因此天生不會誤觸發（白名單，非黑名單）。
+ * 動到此值需同步 log-error-monitor.ts（它 import 同一常數）。
+ */
+export const ERROR_SENTINEL = "⟦CCERR⟧"; // ⟦CCERR⟧
+
 let currentLevel: LogLevel = "info";
 
 /** 設定 log 層級（由 index.ts 在啟動時呼叫） */
@@ -48,6 +58,6 @@ export const log = {
     if (shouldLog("warn")) console.warn(ts(), ...args);
   },
   error: (...args: unknown[]) => {
-    if (shouldLog("error")) console.error(ts(), ...args);
+    if (shouldLog("error")) console.error(ts(), ERROR_SENTINEL, ...args);
   },
 };
