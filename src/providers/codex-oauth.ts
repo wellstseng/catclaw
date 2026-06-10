@@ -153,6 +153,8 @@ interface ResponsesChunk {
       input_tokens?: number;
       output_tokens?: number;
       total_tokens?: number;
+      /** Responses API：input_tokens 中被 prompt cache 命中的部分 */
+      input_tokens_details?: { cached_tokens?: number };
     };
   };
 }
@@ -736,10 +738,13 @@ function processResponsesChunk(chunk: ResponsesChunk, toolCalls: ToolCall[]): Pr
         : status === "incomplete" ? "max_tokens"
         : "end_turn";
       const u = chunk.response?.usage;
+      // OpenAI 的 input_tokens 含被快取部分；對齊 Anthropic 語意拆成
+      // input(未快取) + cacheRead(已快取)，兩者互斥，effectiveInput 才不會重複計。
+      const cached = u?.input_tokens_details?.cached_tokens ?? 0;
       const usage = u ? {
-        input: u.input_tokens ?? 0,
+        input: Math.max(0, (u.input_tokens ?? 0) - cached),
         output: u.output_tokens ?? 0,
-        cacheRead: 0,
+        cacheRead: cached,
         cacheWrite: 0,
         totalTokens: u.total_tokens ?? ((u.input_tokens ?? 0) + (u.output_tokens ?? 0)),
       } : undefined;

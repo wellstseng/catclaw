@@ -2080,7 +2080,11 @@ export async function* agentLoop(
       // iter 級 text 累積（turn 級的 tracker 會跨 iter 累積；送回 messages 時只要本 iter 的）
       let iterText = "";
       let providerError: string | null = null;  // 捕捉 provider 端 stream 錯誤（pi-ai 會 emit type=error）
+      let ttftMs: number | undefined;            // time-to-first-token（首個 text/thinking delta）
       for await (const event of streamResult.events as AsyncIterable<ProviderEvent>) {
+        if (ttftMs === undefined && (event.type === "text_delta" || event.type === "thinking_delta")) {
+          ttftMs = Date.now() - llmCallStartMs;
+        }
         if (event.type === "text_delta") {
           iterText += event.text;
           tracker.appendText(event.text);
@@ -2130,6 +2134,7 @@ export async function* agentLoop(
         cacheWrite: streamResult.usage.cacheWrite ?? 0,
         estimated: streamResult.usage.estimated ?? false,
         stopReason: streamResult.stopReason,
+        ttftMs,
       });
 
       if (controller.signal.aborted) break;

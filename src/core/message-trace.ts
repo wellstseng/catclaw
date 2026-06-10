@@ -83,6 +83,9 @@ export interface TraceLLMCall {
   cacheWrite: number;
   estimated: boolean;
   durationMs: number;
+  /** time-to-first-token：呼叫起到第一個 text/thinking delta 的毫秒數。
+   *  durationMs - ttftMs ≈ 純生成時間；ttftMs ≈ prefill + reasoning 等待。 */
+  ttftMs?: number;
   toolCalls: TraceToolCall[];
   stopReason?: string;
 }
@@ -549,6 +552,7 @@ export class MessageTrace {
     cacheWrite: number;
     estimated: boolean;
     stopReason?: string;
+    ttftMs?: number;
   }): void {
     if (!this._currentLLMCall) return;
     const call: TraceLLMCall = {
@@ -561,6 +565,7 @@ export class MessageTrace {
       cacheWrite: opts.cacheWrite,
       estimated: opts.estimated,
       durationMs: Date.now() - this._llmCallStartMs,
+      ttftMs: opts.ttftMs,
       toolCalls: this._currentLLMCall.toolCalls ?? [],
       stopReason: opts.stopReason,
     };
