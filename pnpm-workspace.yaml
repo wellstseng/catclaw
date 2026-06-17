@@ -2,3 +2,7 @@ packages:
   - "."
   - "mcp/computer-use"
   - "mcp/playwright"
+
+onlyBuiltDependencies:
+  - protobufjs
+  - sharp
