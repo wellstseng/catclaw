@@ -6736,7 +6736,7 @@ export class DashboardServer {
 
             _codexOAuthState = { status: "pending" };
 
-            const { loginOpenAICodex } = await import("@mariozechner/pi-ai/oauth");
+            const { loginOpenAICodex } = await import("@earendil-works/pi-ai/oauth");
 
             // 用 Promise + 手動 resolve 拿到 authUrl 後立即回傳給前端
             let resolveAuthUrl: (url: string) => void;

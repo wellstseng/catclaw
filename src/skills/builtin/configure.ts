@@ -122,7 +122,7 @@ async function handleListModels(): Promise<SkillResult> {
     }
 
     // V1：pi-ai
-    const { getModels } = await import("@mariozechner/pi-ai");
+    const { getModels } = await import("@earendil-works/pi-ai");
     const models = getModels("anthropic");
     const lines = ["**Anthropic 可用模型（via pi-ai）**"];
     for (const m of models) {
@@ -154,7 +154,7 @@ async function handleLoginCodex(ctx: SkillContext): Promise<SkillResult> {
 
   try {
     // 動態 import pi-ai oauth（避免頂層 import 影響啟動）
-    const { loginOpenAICodex } = await import("@mariozechner/pi-ai/oauth");
+    const { loginOpenAICodex } = await import("@earendil-works/pi-ai/oauth");
 
     // 通知使用者 OAuth 流程開始
     await channel.send("正在啟動 OpenAI Codex OAuth 登入流程...\n`localhost:1455` callback server 已就緒");

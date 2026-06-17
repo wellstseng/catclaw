@@ -1,6 +1,6 @@
 /**
  * @file providers/claude-api.ts
- * @description Claude API Provider — 使用 @mariozechner/pi-ai streamSimpleAnthropic
+ * @description Claude API Provider — 使用 @earendil-works/pi-ai streamSimple
  *
  * 自動偵測憑證類型（API key / OAuth），pi-ai 負責正確設定 headers。
  * 多憑證：從 {workspace}/agents/default/auth-profiles.json 載入。
@@ -17,9 +17,9 @@ import { AuthProfileStore, type CooldownReason } from "./auth-profile-store.js";
 
 // ── pi-ai imports ─────────────────────────────────────────────────────────────
 
-import { streamSimpleAnthropic } from "@mariozechner/pi-ai";
-import { getModel } from "@mariozechner/pi-ai";
-import { Type } from "@mariozechner/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import type {
   Context as PiContext,
   Message as PiMessage,
@@ -30,7 +30,7 @@ import type {
   ToolCall as PiToolCall,
   AssistantMessageEvent,
   Tool as PiTool,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
@@ -382,7 +382,7 @@ export class ClaudeApiProvider implements LLMProvider {
 
     try {
       log.info(`[claude:${this.id}] thinking=${opts.thinking ?? "off"} → reasoning ${opts.thinking ? `已送入 Anthropic 請求（${opts.thinking}）` : "未送"}`);
-      const stream = streamSimpleAnthropic(model, context, {
+      const stream = streamSimple(model, context, {
         apiKey: credential,
         maxTokens: opts.maxTokens ?? getDefaultMaxTokens(this.modelId),
         signal: childAc.signal,

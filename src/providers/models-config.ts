@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { getModels, getProviders } from "@mariozechner/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai";
 import { log } from "../logger.js";
 import type { ModelsJsonConfig, ModelProviderDefinition, ModelsConfig, ModelDefinition } from "../core/config.js";
 
