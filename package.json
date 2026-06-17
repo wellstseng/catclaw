@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
-    "@earendil-works/pi-ai": "0.79.6",
+    "@earendil-works/pi-ai": "0.79.4",
     "@types/yazl": "^3.3.1",
     "apache-arrow": "^18.1.0",
     "croner": "^10.0.1",
