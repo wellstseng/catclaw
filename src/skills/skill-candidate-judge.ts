@@ -22,6 +22,7 @@ import { config } from "../core/config.js";
 import {
   proposeSkillCandidate,
   isInCooldown,
+  listSkillCandidates,
   type SkillCandidateTrigger,
 } from "../memory/skill-candidate-store.js";
 
@@ -89,10 +90,23 @@ export async function judgeSkillCandidate(opts: JudgeOpts): Promise<void> {
     ? opts.existingSkillNames.slice(0, 80).join(", ")
     : "(無)";
 
+  // 待審佇列：已提過但還沒 accept/discard 的提案，餵進 prompt 避免換個說法重複提案
+  let pendingCandidates: ReturnType<typeof listSkillCandidates> = [];
+  try {
+    pendingCandidates = listSkillCandidates();
+  } catch { /* 靜默，去重只是優化 */ }
+  const pendingBlock = pendingCandidates.length > 0
+    ? pendingCandidates
+        .slice(0, 40)
+        .map(c => `${c.slug}: ${(c.description || "").slice(0, 80)}`)
+        .join("\n")
+    : "(無)";
+
   const judgePrompt =
     `分析以下最近 ${opts.recentTurns.length} 個 turn，判斷有沒有「值得抽成新 skill 的 workflow」。\n\n` +
     `近期對話：\n${turnsBlock}\n\n` +
     `既有 skill（不要重複提案）：${existingBlock}\n\n` +
+    `**待審佇列中已提過的候選（語意重複也算撞，換個說法/slug 重提一律 false）：**\n${pendingBlock}\n\n` +
     `判斷標準（都要符合才 yes）：\n` +
     `1. 跨 2+ turn 重複類似 tool 序列（不是單次的 ad-hoc 操作）\n` +
     `2. workflow 有明確結構（輸入 → 處理 → 輸出可複現）\n` +
@@ -132,6 +146,10 @@ export async function judgeSkillCandidate(opts: JudgeOpts): Promise<void> {
     const slugLower = parsed.slug.toLowerCase().trim();
     if (opts.existingSkillNames.some(n => n.toLowerCase() === slugLower)) {
       log.debug(`[skill-candidate] slug 撞名 ${slugLower}，skip`);
+      return;
+    }
+    if (pendingCandidates.some(c => c.slug.toLowerCase() === slugLower)) {
+      log.debug(`[skill-candidate] slug 與待審佇列重複 ${slugLower}，skip`);
       return;
     }
 

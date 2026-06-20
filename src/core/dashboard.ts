@@ -684,6 +684,13 @@ label.cfg-toggle { min-width: 36px; }
       <button class="btn btn-sm" style="float:right" onclick="loadSkillCandidates()">↻ 重新載入</button>
     </h2>
     <div id="candidates-summary" style="font-size:0.82rem;color:#ccc;margin-bottom:8px"></div>
+    <div id="cand-bulk-bar" style="margin-bottom:8px;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;display:none;align-items:center;gap:8px;font-size:0.82rem">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="cand-select-all" onchange="onCandSelectAllChange()">全選</label>
+      <span id="cand-bulk-count" style="color:var(--fg2)">已選 0 筆</span>
+      <button class="btn btn-sm" style="margin-left:auto" onclick="bulkAcceptCandidates(this)">✅ 批次 Accept（各自回來源 agent）</button>
+      <button class="btn btn-sm" style="background:#a44;color:#fff" onclick="bulkDiscardCandidates(this)">🗑 批次 Discard</button>
+      <button class="btn btn-sm" onclick="clearCandSelection()">取消選取</button>
+    </div>
     <div id="candidates-list" style="font-size:0.82rem;color:#ccc">載入中...</div>
   </div>
 </div>
@@ -3483,7 +3490,15 @@ async function loadSkillCandidates() {
       return;
     }
     sum.innerHTML = '待審核 <b>' + entries.length + '</b> 筆';
-    const agentOptions = agents.map(a => '<option value="' + a.id + '">' + a.id + (a.label ? ' (' + a.label + ')' : '') + '</option>').join('');
+    const agentIds = agents.map(a => a.id);
+    // 建單一 row 的 agent 下拉：確保「來源 agent」即使不在註冊清單也被加為選項並選中（修 mismatch）
+    function buildAgentSelect(fileName, srcAgent) {
+      const list = agentIds.includes(srcAgent) ? agents.slice() : [{ id: srcAgent, label: '來源·未註冊' }].concat(agents);
+      const opts = list.map(a =>
+        '<option value="' + a.id + '"' + (a.id === srcAgent ? ' selected' : '') + '>' + a.id + (a.label ? ' (' + a.label + ')' : '') + '</option>'
+      ).join('');
+      return '<select data-cand="' + fileName + '" style="background:#222;color:#ddd;border:1px solid #444;padding:2px 4px;font-size:0.78rem">' + opts + '</select>';
+    }
     // 按 urgency_score (desc) 排序；無分數的排最後
     entries.sort((a, b) => (b.urgencyScore ?? -1) - (a.urgencyScore ?? -1));
     let html = '';
@@ -3497,20 +3512,20 @@ async function loadSkillCandidates() {
         ? '<span style="background:' + pColor + ';color:#000;padding:1px 5px;border-radius:3px;font-size:0.72rem;font-weight:600;margin-left:6px">' + e.priority.toUpperCase() + (typeof e.urgencyScore === 'number' ? ' ' + e.urgencyScore + '/10' : '') + '</span>'
         : '';
       html += '<div style="border:1px solid #333;border-radius:4px;padding:8px;margin-bottom:8px">';
-      html += '<div><b>' + (e.slug || '?') + '</b>' + priorityBadge + ' <span style="color:#888;font-size:0.78rem">[' + (e.triggeredBy || '?') + ']</span> <span style="color:#888;font-size:0.78rem;margin-left:6px">' + ts + '</span></div>';
+      html += '<div style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cand-checkbox" data-cand-file="' + e.fileName + '" data-src-agent="' + defaultAgent + '" onchange="onCandCheckboxChange()">';
+      html += '<b>' + (e.slug || '?') + '</b>' + priorityBadge + ' <span style="color:#888;font-size:0.78rem">[' + (e.triggeredBy || '?') + ']</span> <span style="color:#888;font-size:0.78rem;margin-left:6px">' + ts + '</span></div>';
       html += '<div style="font-size:0.82rem;color:#ccc;margin:4px 0">' + (e.description || '(無描述)') + '</div>';
       html += '<div style="font-size:0.78rem;color:#888">channel: ' + (e.channelId || '-') + ' | proposed agent: ' + (e.agentId || '-') + '</div>';
       html += '<details style="margin:4px 0"><summary style="cursor:pointer;color:#4fc3f7">展開內容</summary><pre style="background:#0e0e0e;padding:6px;font-size:0.72rem;overflow-x:auto;max-height:400px">' + escaped + '</pre></details>';
       html += '<div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
       html += '<label style="font-size:0.78rem;color:#aaa">目標 agent：</label>';
-      html += '<select data-cand="' + e.fileName + '" style="background:#222;color:#ddd;border:1px solid #444;padding:2px 4px;font-size:0.78rem">';
-      html += agentOptions.replace('value="' + defaultAgent + '"', 'value="' + defaultAgent + '" selected');
-      html += '</select>';
+      html += buildAgentSelect(e.fileName, defaultAgent);
       html += '<button class="btn btn-sm" onclick="acceptSkillCandidate(\\'' + e.fileName + '\\',this)">✅ Accept (Spawn Author)</button> ';
       html += '<button class="btn btn-sm" style="background:#a44" onclick="discardSkillCandidate(\\'' + e.fileName + '\\',this)">🗑 Discard</button>';
       html += '</div></div>';
     }
     list.innerHTML = html;
+    updateCandBulkBar();
   } catch (err) {
     list.innerHTML = '<p style="color:#f44">載入失敗: ' + err + '</p>';
   }
@@ -3555,6 +3570,88 @@ async function discardSkillCandidate(fileName, btn) {
       alert('Discard 失敗：' + (j.error || r.statusText));
     }
   } catch (err) { alert('Discard 失敗：' + err); }
+}
+
+// ── Skill Candidate 批次選取 ────────────────────────────────────────────────
+function _getCheckedCands() {
+  return Array.from(document.querySelectorAll('.cand-checkbox'))
+    .filter(cb => cb.checked)
+    .map(cb => {
+      const file = cb.getAttribute('data-cand-file');
+      const sel = document.querySelector('select[data-cand="' + file + '"]');
+      // 目標 agent：優先用下拉現值（已預設來源 agent），fallback 來源 agent
+      const targetAgentId = (sel && sel.value) || cb.getAttribute('data-src-agent') || 'default';
+      return { fileName: file, targetAgentId };
+    });
+}
+function updateCandBulkBar() {
+  const checked = _getCheckedCands();
+  const bar = document.getElementById('cand-bulk-bar');
+  const cnt = document.getElementById('cand-bulk-count');
+  const all = document.querySelectorAll('.cand-checkbox');
+  if (!bar) return;
+  bar.style.display = all.length > 0 ? 'flex' : 'none';
+  if (cnt) cnt.textContent = '已選 ' + checked.length + ' 筆';
+  const sel = document.getElementById('cand-select-all');
+  if (sel && all.length > 0) {
+    sel.checked = checked.length === all.length;
+    sel.indeterminate = checked.length > 0 && checked.length < all.length;
+  }
+}
+function onCandCheckboxChange() { updateCandBulkBar(); }
+function onCandSelectAllChange() {
+  const sel = document.getElementById('cand-select-all');
+  const checked = !!(sel && sel.checked);
+  for (const cb of document.querySelectorAll('.cand-checkbox')) cb.checked = checked;
+  updateCandBulkBar();
+}
+function clearCandSelection() {
+  for (const cb of document.querySelectorAll('.cand-checkbox')) cb.checked = false;
+  const sel = document.getElementById('cand-select-all');
+  if (sel) { sel.checked = false; sel.indeterminate = false; }
+  updateCandBulkBar();
+}
+async function bulkAcceptCandidates(btn) {
+  const items = _getCheckedCands();
+  if (items.length === 0) return;
+  if (!confirm('批次 Accept ' + items.length + ' 筆？每筆會各自路由回它的來源 agent 並啟動 author（非同步）。確定？')) return;
+  if (btn) btn.disabled = true;
+  let ok = 0, fail = 0;
+  for (const it of items) {
+    try {
+      const r = await authFetch('/api/skill-candidates/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: it.fileName, targetAgentId: it.targetAgentId }),
+      });
+      if (r.ok) ok++; else fail++;
+    } catch { fail++; }
+  }
+  if (btn) btn.disabled = false;
+  alert('批次 Accept 完成：成功 ' + ok + ' / 失敗 ' + fail);
+  clearCandSelection();
+  loadSkillCandidates();
+}
+async function bulkDiscardCandidates(btn) {
+  const items = _getCheckedCands();
+  if (items.length === 0) return;
+  if (!confirm('確定刪除已選的 ' + items.length + ' 筆提案？此動作無法復原。')) return;
+  if (btn) btn.disabled = true;
+  let ok = 0, fail = 0;
+  for (const it of items) {
+    try {
+      const r = await authFetch('/api/skill-candidates/discard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: it.fileName }),
+      });
+      if (r.ok) ok++; else fail++;
+    } catch { fail++; }
+  }
+  if (btn) btn.disabled = false;
+  alert('批次 Discard 完成：成功 ' + ok + ' / 失敗 ' + fail);
+  clearCandSelection();
+  loadSkillCandidates();
 }
 
 async function labelGuardianHit(traceId, hitIndex, falsePositive, btn) {
@@ -7288,7 +7385,7 @@ export class DashboardServer {
                 res.writeHead(500); res.end(JSON.stringify({ error: "spawn_subagent tool 未註冊" })); return;
               }
               const toolCtx = {
-                accountId: "dashboard-system",
+                accountId: "dashboard-user",
                 sessionId: `dashboard-skill-author-${Date.now()}`,
                 channelId: "dashboard",
                 eventBus,
