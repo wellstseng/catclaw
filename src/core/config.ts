@@ -512,6 +512,8 @@ export interface SafetyConfig {
     cooldownHours?: number;
     /** 判官最少看幾個 turn 才動（預設 3）。 */
     minTurnsForJudge?: number;
+    /** Discard 過的 slug 在幾天內不重新提案（rejected ledger；預設 30）。 */
+    rejectedDays?: number;
   };
 }
 
@@ -1516,6 +1518,7 @@ function loadConfig(): BridgeConfig {
         idleMinutes:      raw.safety?.skillCandidate?.idleMinutes      ?? 20,
         cooldownHours:    raw.safety?.skillCandidate?.cooldownHours    ?? 24,
         minTurnsForJudge: raw.safety?.skillCandidate?.minTurnsForJudge ?? 3,
+        rejectedDays:     raw.safety?.skillCandidate?.rejectedDays     ?? 30,
       },
     },
     workflow: {

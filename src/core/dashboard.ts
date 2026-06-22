@@ -2451,6 +2451,7 @@ const CFG_SCHEMA = [
     {k:'safety.skillCandidate.everyNTurns',t:'num',l:'Skill Candidate · Every N Turns',d:'每 N turn 觸發判官（預設 5；0=關閉 turn-base trigger）'},
     {k:'safety.skillCandidate.idleMinutes',t:'num',l:'Skill Candidate · Idle Minutes',d:'Session idle 超過此分鐘觸發判官（預設 20；0=關閉 idle trigger）'},
     {k:'safety.skillCandidate.cooldownHours',t:'num',l:'Skill Candidate · Cooldown Hours',d:'同 slug 提案冷卻時數（預設 24）'},
+    {k:'safety.skillCandidate.rejectedDays',t:'num',l:'Skill Candidate · Rejected Days',d:'Discard 過的 slug 幾天內不重新提案（rejected ledger；預設 30）'},
   ], sub:[
     {k:'safety.execApproval',l:'Exec Approval',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'高風險指令執行前需要 owner DM 核准'},

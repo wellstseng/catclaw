@@ -83,6 +83,44 @@ function getCooldownPath(): string {
   return join(getStagingDir(), ".cooldown.json");
 }
 
+function getRejectedPath(): string {
+  return join(getStagingDir(), ".rejected.json");
+}
+
+function readRejected(): Record<string, number> {
+  const p = getRejectedPath();
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, "utf-8")) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+function writeRejected(ledger: Record<string, number>): void {
+  try {
+    writeFileSync(getRejectedPath(), JSON.stringify(ledger, null, 2), "utf-8");
+  } catch (err) {
+    log.warn(`[skill-candidate] rejected ledger 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Discard 時記下被否決的 slug，避免短期內原點子重新提案。 */
+export function recordRejected(slug: string): void {
+  const s = sanitizeSlug(slug);
+  if (!s) return;
+  const ledger = readRejected();
+  ledger[s] = Date.now();
+  writeRejected(ledger);
+}
+
+/** slug 在 rejectedDays 內被否決過 → return true（判官應 skip）。預設 30 天。 */
+export function isRejected(slug: string, rejectedDays = 30): boolean {
+  const last = readRejected()[sanitizeSlug(slug)];
+  if (!last) return false;
+  return Date.now() - last < rejectedDays * 86_400_000;
+}
+
 function readCooldown(): Record<string, number> {
   const p = getCooldownPath();
   if (!existsSync(p)) return {};
@@ -334,11 +372,16 @@ export function recordCandidateAuthored(fileName: string, authoredPath: string):
   }
 }
 
-/** Discard：unlink _staging 內檔（不動 _accepted/）。 */
+/** Discard：unlink _staging 內檔（不動 _accepted/），並把 slug 記進 rejected ledger。 */
 export function discardSkillCandidate(fileName: string): boolean {
   const src = join(getStagingDir(), fileName);
   if (!existsSync(src)) return false;
   try {
+    // unlink 前先讀 slug 記進 rejected ledger（避免原點子短期回鍋）
+    try {
+      const fm = parseFrontmatter(readFileSync(src, "utf-8"));
+      if (fm["slug"]) recordRejected(fm["slug"]);
+    } catch { /* 讀不到 slug 就算了，不擋 discard */ }
     unlinkSync(src);
     log.info(`[skill-candidate] discard ${fileName}`);
     return true;

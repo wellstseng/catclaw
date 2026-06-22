@@ -22,6 +22,7 @@ import { config } from "../core/config.js";
 import {
   proposeSkillCandidate,
   isInCooldown,
+  isRejected,
   listSkillCandidates,
   type SkillCandidateTrigger,
 } from "../memory/skill-candidate-store.js";
@@ -150,6 +151,11 @@ export async function judgeSkillCandidate(opts: JudgeOpts): Promise<void> {
     }
     if (pendingCandidates.some(c => c.slug.toLowerCase() === slugLower)) {
       log.debug(`[skill-candidate] slug 與待審佇列重複 ${slugLower}，skip`);
+      return;
+    }
+    const rejectedDays = config.safety?.skillCandidate?.rejectedDays ?? 30;
+    if (isRejected(parsed.slug, rejectedDays)) {
+      log.debug(`[skill-candidate] slug 近期被否決過 ${slugLower}（${rejectedDays}d），skip`);
       return;
     }
 
