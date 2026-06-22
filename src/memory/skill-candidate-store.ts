@@ -87,17 +87,28 @@ function getRejectedPath(): string {
   return join(getStagingDir(), ".rejected.json");
 }
 
-function readRejected(): Record<string, number> {
+interface RejectedEntry {
+  ts: number;
+  description?: string;
+}
+
+/** 讀 rejected ledger；相容舊格式（value 為純 number）。 */
+function readRejected(): Record<string, RejectedEntry> {
   const p = getRejectedPath();
   if (!existsSync(p)) return {};
   try {
-    return JSON.parse(readFileSync(p, "utf-8")) as Record<string, number>;
+    const raw = JSON.parse(readFileSync(p, "utf-8")) as Record<string, number | RejectedEntry>;
+    const out: Record<string, RejectedEntry> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      out[k] = typeof v === "number" ? { ts: v } : v;
+    }
+    return out;
   } catch {
     return {};
   }
 }
 
-function writeRejected(ledger: Record<string, number>): void {
+function writeRejected(ledger: Record<string, RejectedEntry>): void {
   try {
     writeFileSync(getRejectedPath(), JSON.stringify(ledger, null, 2), "utf-8");
   } catch (err) {
@@ -105,20 +116,148 @@ function writeRejected(ledger: Record<string, number>): void {
   }
 }
 
-/** Discard 時記下被否決的 slug，避免短期內原點子重新提案。 */
-export function recordRejected(slug: string): void {
+/** Discard 時記下被否決的 slug（含 description 供語意去重），避免短期內原點子重新提案。 */
+export function recordRejected(slug: string, description?: string): void {
   const s = sanitizeSlug(slug);
   if (!s) return;
   const ledger = readRejected();
-  ledger[s] = Date.now();
+  ledger[s] = { ts: Date.now(), description };
   writeRejected(ledger);
 }
 
 /** slug 在 rejectedDays 內被否決過 → return true（判官應 skip）。預設 30 天。 */
 export function isRejected(slug: string, rejectedDays = 30): boolean {
-  const last = readRejected()[sanitizeSlug(slug)];
-  if (!last) return false;
-  return Date.now() - last < rejectedDays * 86_400_000;
+  const e = readRejected()[sanitizeSlug(slug)];
+  if (!e) return false;
+  return Date.now() - e.ts < rejectedDays * 86_400_000;
+}
+
+/** 列出 rejectedDays 內被否決、且有 description 的項目（供語意去重比對）。 */
+export function listRejectedDescriptions(rejectedDays = 30): Array<{ slug: string; description: string }> {
+  const cutoff = Date.now() - rejectedDays * 86_400_000;
+  return Object.entries(readRejected())
+    .filter(([, e]) => e.ts >= cutoff && e.description)
+    .map(([slug, e]) => ({ slug, description: e.description! }));
+}
+
+// ── D：接受率 metric ───────────────────────────────────────────────────────────
+
+export interface CandidateStats {
+  accepted: number;
+  discarded: number;
+  /** accepted / (accepted + discarded)，無資料回 null */
+  acceptanceRate: number | null;
+}
+
+function getStatsPath(): string {
+  return join(getStagingDir(), ".stats.json");
+}
+
+function readStatsRaw(): { accepted: number; discarded: number } {
+  try {
+    const d = JSON.parse(readFileSync(getStatsPath(), "utf-8")) as { accepted?: number; discarded?: number };
+    return { accepted: d.accepted ?? 0, discarded: d.discarded ?? 0 };
+  } catch {
+    return { accepted: 0, discarded: 0 };
+  }
+}
+
+/** accept/discard 結果累計，供 dashboard 觀測判官提案品質。 */
+export function recordOutcome(outcome: "accepted" | "discarded"): void {
+  const s = readStatsRaw();
+  s[outcome] += 1;
+  try {
+    const dir = getStagingDir();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(getStatsPath(), JSON.stringify(s, null, 2), "utf-8");
+  } catch (err) {
+    log.warn(`[skill-candidate] stats 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+export function getCandidateStats(): CandidateStats {
+  const s = readStatsRaw();
+  const total = s.accepted + s.discarded;
+  return { ...s, acceptanceRate: total > 0 ? s.accepted / total : null };
+}
+
+// ── C：語意去重（embedding + cosine）──────────────────────────────────────────
+
+function cosine(a: number[], b: number[]): number {
+  if (a.length === 0 || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!;
+    na += a[i]! * a[i]!;
+    nb += b[i]! * b[i]!;
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+/** 讀 _accepted/ 內已採納候選的 slug+description（供語意去重比對）。 */
+function listAcceptedDescriptions(): Array<{ slug: string; description: string }> {
+  const dir = getAcceptedDir();
+  if (!existsSync(dir)) return [];
+  const out: Array<{ slug: string; description: string }> = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".md")) continue;
+    try {
+      const fm = parseFrontmatter(readFileSync(join(dir, f), "utf-8"));
+      if (fm["slug"] && fm["proposed_description"]) {
+        out.push({ slug: fm["slug"], description: fm["proposed_description"] });
+      }
+    } catch { /* skip */ }
+  }
+  return out;
+}
+
+export interface SemanticDuplicate {
+  slug: string;
+  score: number;
+  source: "pending" | "accepted" | "rejected";
+}
+
+/**
+ * 對 pending + accepted + rejected 三池做語意去重。
+ * embedding 不可用時 graceful 回 null（不擋提案）。
+ * @param description 待提案 skill 的 description
+ * @param threshold cosine 相似度門檻（>= 視為重複；預設 0.85）
+ * @param rejectedDays rejected ledger 比對窗（預設 30）
+ */
+export async function findSemanticDuplicate(
+  description: string,
+  threshold = 0.85,
+  rejectedDays = 30,
+): Promise<SemanticDuplicate | null> {
+  const text = (description || "").trim();
+  if (!text) return null;
+
+  const corpus: Array<{ slug: string; description: string; source: SemanticDuplicate["source"] }> = [
+    ...listSkillCandidates().map(c => ({ slug: c.slug, description: c.description, source: "pending" as const })),
+    ...listAcceptedDescriptions().map(c => ({ ...c, source: "accepted" as const })),
+    ...listRejectedDescriptions(rejectedDays).map(c => ({ ...c, source: "rejected" as const })),
+  ].filter(c => c.description && c.description.trim());
+
+  if (corpus.length === 0) return null;
+
+  try {
+    const { embedTexts } = await import("../vector/embedding.js");
+    const { vectors } = await embedTexts([text, ...corpus.map(c => c.description)]);
+    if (vectors.length !== corpus.length + 1) return null; // embedding 不可用 / 數量不符 → 不擋
+    const target = vectors[0]!;
+    let best: SemanticDuplicate | null = null;
+    for (let i = 0; i < corpus.length; i++) {
+      const score = cosine(target, vectors[i + 1]!);
+      if (score >= threshold && (!best || score > best.score)) {
+        best = { slug: corpus[i]!.slug, score, source: corpus[i]!.source };
+      }
+    }
+    return best;
+  } catch (err) {
+    log.debug(`[skill-candidate] 語意去重 skip（embedding 失敗）：${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }
 
 function readCooldown(): Record<string, number> {
@@ -337,6 +476,7 @@ export function markCandidateAccepted(fileName: string, targetAgentId: string): 
       (_match, fm: string) => `---\n${fm}\naccept_target_agent: ${targetAgentId}\naccept_at: ${new Date().toISOString()}\n---`,
     );
     writeFileSync(cand.filePath, stamped, "utf-8");
+    recordOutcome("accepted");
     log.info(`[skill-candidate] accept ${fileName} → agent=${targetAgentId}（等 author spawn 完工）`);
     return cand;
   } catch (err) {
@@ -377,11 +517,12 @@ export function discardSkillCandidate(fileName: string): boolean {
   const src = join(getStagingDir(), fileName);
   if (!existsSync(src)) return false;
   try {
-    // unlink 前先讀 slug 記進 rejected ledger（避免原點子短期回鍋）
+    // unlink 前先讀 slug + description 記進 rejected ledger（避免原點子短期回鍋；description 供語意去重）
     try {
       const fm = parseFrontmatter(readFileSync(src, "utf-8"));
-      if (fm["slug"]) recordRejected(fm["slug"]);
+      if (fm["slug"]) recordRejected(fm["slug"], fm["proposed_description"]);
     } catch { /* 讀不到 slug 就算了，不擋 discard */ }
+    recordOutcome("discarded");
     unlinkSync(src);
     log.info(`[skill-candidate] discard ${fileName}`);
     return true;

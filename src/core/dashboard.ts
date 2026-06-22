@@ -2452,6 +2452,8 @@ const CFG_SCHEMA = [
     {k:'safety.skillCandidate.idleMinutes',t:'num',l:'Skill Candidate · Idle Minutes',d:'Session idle 超過此分鐘觸發判官（預設 20；0=關閉 idle trigger）'},
     {k:'safety.skillCandidate.cooldownHours',t:'num',l:'Skill Candidate · Cooldown Hours',d:'同 slug 提案冷卻時數（預設 24）'},
     {k:'safety.skillCandidate.rejectedDays',t:'num',l:'Skill Candidate · Rejected Days',d:'Discard 過的 slug 幾天內不重新提案（rejected ledger；預設 30）'},
+    {k:'safety.skillCandidate.semanticDedup',t:'bool',l:'Skill Candidate · Semantic Dedup',d:'語意去重（embedding+cosine 比對 pending/accepted/rejected 三池；embedding 不可用時自動放行）'},
+    {k:'safety.skillCandidate.semanticDedupThreshold',t:'num',l:'Skill Candidate · Semantic Threshold',d:'語意相似度門檻，>= 視為重複（預設 0.85；越高越寬鬆）'},
   ], sub:[
     {k:'safety.execApproval',l:'Exec Approval',fields:[
       {k:'enabled',t:'bool',l:'啟用',d:'高風險指令執行前需要 owner DM 核准'},
@@ -3485,12 +3487,15 @@ async function loadSkillCandidates() {
       getAgentListCached(),
     ]);
     const entries = d.entries || [];
+    const st = d.stats || {};
+    const rate = (st.acceptanceRate != null) ? (Math.round(st.acceptanceRate * 100) + '%') : 'N/A';
+    const statsHtml = '<span style="color:#888;margin-left:10px;font-size:0.78rem">累計 accept ' + (st.accepted || 0) + ' / discard ' + (st.discarded || 0) + ' · 接受率 <b style="color:#9c7">' + rate + '</b></span>';
     if (entries.length === 0) {
       list.innerHTML = '<p style="color:#888">_staging/skill-candidates/ 目前無待審核提案</p>';
-      sum.innerHTML = '';
+      sum.innerHTML = statsHtml;
       return;
     }
-    sum.innerHTML = '待審核 <b>' + entries.length + '</b> 筆';
+    sum.innerHTML = '待審核 <b>' + entries.length + '</b> 筆' + statsHtml;
     const agentIds = agents.map(a => a.id);
     // 建單一 row 的 agent 下拉：確保「來源 agent」即使不在註冊清單也被加為選項並選中（修 mismatch）
     function buildAgentSelect(fileName, srcAgent) {
@@ -7303,11 +7308,12 @@ export class DashboardServer {
       // GET /api/skill-candidates — 列 _staging/skill-candidates/ 內提案
       if (url === "/api/skill-candidates" && method === "GET") {
         void (async () => {
-          const { listSkillCandidates, sweepExpiredCandidates } = await import("../memory/skill-candidate-store.js");
+          const { listSkillCandidates, sweepExpiredCandidates, getCandidateStats } = await import("../memory/skill-candidate-store.js");
           sweepExpiredCandidates(); // TTL sweep（預設 30 天）
           const entries = listSkillCandidates();
+          const stats = getCandidateStats();
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ entries }));
+          res.end(JSON.stringify({ entries, stats }));
         })().catch(err => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: String(err) }));

@@ -23,6 +23,7 @@ import {
   proposeSkillCandidate,
   isInCooldown,
   isRejected,
+  findSemanticDuplicate,
   listSkillCandidates,
   type SkillCandidateTrigger,
 } from "../memory/skill-candidate-store.js";
@@ -157,6 +158,15 @@ export async function judgeSkillCandidate(opts: JudgeOpts): Promise<void> {
     if (isRejected(parsed.slug, rejectedDays)) {
       log.debug(`[skill-candidate] slug 近期被否決過 ${slugLower}（${rejectedDays}d），skip`);
       return;
+    }
+    // C：語意去重（embedding 不可用時 graceful 放行）
+    if (config.safety?.skillCandidate?.semanticDedup !== false) {
+      const threshold = config.safety?.skillCandidate?.semanticDedupThreshold ?? 0.85;
+      const dup = await findSemanticDuplicate(parsed.description, threshold, rejectedDays);
+      if (dup) {
+        log.debug(`[skill-candidate] 語意撞 ${dup.source}/${dup.slug}（score=${dup.score.toFixed(3)} >= ${threshold}），skip`);
+        return;
+      }
     }
 
     const cooldownHours = config.safety?.skillCandidate?.cooldownHours ?? 24;

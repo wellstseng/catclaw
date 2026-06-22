@@ -514,6 +514,10 @@ export interface SafetyConfig {
     minTurnsForJudge?: number;
     /** Discard 過的 slug 在幾天內不重新提案（rejected ledger；預設 30）。 */
     rejectedDays?: number;
+    /** 語意去重開關（embedding + cosine 比對 pending/accepted/rejected；預設 true）。 */
+    semanticDedup?: boolean;
+    /** 語意去重 cosine 相似度門檻，>= 視為重複（預設 0.85）。 */
+    semanticDedupThreshold?: number;
   };
 }
 
@@ -1519,6 +1523,8 @@ function loadConfig(): BridgeConfig {
         cooldownHours:    raw.safety?.skillCandidate?.cooldownHours    ?? 24,
         minTurnsForJudge: raw.safety?.skillCandidate?.minTurnsForJudge ?? 3,
         rejectedDays:     raw.safety?.skillCandidate?.rejectedDays     ?? 30,
+        semanticDedup:          raw.safety?.skillCandidate?.semanticDedup          ?? true,
+        semanticDedupThreshold: raw.safety?.skillCandidate?.semanticDedupThreshold ?? 0.85,
       },
     },
     workflow: {
