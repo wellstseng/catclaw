@@ -16,10 +16,13 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { log } from "../../logger.js";
-import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock } from "../types.js";
+import type { CliBridgeEvent, CliEffortLevel, CliProcessConfig, StdinImageBlock } from "../types.js";
 import type { CliProvider, ProcessIO, ProviderContext, ProviderSpawnSpec } from "./provider.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** 未指定 effort 時的預設等級（per-bridge 可覆寫成其他值）。 */
+const DEFAULT_EFFORT: CliEffortLevel = "max";
 
 // ── stdout 解析輔助型別 ────────────────────────────────────────────────────────
 
@@ -57,10 +60,9 @@ export class ClaudeProvider implements CliProvider {
       "--verbose",
     ];
 
-    // effort / model：有設就傳旗標（--effort 優先序高於 settings.json effortLevel）
-    if (config.effort) {
-      args.push("--effort", config.effort);
-    }
+    // effort：per-bridge 未指定 → 預設 DEFAULT_EFFORT（max）；--effort 優先序高於 settings.json effortLevel
+    const effort = config.effort ?? DEFAULT_EFFORT;
+    args.push("--effort", effort);
     if (config.model) {
       args.push("--model", config.model);
     }
@@ -69,9 +71,7 @@ export class ClaudeProvider implements CliProvider {
     if (typeof config.thinking === "boolean") {
       args.push("--settings", JSON.stringify({ alwaysThinkingEnabled: config.thinking }));
     }
-    if (config.effort || config.model || typeof config.thinking === "boolean") {
-      log.info(`[cli-bridge:${config.label}] effort=${config.effort ?? "(inherit)"} model=${config.model ?? "(inherit)"} thinking=${config.thinking ?? "(inherit)"}`);
-    }
+    log.info(`[cli-bridge:${config.label}] effort=${effort}${config.effort ? "" : "(default)"} model=${config.model ?? "(inherit)"} thinking=${config.thinking ?? "(inherit)"}`);
 
     // --resume 前先驗證 .jsonl 是否還在 ~/.claude/projects/*/；
     // 若不在，跳過 --resume 讓 CLI 開新 session（避免 "No conversation found" 死循環）
