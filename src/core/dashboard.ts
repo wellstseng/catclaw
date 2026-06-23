@@ -5273,6 +5273,9 @@ function _cbRenderBridge(idx, cfg) {
   html += _cbField(p+'showIntermediateText', 'Intermediate Text（tool 間推理文字）', 'select', cfg.showIntermediateText || _cbDefaults.showIntermediateText, ['quote','spoiler','none','normal']);
   html += _cbField(p+'editIntervalMs', 'Edit Interval (ms)', 'num', cfg.editIntervalMs ?? _cbDefaults.editIntervalMs);
   html += _cbField(p+'idleSuspendMs', 'Idle Suspend (ms)，預設 600000 (10min)。0=常駐不卸載', 'num', cfg.idleSuspendMs ?? _cbDefaults.idleSuspendMs);
+  html += _cbField(p+'effort', 'Effort（--effort，空=繼承 settings.json）', 'select', cfg.effort || '', ['','low','medium','high','xhigh','max']);
+  html += _cbField(p+'model', 'Model（--model，空=繼承 CLI 預設）', 'text', cfg.model || '');
+  html += _cbField(p+'thinking', 'Thinking（claude 端 alwaysThinkingEnabled；Opus 由 effort 驅動）', 'select', cfg.thinking === true ? 'on' : (cfg.thinking === false ? 'off' : 'inherit'), ['inherit','on','off']);
 
   // Channels
   html += \`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px"><strong style="font-size:0.82rem">Channels</strong> <button class="btn btn-sm" onclick="cbAddChannel(\${idx})" style="margin-left:8px">+ Channel</button></div>\`;
@@ -5315,10 +5318,17 @@ function _cbCollectForm() {
       showIntermediateText: g(p+'showIntermediateText') || 'normal',
       editIntervalMs: parseInt(g(p+'editIntervalMs')) || 800,
       idleSuspendMs: parseInt(g(p+'idleSuspendMs')) ?? 600000,
+      effort: g(p+'effort') || undefined,
+      model: g(p+'model') || undefined,
+      thinking: (() => { const t = g(p+'thinking'); return t === 'on' ? true : (t === 'off' ? false : undefined); })(),
       channels: {},
     };
     // 不儲存空 botToken
     if (!cfg.botToken) delete cfg.botToken;
+    // effort/model/thinking 留空（繼承）→ 不寫入
+    if (!cfg.effort) delete cfg.effort;
+    if (!cfg.model) delete cfg.model;
+    if (cfg.thinking === undefined) delete cfg.thinking;
     // channels
     const chEls = form.querySelectorAll('[data-ch-id]');
     chEls.forEach(chEl => {

@@ -71,6 +71,9 @@ export type CliBridgeEvent =
 // ── 設定型別 ──────────────────────────────────────────────────────────────────
 
 /** 單一 channel 的 bridge 設定 */
+/** Claude CLI effort 等級（--effort）。 */
+export type CliEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface CliBridgeChannelConfig {
   /** 識別標籤（用於 log 和 Dashboard） */
   label: string;
@@ -82,6 +85,12 @@ export interface CliBridgeChannelConfig {
   requireMention?: boolean;
   /** 最近一次自動附加到頻道名的尾綴（下次變更時用於移除舊尾綴，避免累加） */
   autoNameSuffix?: string | null;
+  /** 覆寫 bridge 層 effort（--effort，per-channel） */
+  effort?: CliEffortLevel;
+  /** 覆寫 bridge 層 model（--model，per-channel） */
+  model?: string;
+  /** 覆寫 bridge 層 thinking（per-channel） */
+  thinking?: boolean;
 }
 
 /** Provider 類型（決定 spawn 哪個 CLI binary 與用什麼 protocol） */
@@ -114,8 +123,17 @@ export interface CliBridgeConfig {
   turnTimeoutMs?: number;
   /** 超時行為："ask" = Discord 按鈕讓使用者選（預設）| "interrupt" = 自動 SIGINT | "warn" = 僅通知 | "restart" = 重啟 process */
   turnTimeoutAction?: "ask" | "interrupt" | "warn" | "restart";
-  /** 顯示 thinking（預設 false） */
+  /** 顯示 thinking（catclaw 端：要不要把 thinking 吐到 Discord，預設 false）。
+   *  ⚠ 與 `thinking`（claude 端是否產生 thinking）不同層。 */
   showThinking?: boolean;
+  /** Effort 等級（--effort，僅 provider=claude）。不設 → 繼承 claude CLI settings.json `effortLevel`。 */
+  effort?: CliEffortLevel;
+  /** 指定模型（--model，僅 provider=claude）。不設 → claude CLI 預設。 */
+  model?: string;
+  /** Thinking 開關（claude 端 `alwaysThinkingEnabled`，僅 provider=claude）。
+   *  ⚠ Opus 等 adaptive 模型 thinking 由 effort 驅動，此旗標主要控制 thinking block 是否輸出；
+   *  legacy 模型才能真正開關。不設 → 繼承 claude CLI 預設。 */
+  thinking?: boolean;
   /** Discord edit 最小間隔毫秒（rate limit 保護，預設 800） */
   editIntervalMs?: number;
   /** 中間推理文字顯示方式（tool 之間的文字）：
@@ -149,6 +167,12 @@ export interface CliProcessConfig {
   botToken?: string;
   /** 綁定的 Discord channel ID（env + MCP DISCORD_ALLOWED_CHANNELS） */
   channelId?: string;
+  /** Effort 等級（--effort，僅 provider=claude） */
+  effort?: CliEffortLevel;
+  /** 指定模型（--model，僅 provider=claude） */
+  model?: string;
+  /** Thinking 開關（claude 端 alwaysThinkingEnabled，僅 provider=claude） */
+  thinking?: boolean;
 }
 
 // ── Turn 追蹤型別 ─────────────────────────────────────────────────────────────

@@ -57,6 +57,22 @@ export class ClaudeProvider implements CliProvider {
       "--verbose",
     ];
 
+    // effort / model：有設就傳旗標（--effort 優先序高於 settings.json effortLevel）
+    if (config.effort) {
+      args.push("--effort", config.effort);
+    }
+    if (config.model) {
+      args.push("--model", config.model);
+    }
+    // thinking：claude CLI 無 --thinking 旗標，用 --settings 注入 alwaysThinkingEnabled
+    // （Opus 等 adaptive 模型 thinking 由 effort 驅動，此旗標主要控制 thinking block 是否輸出）
+    if (typeof config.thinking === "boolean") {
+      args.push("--settings", JSON.stringify({ alwaysThinkingEnabled: config.thinking }));
+    }
+    if (config.effort || config.model || typeof config.thinking === "boolean") {
+      log.info(`[cli-bridge:${config.label}] effort=${config.effort ?? "(inherit)"} model=${config.model ?? "(inherit)"} thinking=${config.thinking ?? "(inherit)"}`);
+    }
+
     // --resume 前先驗證 .jsonl 是否還在 ~/.claude/projects/*/；
     // 若不在，跳過 --resume 讓 CLI 開新 session（避免 "No conversation found" 死循環）
     let effectiveSessionId: string | undefined = config.sessionId;

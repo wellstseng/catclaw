@@ -739,6 +739,10 @@ export class CliBridge {
       label: this.label,
       botToken: this.bridgeConfig.botToken,
       channelId: this.channelId,
+      // effort/model/thinking：channel 層覆寫 > bridge 層
+      effort: this.channelConfig.effort ?? this.bridgeConfig.effort,
+      model: this.channelConfig.model ?? this.bridgeConfig.model,
+      thinking: this.channelConfig.thinking ?? this.bridgeConfig.thinking,
     };
 
     const provider: CliProvider = providerName === "codex"
