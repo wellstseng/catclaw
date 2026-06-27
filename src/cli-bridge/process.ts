@@ -36,10 +36,17 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
   /** 注入給 provider 用的 IO 介面 */
   private readonly io: ProcessIO = {
     writeStdinLine: (line: string) => {
-      if (!this.proc?.stdin?.writable) {
+      const stdin = this.proc?.stdin;
+      if (!stdin?.writable) {
         throw new Error(`[cli-bridge:${this.config.label}] stdin 不可寫入（process 未啟動或已關閉）`);
       }
-      this.proc.stdin.write(line + "\n");
+      // child 剛死的瞬間 writable 可能還是 true，但底層 pipe 已斷 → write 可能同步拋 EPIPE。
+      // 同步部分 try/catch 接住；async EPIPE 由 spawn() 掛的 stdin 'error' handler 接（避免 uncaughtException 打死主程序）。
+      try {
+        stdin.write(line + "\n");
+      } catch (err) {
+        throw new Error(`[cli-bridge:${this.config.label}] stdin 寫入失敗（child 可能已死）：${(err as Error).message}`);
+      }
       log.debug(`[cli-bridge:${this.config.label}] stdin: ${line.slice(0, 100)}`);
     },
     signal: (sig: NodeJS.Signals) => {
@@ -105,6 +112,14 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
         log.debug(`[cli-bridge:${label}] stderr: ${text.slice(0, 200)}`);
         this.lastStderr = text;
       }
+    });
+
+    // ── stdin error 監聽（關鍵）──
+    // child 死掉瞬間若有訊息要寫進 stdin，write() 會 async 拋 EPIPE。
+    // 沒有 'error' listener 會升級成 uncaughtException → 打死整個 catclaw 主程序。
+    // 這裡接住只 log，實際復原交給下面 proc 'close' → bridge 重啟流程。
+    this.proc.stdin!.on("error", (err: Error) => {
+      log.warn(`[cli-bridge:${label}] stdin error（child 可能已死，等 close 觸發重啟）：${err.message}`);
     });
 
     // ── process 結束 ──
