@@ -5273,7 +5273,7 @@ function _cbRenderBridge(idx, cfg) {
   html += _cbField(p+'showIntermediateText', 'Intermediate Text（tool 間推理文字）', 'select', cfg.showIntermediateText || _cbDefaults.showIntermediateText, ['quote','spoiler','none','normal']);
   html += _cbField(p+'editIntervalMs', 'Edit Interval (ms)', 'num', cfg.editIntervalMs ?? _cbDefaults.editIntervalMs);
   html += _cbField(p+'idleSuspendMs', 'Idle Suspend (ms)，預設 600000 (10min)。0=常駐不卸載', 'num', cfg.idleSuspendMs ?? _cbDefaults.idleSuspendMs);
-  html += _cbField(p+'effort', 'Effort（--effort，空=預設 max）', 'select', cfg.effort || '', ['','low','medium','high','xhigh','max']);
+  html += _cbField(p+'effort', 'Effort（--effort，空=不傳，繼承 settings.json；⚠ 舊版 claude 無此旗標）', 'select', cfg.effort || '', ['','low','medium','high','xhigh','max']);
   html += _cbField(p+'model', 'Model（--model，空=繼承 CLI 預設）', 'text', cfg.model || '');
   html += _cbField(p+'thinking', 'Thinking（claude 端 alwaysThinkingEnabled；Opus 由 effort 驅動）', 'select', cfg.thinking === true ? 'on' : (cfg.thinking === false ? 'off' : 'inherit'), ['inherit','on','off']);
 
