@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "atoms": [
+    {
+      "name": "catclaw-hook-block-邊界與成本估算歸零坑",
+      "path": "memory/shared/catclaw-hook-block-邊界與成本估算歸零坑.md",
+      "triggers": [
+        "PreLlmCall",
+        "hook block",
+        "cost-brake",
+        "spend cap",
+        "estimatedCostUsd",
+        "MODEL_PRICING",
+        "hook-registry",
+        "observer",
+        "花費上限",
+        "成本估算"
+      ],
+      "scope": "global"
+    }
+  ]
+}
