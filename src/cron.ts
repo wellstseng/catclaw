@@ -42,6 +42,8 @@ interface CronJobEntry {
   action: CronAction;
   /** 一次性 job 執行後自動刪除 */
   deleteAfterRun?: boolean;
+  /** 到期時間（epoch ms）；超過此刻的週期 job 會跳過並自動移除。省略 = 永不過期 */
+  expiresAt?: number;
   /** 重試次數上限，預設 3 */
   maxRetries?: number;
   /** 結果回流到 channel 的 inbound history（讓主對話下次 turn drain 進 context） */
@@ -155,6 +157,8 @@ let running = false;
 let store: CronStore = { version: 1, jobs: {} };
 /** 防止自己寫入觸發 watch 的 flag */
 let selfWriting = false;
+/** 執行中的 job id（防同一 job 重疊觸發；存 id 才不會被 hot-reload 換 store 洗掉） */
+const runningJobIds = new Set<string>();
 
 // ── Schedule 計算 ───────────────────────────────────────────────────────────
 
@@ -710,6 +714,7 @@ async function appendCronResultToInbound(entry: CronJobEntry, result: string): P
 async function runJob(job: CronJobRuntime): Promise<void> {
   const { id, entry } = job;
   log.info(`[cron] 執行 job: ${entry.name} (${id})`);
+  runningJobIds.add(id);
 
   try {
     let result = "";
@@ -794,6 +799,8 @@ async function runJob(job: CronJobRuntime): Promise<void> {
         delete store.jobs[id];
       }
     }
+  } finally {
+    runningJobIds.delete(id);
   }
 
   saveStore();
@@ -806,11 +813,22 @@ async function runJob(job: CronJobRuntime): Promise<void> {
  */
 function collectRunnableJobs(nowMs: number): CronJobRuntime[] {
   const due: CronJobRuntime[] = [];
+  let expiredRemoved = false;
   for (const [id, entry] of Object.entries(store.jobs)) {
+    // 過期 → 移除（不再觸發）
+    if (entry.expiresAt != null && nowMs > entry.expiresAt) {
+      log.info(`[cron] job 已過期，移除：${entry.name}（expiresAt=${new Date(entry.expiresAt).toISOString()}）`);
+      delete store.jobs[id];
+      expiredRemoved = true;
+      continue;
+    }
+    // 同一 job 仍在執行 → 跳過（防重疊觸發）
+    if (runningJobIds.has(id)) continue;
     if (entry.enabled !== false && (entry.nextRunAtMs ?? Infinity) <= nowMs) {
       due.push({ id, entry });
     }
   }
+  if (expiredRemoved) saveStore();
   return due;
 }
 
@@ -847,15 +865,17 @@ async function onTimer(): Promise<void> {
 function armTimer(): void {
   if (!running) return;
 
-  // 找最近的 nextRunAtMs
+  const nowMs = Date.now();
+
+  // 找最近的 nextRunAtMs（略過已過期的 job，交給 collectRunnableJobs 移除）
   let earliest = Infinity;
   for (const entry of Object.values(store.jobs)) {
+    if (entry.expiresAt != null && nowMs > entry.expiresAt) continue;
     if (entry.enabled !== false && (entry.nextRunAtMs ?? Infinity) < earliest) {
       earliest = entry.nextRunAtMs!;
     }
   }
 
-  const nowMs = Date.now();
   const delayMs = earliest === Infinity
     ? MAX_TIMER_MS
     : Math.max(MIN_TIMER_MS, Math.min(earliest - nowMs, MAX_TIMER_MS));
@@ -959,7 +979,7 @@ export function listCronJobs(agentId?: string): Array<{ id: string; entry: CronJ
  * 更新 cron job 的部分欄位（保留 ID，持久化）
  * @returns 是否成功更新
  */
-export function updateCronJob(id: string, patch: Partial<Pick<CronJobEntry, "enabled" | "name" | "schedule" | "action" | "deleteAfterRun" | "maxRetries">>): boolean {
+export function updateCronJob(id: string, patch: Partial<Pick<CronJobEntry, "enabled" | "name" | "schedule" | "action" | "deleteAfterRun" | "expiresAt" | "maxRetries">>): boolean {
   const entry = store.jobs[id];
   if (!entry) return false;
   Object.assign(entry, patch);
