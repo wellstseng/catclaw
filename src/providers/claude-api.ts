@@ -17,8 +17,7 @@ import { AuthProfileStore, type CooldownReason } from "./auth-profile-store.js";
 
 // ── pi-ai imports ─────────────────────────────────────────────────────────────
 
-import { streamSimple } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai";
+import { streamSimple, getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "@earendil-works/pi-ai";
 import type {
   Context as PiContext,

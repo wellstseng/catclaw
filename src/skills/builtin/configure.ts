@@ -122,7 +122,7 @@ async function handleListModels(): Promise<SkillResult> {
     }
 
     // V1：pi-ai
-    const { getModels } = await import("@earendil-works/pi-ai");
+    const { getModels } = await import("@earendil-works/pi-ai/compat");
     const models = getModels("anthropic");
     const lines = ["**Anthropic 可用模型（via pi-ai）**"];
     for (const m of models) {
