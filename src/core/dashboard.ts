@@ -2018,6 +2018,7 @@ async function loadCron() {
       const fullIdBlock = \`<div><strong>完整 ID：</strong><code>\${escHtml(id)}</code></div>\`;
       const retryBlock = \`<div style="margin-top:4px"><strong>重試：</strong>\${j.retryCount ?? 0} / \${j.maxRetries ?? 3}</div>\`;
       const deleteAfterRunBlock = j.deleteAfterRun ? '<div style="margin-top:4px;color:#fc6">⚠ 一次性 job（執行後自動刪除）</div>' : '';
+      const expiresBlock = j.expiresAt ? \`<div style="margin-top:4px;color:\${j.expiresAt < Date.now() ? '#f99' : '#fc6'}">⏳ 到期：\${new Date(j.expiresAt).toLocaleString()}\${j.expiresAt < Date.now() ? '（已過期，下次 tick 移除）' : ''}</div>\` : '';
       const lastErrorBlock = j.lastError ? \`<div style="color:#f99;margin-top:6px"><strong>上次錯誤：</strong>\${escHtml(j.lastError)}</div>\` : '';
       const nextIsoBlock = j.nextRunAtMs && j.nextRunAtMs < 9e15 ? \`<div style="margin-top:4px;color:#888;font-size:0.72rem">下次（ISO）：\${new Date(j.nextRunAtMs).toISOString()}</div>\` : '';
       // Action 欄位列表（取代原本的 JSON pretty-print），把每個屬性獨立成列
@@ -2041,7 +2042,7 @@ async function loadCron() {
       const actionBlock = \`<div style="margin-top:6px"><strong>Action：</strong></div><table style="margin:4px 0 0 0;border-collapse:collapse;width:100%">\${actionRows}</table>\`;
       // 編輯按鈕（切換 view ↔ edit form）
       const editToolbar = \`<div style="margin-bottom:8px"><button class="btn btn-sm" onclick="toggleCronEditMode('\${id}')" title="顯示完整 schema 與所有可選欄位（含未填）">📝 編輯</button></div>\`;
-      const viewBlock = \`<div id="cron-view-\${cronId}">\${fullIdBlock}\${retryBlock}\${deleteAfterRunBlock}\${lastErrorBlock}\${nextIsoBlock}\${actionBlock}</div>\`;
+      const viewBlock = \`<div id="cron-view-\${cronId}">\${fullIdBlock}\${retryBlock}\${deleteAfterRunBlock}\${expiresBlock}\${lastErrorBlock}\${nextIsoBlock}\${actionBlock}</div>\`;
       const editBlock = \`<div id="cron-edit-\${cronId}" style="display:none"></div>\`;
       const expandContent = \`<div style="font-size:0.8rem;color:var(--fg2)">\${editToolbar}\${viewBlock}\${editBlock}</div>\`;
       const headerHtml = \`<tr data-cronid="\${cronId}" style="cursor:pointer" onclick="toggleCronRow(this,'\${cronId}')">
@@ -2147,6 +2148,7 @@ const _cronCommonSchema = [
   { k:'enabled', t:'bool', l:'啟用' },
   { k:'maxRetries', t:'num', l:'最大重試次數（預設 3）' },
   { k:'deleteAfterRun', t:'bool', l:'一次性 job（執行後自動刪除）' },
+  { k:'expiresAt', t:'num', l:'到期時間（epoch ms，過期自動移除；留空=永不過期）' },
 ];
 
 function _cronField(id, schema, value) {
