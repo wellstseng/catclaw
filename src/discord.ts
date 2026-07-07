@@ -606,7 +606,16 @@ async function handleMessage(
     log.debug("[discord] 忽略：未 mention bot");
     return;
   } else {
-    // 沒 mention 任何 bot + 主 bot 不需 mention → 處理
+    // 沒 mention 任何 bot + 主 bot 不需 mention
+    // ⚠ bot 訊息：即使頻道 requireMention=false，也必須被明確 mention（含 Discord 回覆的 reply-ping）才回，
+    //    否則會串連：「臨時 tag B → B 回 → A(requireMention=false)吃到 B 的回覆也跟著回」。
+    //    續接不受影響：bot 用 originalMessage.reply() 回覆會 auto-ping 對方 → 走上面 hasMentionedAnyBot 分支。
+    if (message.author.bot) {
+      _recordInbound();
+      log.debug("[discord] 忽略：bot 訊息未 mention 本 bot（防 bot 對 bot 串連）");
+      return;
+    }
+    // 人類訊息 → 照舊自由處理
     text = message.content.trim();
   }
 
