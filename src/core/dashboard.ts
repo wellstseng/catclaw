@@ -6851,7 +6851,9 @@ export class DashboardServer {
 
             _codexOAuthState = { status: "pending" };
 
-            const { loginOpenAICodex } = await import("@earendil-works/pi-ai/oauth");
+            const { openaiCodexProvider } = await import("@earendil-works/pi-ai/providers/openai-codex");
+            const codexOAuth = openaiCodexProvider().auth.oauth;
+            if (!codexOAuth) throw new Error("pi-ai openai-codex provider 無 oauth 定義");
 
             // 用 Promise + 手動 resolve 拿到 authUrl 後立即回傳給前端
             let resolveAuthUrl: (url: string) => void;
@@ -6861,28 +6863,31 @@ export class DashboardServer {
             const manualCodePromise = new Promise<string>((r) => { _codexManualResolve = r; });
 
             // 背景執行 OAuth 流程（browser callback 和手動貼 URL 賽跑）
-            const oauthPromise = loginOpenAICodex({
-              onAuth: ({ url: authUrl }) => {
-                _codexOAuthState!.authUrl = authUrl;
-                resolveAuthUrl!(authUrl);
+            const oauthPromise = codexOAuth.login({
+              notify: (event) => {
+                if (event.type === "auth_url") {
+                  _codexOAuthState!.authUrl = event.url;
+                  resolveAuthUrl!(event.url);
+                } else if (event.type === "progress" || event.type === "info") {
+                  log.debug(`[dashboard:codex-oauth] ${event.message}`);
+                }
               },
-              onPrompt: async (prompt) => {
-                // 等待使用者從 dashboard 手動貼 callback URL（5 分鐘逾時）
+              prompt: (prompt) => {
+                // 登入方式選擇 → 走 browser 流程（維持原行為）
+                if (prompt.type === "select") return Promise.resolve("browser");
+                // manual_code：與 browser callback 賽跑（使用者從前端貼 URL 時 resolve；5 分鐘逾時）
                 log.info(`[dashboard:codex-oauth] 等待手動 callback 輸入...`);
                 return Promise.race([
                   manualCodePromise,
-                  new Promise<string>((_, reject) => setTimeout(() => {
-                    _codexOAuthState = { status: "error", error: "OAuth 逾時（5 分鐘），請重新登入" };
-                    reject(new Error("OAuth 等待逾時（5 分鐘）"));
-                  }, 5 * 60_000)),
+                  new Promise<string>((_, reject) => {
+                    const timer = setTimeout(() => reject(new Error("OAuth 等待逾時（5 分鐘），請重新登入")), 5 * 60_000);
+                    // browser callback 先完成時 pi-ai 會 abort 此 prompt——清掉計時器避免事後誤判逾時
+                    prompt.signal?.addEventListener("abort", () => {
+                      clearTimeout(timer);
+                      reject(new Error("manual_code prompt aborted"));
+                    });
+                  }),
                 ]);
-              },
-              onManualCodeInput: () => {
-                // 與 browser callback 賽跑 — 使用者貼 URL 時 resolve
-                return manualCodePromise;
-              },
-              onProgress: (msg) => {
-                log.debug(`[dashboard:codex-oauth] ${msg}`);
               },
             });
 

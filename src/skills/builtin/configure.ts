@@ -154,33 +154,37 @@ async function handleLoginCodex(ctx: SkillContext): Promise<SkillResult> {
 
   try {
     // 動態 import pi-ai oauth（避免頂層 import 影響啟動）
-    const { loginOpenAICodex } = await import("@earendil-works/pi-ai/oauth");
+    const { openaiCodexProvider } = await import("@earendil-works/pi-ai/providers/openai-codex");
+    const oauth = openaiCodexProvider().auth.oauth;
+    if (!oauth) throw new Error("pi-ai openai-codex provider 無 oauth 定義");
 
     // 通知使用者 OAuth 流程開始
     await channel.send("正在啟動 OpenAI Codex OAuth 登入流程...\n`localhost:1455` callback server 已就緒");
 
-    const creds = await loginOpenAICodex({
-      onAuth: ({ url }) => {
-        channel.send(
-          `請在瀏覽器開啟此網址登入：\n${url}\n\n` +
-          `登入後瀏覽器會自動跳轉回 localhost:1455 完成認證。\n` +
-          `若自動跳轉失敗，請將重導向 URL 貼回此頻道。`
-        );
+    const creds = await oauth.login({
+      notify: (event) => {
+        if (event.type === "auth_url") {
+          void channel.send(
+            `請在瀏覽器開啟此網址登入：\n${event.url}\n\n` +
+            `登入後瀏覽器會自動跳轉回 localhost:1455 完成認證。\n` +
+            `若自動跳轉失敗，請將重導向 URL 貼回此頻道。`
+          );
+        } else if (event.type === "progress" || event.type === "info") {
+          log.debug(`[codex-oauth] ${event.message}`);
+        }
       },
-      onPrompt: async (prompt) => {
-        await channel.send(`自動回呼失敗，請手動貼上：\n${prompt.message}`);
-
+      prompt: async (prompt) => {
+        // 登入方式選擇 → 走 browser 流程（維持原行為）
+        if (prompt.type === "select") return "browser";
+        // manual_code：與 browser callback 賽跑，等使用者貼 URL（5 分鐘）
         const collected = await channel.awaitMessages({
           filter: (m: import("discord.js").Message) => m.author.id === message.author.id,
           max: 1,
-          time: 60_000,
+          time: 5 * 60_000,
         });
         const reply = collected.first()?.content?.trim();
         if (!reply) throw new Error("等待回覆逾時");
         return reply;
-      },
-      onProgress: (msg) => {
-        log.debug(`[codex-oauth] ${msg}`);
       },
     });
 
