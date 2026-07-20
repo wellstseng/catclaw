@@ -17,6 +17,20 @@
         "成本估算"
       ],
       "scope": "global"
+    },
+    {
+      "name": "pi-ai-08010-oauth-api-遷移-oauthauth-login",
+      "path": "memory/shared/pi-ai-08010-oauth-api-遷移-oauthauth-login.md",
+      "triggers": [
+        "pi-ai",
+        "loginOpenAICodex",
+        "openaiCodexOAuth",
+        "codex oauth",
+        "pi-ai 升級",
+        "OAuthAuth",
+        "gpt-5.6"
+      ],
+      "scope": "global"
     }
   ]
 }
