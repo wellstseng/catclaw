@@ -175,7 +175,7 @@ const REFRESH_BUFFER_MS = 5 * 60_000;
 
 function normalizeReasoningEffort(modelId: string, effort: ReasoningEffort): ReasoningEffort {
   const id = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
-  if ((id.startsWith("gpt-5.2") || id.startsWith("gpt-5.3") || id.startsWith("gpt-5.4") || id.startsWith("gpt-5.5")) && effort === "minimal") {
+  if ((id.startsWith("gpt-5.2") || id.startsWith("gpt-5.3") || id.startsWith("gpt-5.4") || id.startsWith("gpt-5.5") || id.startsWith("gpt-5.6") || id.startsWith("gpt-6")) && effort === "minimal") {
     return "low";
   }
   if (id === "gpt-5.1" && effort === "xhigh") return "high";

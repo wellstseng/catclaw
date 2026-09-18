@@ -6864,6 +6864,7 @@ export class DashboardServer {
 
             // 背景執行 OAuth 流程（browser callback 和手動貼 URL 賽跑）
             const oauthPromise = codexOAuth.login({
+              signal: new AbortController().signal,
               notify: (event) => {
                 if (event.type === "auth_url") {
                   _codexOAuthState!.authUrl = event.url;

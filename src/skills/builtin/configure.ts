@@ -162,6 +162,7 @@ async function handleLoginCodex(ctx: SkillContext): Promise<SkillResult> {
     await channel.send("正在啟動 OpenAI Codex OAuth 登入流程...\n`localhost:1455` callback server 已就緒");
 
     const creds = await oauth.login({
+      signal: new AbortController().signal,
       notify: (event) => {
         if (event.type === "auth_url") {
           void channel.send(
