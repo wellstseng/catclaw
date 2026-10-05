@@ -15,6 +15,11 @@
 - [臨] catclaw models-config.json mode=merge 會合併 pi-ai 內建 registry——pi-ai 升級帶進的新模型（如 gpt-5.6-sol/luna/terra）只需加 alias，不用動 agents/default/models.json
 - [臨] 直接呼叫 provider 的 `auth.oauth.login()` 吃的是 `ProviderAuthInteraction`（= AuthInteraction + 必填 `signal: AbortSignal`，整體流程中止用；per-prompt 取消仍走 `AuthPrompt.signal`）——不需中止時傳 `new AbortController().signal`
 - [臨] catclaw codex-oauth.ts 手刻 Responses body，吃不到 pi-ai 的 clampThinkingLevel；codex 新模型系列進來時須對照 `getModel("openai-codex", id).thinkingLevelMap`（如 gpt-5.6-* / gpt-6-astra 的 `minimal→low`）同步 `normalizeReasoningEffort` 前綴清單
+- [臨] pi-ai 升級到 0.85.1 後，OAuth login API 要求 `signal` 參數；補上不會中止的 signal 以維持原本 5 分鐘逾時行為
+- [臨] `codex-oauth.ts` 需把 `gpt-5.6-*` 與 `gpt-6-astra` 的 `minimal` 轉為 `low`（pi-ai metadata 的要求）
+- [臨] models.json 是從 pi-ai 抽取的產物，啟動時自動重生，不需手動修改
+- [臨] 0.85.1 新增 model 含 `gpt-6-astra`、`claude-opus-5`、`gemini-3.6-flash` 等，移除 `gpt-5-codex`、`gemini-2.0-flash*` 等
+- [臨] catclaw 直接用 node 跑時（不在 pm2 下），要 `pnpm build` 後重啟 process 新 model 才生效
 
 ## 行動
 
