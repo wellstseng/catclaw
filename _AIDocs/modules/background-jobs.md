@@ -63,6 +63,7 @@ interface BackgroundJobRecord {
 | `kill(jobId)` | SIGTERM → 2s 後 SIGKILL，標 `killed` |
 | `complete(jobId, exitCode)` | 標 `completed`，`acked=false`，觸發 `onComplete` |
 | `fail(jobId, reason, exitCode)` | 標 `failed`，`acked=false`，觸發 `onFail` |
+| `noteExit(jobId, exitCode)` | run-background-command 的 `child.on("exit")` 回報真實 exitCode（只改欄位不改 status；catclaw 重啟過的 job 收不到 → 留 null） |
 | `timeoutJob(jobId)` | SIGTERM + 標 `timeout`，觸發 `onFail("max duration exceeded")` |
 | `markAcked(jobId)` | 標 `acked=true`（agent-loop 把結果注入 LLM 且有 reply 時呼叫） |
 | `startPoller()` / `stopPoller()` | 啟停每秒 tick 的 setInterval |
@@ -82,8 +83,8 @@ run_background_command tool
 
 poller tick（每 1s，按 job.pollIntervalMs throttle）
   ├ maxDurationMs 觸頂           → timeoutJob() → status=timeout（SIGTERM）
-  ├ process 死 + outputs 齊/無約定 → complete(null) → status=completed
-  ├ process 死 + outputs 不齊      → fail("outputs missing") → status=failed
+  ├ process 死 + outputs 齊/無約定 → complete(exitCode ?? null) → status=completed
+  ├ process 死 + outputs 不齊      → fail("process exited (exitCode=N) but expected outputs missing: <缺檔清單>") → status=failed
   └ process 活 + outputs 穩定       → complete(null) → status=completed
                                       （穩定 = 非空 + mtime ≥ 5s 沒變）
 
@@ -98,8 +99,8 @@ complete/fail/timeout → acked=false → onComplete/onFail callback
 | 狀態 | 觸發 | 含意 |
 |------|------|------|
 | `running` | create 後 | 程式執行中 |
-| `completed` | process 死且 outputs OK／process 活但 outputs 穩定／無 expectedOutputs 約定且 process 死 | 完成（exitCode 不可知時標 null） |
-| `failed` | process 死但 expectedOutputs 不齊 | 失敗 |
+| `completed` | process 死且 outputs OK／process 活但 outputs 穩定／無 expectedOutputs 約定且 process 死 | 完成（exitCode 來自 `noteExit`，不可知時標 null） |
+| `failed` | process 死但 expectedOutputs 不齊 | 失敗；reason 點名缺哪些檔。常見誤判來源不是 registry，而是 agent 把「指令不會真的產出的檔」填進 expectedOutputs（例：whisper `--output_format` 重複給只有最後一個生效） |
 | `timeout` | 超過 `maxDurationMs` | 逾時被 SIGTERM |
 | `killed` | `kill()` 手動終止 | 人為終止 |
 | `stale` | 重啟後 running 但 PID 已死 | 無法判定成敗（catclaw 在事件前 crash） |

@@ -121,6 +121,12 @@ export const tool: Tool = {
       agentId: ctx.agentId,
     });
 
+    // 記下真實 exitCode（poller 靠 pid 判死拿不到）；status 判定仍交給 poller 統一處理
+    child.on("exit", (code) => {
+      registry.noteExit(record.jobId, code);
+      try { closeSync(stdoutFd); } catch { /* already closed */ }
+    });
+
     log.info(`[run-bg-cmd] spawned jobId=${record.jobId} pid=${child.pid} label="${label}" cmd="${command.slice(0, 100)}"`);
 
     return {

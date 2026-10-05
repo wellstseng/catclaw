@@ -71,20 +71,24 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function allExpectedOutputsExist(paths: string[] | undefined): boolean {
-  if (!paths || paths.length === 0) return false;
+/** 回傳不存在的 expected outputs（glob 不在此判斷，簡化版只接絕對路徑 → 一律視為缺） */
+function missingExpectedOutputs(paths: string[] | undefined): string[] {
+  if (!paths || paths.length === 0) return [];
+  const missing: string[] = [];
   for (const p of paths) {
-    if (p.includes("*") || p.includes("?")) {
-      // glob 不在此判斷，留給 caller 用 fs.glob；簡化版只接絕對路徑
-      return false;
-    }
+    if (p.includes("*") || p.includes("?")) { missing.push(p); continue; }
     try {
       statSync(p);
     } catch {
-      return false;
+      missing.push(p);
     }
   }
-  return true;
+  return missing;
+}
+
+function allExpectedOutputsExist(paths: string[] | undefined): boolean {
+  if (!paths || paths.length === 0) return false;
+  return missingExpectedOutputs(paths).length === 0;
 }
 
 /**
@@ -230,6 +234,14 @@ export class BackgroundJobRegistry {
     this.onFail?.(r, reason);
   }
 
+  /** child 'exit' 事件回報 exitCode（catclaw 存活期間才收得到；重啟後 poller 只能靠 pid 判死，exitCode 留 null） */
+  noteExit(jobId: string, exitCode: number | null): void {
+    const r = this.records.get(jobId);
+    if (!r || r.status !== "running") return;
+    r.exitCode = exitCode;
+    this.persist();
+  }
+
   timeoutJob(jobId: string): void {
     const r = this.records.get(jobId);
     if (!r) return;
@@ -289,11 +301,14 @@ export class BackgroundJobRegistry {
       // 6. process 活 + 輸出齊（穩定）→ 視為完成（程式可能還沒收尾但結果已到）
       //    穩定條件 = 非空 + mtime ≥ 5s 沒變；防 `cmd > file.md` 開頭立即建空檔誤判 completed
       if (!alive) {
+        // exitCode 來自 noteExit（child 'exit' 事件）；catclaw 重啟過的 job 拿不到 → null
+        const exitCode = r.exitCode ?? null;
         if (outputsOk || !r.expectedOutputs?.length) {
-          // 沒有 expectedOutputs 約定時，僅靠 process 死視為完成（exitCode 不可知，標 null）
-          this.complete(r.jobId, null);
+          this.complete(r.jobId, exitCode);
         } else {
-          this.fail(r.jobId, "process exited but expected outputs missing", null);
+          const missing = missingExpectedOutputs(r.expectedOutputs);
+          const exitPart = exitCode == null ? "" : ` (exitCode=${exitCode})`;
+          this.fail(r.jobId, `process exited${exitPart} but expected outputs missing: ${missing.join(", ")}`, exitCode);
         }
       } else if (r.expectedOutputs?.length && allExpectedOutputsStable(r.expectedOutputs, OUTPUT_STABLE_MS)) {
         this.complete(r.jobId, null);
