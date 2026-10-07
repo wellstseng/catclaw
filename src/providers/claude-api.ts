@@ -163,7 +163,7 @@ function toPiMessages(messages: Message[]): PiMessage[] {
             type: "toolCall",
             id: block.id,
             name: block.name,
-            arguments: block.input as Record<string, unknown>,
+            arguments: block.input as PiToolCall["arguments"],
           } satisfies PiToolCall);
         }
       }
