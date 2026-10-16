@@ -288,6 +288,21 @@
         "cli-bridge"
       ],
       "scope": "personal:wellstseng"
+    },
+    {
+      "name": "catclaw-cli-bridge頻道文字訊息直通cli-文字skill與router-session指令無效-rebuild會銷毀舊bot-client",
+      "path": "memory/shared/工作流/catclaw-cli-bridge頻道文字訊息直通cli-文字skill與router-session指令無效-rebuild會銷毀舊bot-client.md",
+      "triggers": [
+        "cli-bridge",
+        "開新對話",
+        "session new",
+        "rebuildBridgeForChannel",
+        "startNewSession",
+        "/session clear",
+        "/reset-session",
+        "bridge skill"
+      ],
+      "scope": "shared"
     }
   ]
 }
