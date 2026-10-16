@@ -37,6 +37,23 @@
 
 | 尚未歸類（shared/ 平鋪） | 說明 |
 |------|------|
+| ai-github-catclaw-integration-5 | ai-github-catclaw-integration-5 |
+| catclaw-cron-機制120s-timeout熱重載與靜默失敗 | CatClaw cron 機制：120s timeout、熱重載與靜默失敗 |
+| catclaw-guest-角色工具限制與-repo-patrol-前置條件 | CatClaw guest 角色工具限制與 repo-patrol 前置條件 |
 | catclaw-hook-block-邊界與成本估算歸零坑 | catclaw-hook-block-邊界與成本估算歸零坑 |
+| catclaw-models-config | catclaw-models-config |
+| catclaw-opt-agent-loop-2 | catclaw-opt-agent-loop-2 |
+| catclaw-opt-context-management-1 | catclaw-opt-context-management-1 |
+| catclaw-opt-memory-arch-3 | catclaw-opt-memory-arch-3 |
+| catclaw-opt-observability-5 | catclaw-opt-observability-5 |
+| catclaw-opt-planning-frameworks-6 | catclaw-opt-planning-frameworks-6 |
+| catclaw-opt-planning-impl-7 | catclaw-opt-planning-impl-7 |
+| catclaw-opt-tool-design-4 | catclaw-opt-tool-design-4 |
+| catclaw-optimization-priorities | catclaw-optimization-priorities |
+| catclaw-subagent-並行上限與長文件輸出踩坑 | CatClaw subagent 並行上限與長文件輸出踩坑 |
+| catclaw-workspace-上-git-的排除規則 | CatClaw workspace 上 git 的排除規則 |
+| catclaw-平台已實證能力與核心機制退役參考 | CatClaw 平台已實證能力與核心機制（退役參考） |
+| cron-claude-acp-timeout-no-discord-reply | cron-claude-acp-timeout-no-discord-reply |
 | pi-ai-08010-oauth-api-遷移-oauthauth-login | pi-ai-0.80.10-oauth-api-遷移-OAuthAuth-login |
+| repo-patrol-巡檢與專案掛載問答流程設計 | repo-patrol 巡檢與專案掛載問答流程設計 |
 <!-- /atom-catalog -->
