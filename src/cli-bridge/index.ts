@@ -408,6 +408,22 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
     return;
   }
 
+  // 文字口令「開新對話」等 → 等同 /session action:new，不轉給 CLI
+  if (isHomeChannel && !msg.author.bot && isNewSessionCommand(msg.content)) {
+    void (async () => {
+      try {
+        // rebuild 可能銷毀舊 bot client，先用舊 client 回覆，完成通知走新 bridge 的 sender
+        await msg.reply("⏳ 開新對話中…");
+        log.info(`[cli-bridge] ${bridge.label} 文字口令開新 session by=${msg.author.tag}`);
+        const newBridge = await startNewSession(msg.channelId);
+        await newBridge?.getSender().send("✅ 已開新對話（舊 session 已清除，下次對話建立新 session）");
+      } catch (err) {
+        log.error(`[cli-bridge] ${bridge.label} 文字口令開新 session 失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+    return;
+  }
+
   void (async () => {
     try {
       await bridge.ensureAlive({ drainInboundHistory: false });
@@ -708,6 +724,29 @@ async function doHotReload(): Promise<void> {
   }
 
   log.info(`[cli-bridge] hot-reload 完成（${bridges.size} 個 bridge）`);
+}
+
+/** 開新 CLI session：清 sessionId（runtime + json）→ 重建 bridge。呼叫者：slash /session new、文字口令「開新對話」 */
+export async function startNewSession(channelId: string): Promise<CliBridge | null> {
+  bridges.get(channelId)?.clearSessionId();
+  return rebuildBridgeForChannel(channelId, (_c, chc) => {
+    delete chc.sessionId;
+  });
+}
+
+const NEW_SESSION_PHRASES = new Set([
+  "開新對話", "新對話", "開新session", "新session", "開新的對話",
+  "重置對話", "重置session", "重開對話", "重新對話", "清空對話", "清除對話",
+  "newsession", "/new", "/clear", "/reset",
+]);
+
+/** 整則訊息（去 mention、空白、句尾標點）等於口令才算，避免句中提到「新對話」誤觸 */
+function isNewSessionCommand(content: string): boolean {
+  const normalized = content
+    .replace(/<@!?\d+>/g, "")
+    .replace(/[\s!！。.~～]+/g, "")
+    .toLowerCase();
+  return NEW_SESSION_PHRASES.has(normalized);
 }
 
 /**

@@ -333,13 +333,8 @@ async function handleSession(interaction: ChatInputCommandInteraction): Promise<
 
     case "new": {
       await interaction.deferReply();
-      // 清除 runtime sessionId，讓新 bridge 啟動時不帶 --session-id
-      bridge.clearSessionId();
-      // 原子重建：刪除持久化 sessionId → 關舊建新
-      const { rebuildBridgeForChannel } = await import("./cli-bridge/index.js");
-      await rebuildBridgeForChannel(channelId, (_c, chc) => {
-        delete chc.sessionId;
-      });
+      const { startNewSession } = await import("./cli-bridge/index.js");
+      await startNewSession(channelId);
       await interaction.editReply(
         `✅ **新 Session**\n` +
         `• Bridge：${bridge.label}\n` +
