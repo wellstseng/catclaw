@@ -1,2 +1,3 @@
 2026-10-16T05:09:54.682Z	pending-create	catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級	shared	wellstseng	contradict vs catclaw-cli-bridge���]bottoken�|�۰ʭ���bypasspermissions sim=0.826
 2026-10-16T05:23:24Z	reject	catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級	shared	wellstseng	files=catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級.conflict.md reason=已解決：舊 atom 已 retire，新內容改走 atom_write 正規落地（shared/工作流）
+2026-10-16T07:49:10.268Z	pending-create	catclaw-cli-bridge頻道文字訊息直通cli-文字skill與router-session指令無效-rebuild會銷毀舊bot-client	shared	wellstseng	contradict vs pitfalls-cli sim=0.757
