@@ -35,6 +35,7 @@
 | 範疇 | atom 數 | 深入 |
 |------|---------|------|
 | 工作流 | 1 | `memory/shared/工作流/catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級.md` |
+| personal | 1 | `memory/personal/` |
 
 | 尚未歸類（shared/ 平鋪） | 說明 |
 |------|------|

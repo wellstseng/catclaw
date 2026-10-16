@@ -25,3 +25,4 @@
 | catclaw-subagent-並行上限與長文件輸出踩坑 | memory/shared/catclaw-subagent-並行上限與長文件輸出踩坑.md | subagent 並行上限, spawn_subagent 長文件, 8192 token 限制, explore runtime 不能寫, subagent timeout, commit 質性分類 subagent | global |
 | catclaw-cron-機制120s-timeout熱重載與靜默失敗 | memory/shared/catclaw-cron-機制120s-timeout熱重載與靜默失敗.md | cron 120s timeout, SIGTERM cron, timeoutSec, cron-jobs.json, src/cron.ts, exec stdout 不回 Discord, claude-acp 逾時, CRON_JOB_IDS.md, fs.watch 熱重載, lastError lastResult | global |
 | catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級 | memory/shared/工作流/catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級.md | cli-bridge, botToken, bypassPermissions, dangerouslySkipPermissions, control-request.ts, main-bot | shared |
+| 將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri | memory/personal/wellstseng/將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri.md | catclaw, 一般router, cli-bridge | personal:wellstseng |

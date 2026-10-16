@@ -278,6 +278,16 @@
         "main-bot"
       ],
       "scope": "shared"
+    },
+    {
+      "name": "將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri",
+      "path": "memory/personal/wellstseng/將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri.md",
+      "triggers": [
+        "catclaw",
+        "一般router",
+        "cli-bridge"
+      ],
+      "scope": "personal:wellstseng"
     }
   ]
 }
