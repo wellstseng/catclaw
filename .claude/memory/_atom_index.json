@@ -267,14 +267,14 @@
       "scope": "global"
     },
     {
-      "name": "catclaw-cli-bridge未設bottoken會自動降級bypasspermissions",
-      "path": "memory/shared/工作流/catclaw-cli-bridge未設bottoken會自動降級bypasspermissions.md",
+      "name": "catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級",
+      "path": "memory/shared/工作流/catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級.md",
       "triggers": [
         "cli-bridge",
         "botToken",
         "bypassPermissions",
         "dangerouslySkipPermissions",
-        "request_permission",
+        "control-request.ts",
         "main-bot"
       ],
       "scope": "shared"

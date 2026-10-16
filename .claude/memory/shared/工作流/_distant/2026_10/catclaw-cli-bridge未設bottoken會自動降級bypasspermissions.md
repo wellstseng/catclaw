@@ -13,3 +13,10 @@
 ## 行動
 
 - 說明 bridge 權限行為之前，先確認有沒有 botToken，不要只看 dangerouslySkipPermissions
+
+
+## 演化日誌
+
+| 日期 | 變更 | 來源 |
+|------|------|------|
+| 2026-10-16 | 退役移入 _distant/：commit 66d7214 後 bridge 權限一律走 --permission-prompt-tool stdio，缺 botToken 不再降級為 bypass；內容已失效，由新 atom 取代 | memory-audit --delete |
