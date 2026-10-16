@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 規劃框架, planning, ReAct, Tree of Thoughts, Plan-and-Execute, LLM-Modulo, agent planning
 - Created-at: 2026-05-21
-- Related: catclaw-opt-agent-loop-2, catclaw-opt-context-management-1
+- Related: catclaw-opt-agent-loop-2, catclaw-opt-context-management-1, catclaw-opt-planning-impl-7
 
 ## 知識
 

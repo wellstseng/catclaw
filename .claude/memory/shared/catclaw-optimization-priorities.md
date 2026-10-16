@@ -5,6 +5,8 @@
 - Trigger: catclaw優化, 平台改進, agent架構, 優化方向
 - Created-at: 2026-05-21
 
+- Related: catclaw-平台已實證能力與核心機制退役參考
+
 ## 知識
 
 ### CatClaw 優化優先方向（2026-05 分析）
