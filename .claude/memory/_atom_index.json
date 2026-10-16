@@ -265,6 +265,19 @@
         "lastError lastResult"
       ],
       "scope": "global"
+    },
+    {
+      "name": "catclaw-cli-bridge未設bottoken會自動降級bypasspermissions",
+      "path": "memory/shared/工作流/catclaw-cli-bridge未設bottoken會自動降級bypasspermissions.md",
+      "triggers": [
+        "cli-bridge",
+        "botToken",
+        "bypassPermissions",
+        "dangerouslySkipPermissions",
+        "request_permission",
+        "main-bot"
+      ],
+      "scope": "shared"
     }
   ]
 }

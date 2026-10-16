@@ -24,3 +24,4 @@
 | catclaw-平台已實證能力與核心機制退役參考 | memory/shared/catclaw-平台已實證能力與核心機制退役參考.md | CatClaw 已實證能力, PostTurn 反思 hook, 自動除錯循環 重試 3 次, 情節記憶日誌, 長任務評估 guardrail, project/catclaw repo, BRAVE_SEARCH_API_KEY .env, mcp_catclaw-discord_discord, agent-safety-alignment.md | global |
 | catclaw-subagent-並行上限與長文件輸出踩坑 | memory/shared/catclaw-subagent-並行上限與長文件輸出踩坑.md | subagent 並行上限, spawn_subagent 長文件, 8192 token 限制, explore runtime 不能寫, subagent timeout, commit 質性分類 subagent | global |
 | catclaw-cron-機制120s-timeout熱重載與靜默失敗 | memory/shared/catclaw-cron-機制120s-timeout熱重載與靜默失敗.md | cron 120s timeout, SIGTERM cron, timeoutSec, cron-jobs.json, src/cron.ts, exec stdout 不回 Discord, claude-acp 逾時, CRON_JOB_IDS.md, fs.watch 熱重載, lastError lastResult | global |
+| catclaw-cli-bridge未設bottoken會自動降級bypasspermissions | memory/shared/工作流/catclaw-cli-bridge未設bottoken會自動降級bypasspermissions.md | cli-bridge, botToken, bypassPermissions, dangerouslySkipPermissions, request_permission, main-bot | shared |
