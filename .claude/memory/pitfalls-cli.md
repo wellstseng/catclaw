@@ -3,6 +3,7 @@ name: pitfalls-cli
 description: catclaw 開發陷阱速查（26 項）+ Claude CLI 指令參考（stdio/stream-json/event 格式）
 type: project
 code-version: 2026-03-31
+related: pitfalls-migrate-skill, pitfalls-provider
 ---
 
 ## 測試環境 vs 正式環境

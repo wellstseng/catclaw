@@ -28,3 +28,15 @@
 | feedback-implementation-discipline | feedback_implementation_discipline.md | 大型實作, 架構, 多階段, refactor, 抽象層, plan, provider, 開工, 改檔 | [固] |
 | reference-issue-tracking-channel | reference-issue-tracking-channel.md | 議題追蹤, CatClaw議題追蹤, judy bridge, 階段議題, 議題頻道, 1498730217278148659 | [固] |
 | tool-quality-check | tool-quality-check.md | quality-check, 自檢, 品質檢查, 幻覺偵測, hallucination, 套娃, externalization recursion, trace 異常, pnpm quality-check | [固] |
+
+<!-- atom-catalog -->
+> 範疇目錄（自動生成，勿手編）：`atom_write(scope=shared, mode=create)` 必給 `domain` → `shared/<Lv1>/`；平鋪 shared atom 以 `python ~/.claude/tools/atom-categorize.py plan|apply --memory-dir <本目錄>` 歸類；機器索引 `_atom_index.json`。
+
+| 範疇 | atom 數 | 深入 |
+|------|---------|------|
+
+| 尚未歸類（shared/ 平鋪） | 說明 |
+|------|------|
+| catclaw-hook-block-邊界與成本估算歸零坑 | catclaw-hook-block-邊界與成本估算歸零坑 |
+| pi-ai-08010-oauth-api-遷移-oauthauth-login | pi-ai-0.80.10-oauth-api-遷移-OAuthAuth-login |
+<!-- /atom-catalog -->

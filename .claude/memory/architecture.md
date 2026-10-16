@@ -12,6 +12,8 @@
 
 > **⚠️ 注意（2026-03-31 確認）**：catclaw-test（`~/.catclaw-test/catclaw.json`）已是完整平台模式，包含 providers + CE + inboundHistory + memory。`~/.catclaw/catclaw.json`（舊生產設定）無 providers，為舊 CLI 模式。兩份設定不同，診斷問題時必須確認使用的是哪一份。
 
+- Related: pitfalls-migrate-skill, pitfalls-provider
+
 ## catclaw-test 完整設定（2026-03-31 確認）
 
 ```jsonc
