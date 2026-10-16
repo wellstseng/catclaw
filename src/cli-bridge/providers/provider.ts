@@ -7,7 +7,7 @@
  * Phase 2 加：providers/codex.ts（codex app-server JSON-RPC）
  */
 
-import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock } from "../types.js";
+import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock, ControlDecision } from "../types.js";
 
 /** 啟動 CLI process 前由 provider 決定的 spawn 參數 */
 export interface ProviderSpawnSpec {
@@ -83,7 +83,7 @@ export interface CliProvider {
    * Encode + 送出 control response（權限決策回覆）。
    * Claude 用 stdin control_response；Codex 第一版可 noop。
    */
-  sendControlResponse(io: ProcessIO, requestId: string, allowed: boolean): void;
+  sendControlResponse(io: ProcessIO, requestId: string, decision: ControlDecision): void;
 
   /**
    * 中斷當前 turn（Claude: io.signal("SIGINT")；Codex: turn/interrupt RPC）

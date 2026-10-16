@@ -41,11 +41,19 @@ export interface StdinKeepAlive {
   type: "keep_alive";
 }
 
-/** 權限請求回覆（未來擴充用） */
+/** 權限決策（control_response.response.response；CLI 只接受這兩種形狀） */
+export type ControlDecision =
+  | { behavior: "allow"; updatedInput?: Record<string, unknown> }
+  | { behavior: "deny"; message: string };
+
+/** 權限請求回覆（對應 `--permission-prompt-tool stdio` 的 control_request） */
 export interface StdinControlResponse {
   type: "control_response";
-  permission_request_id: string;
-  allowed: boolean;
+  response: {
+    subtype: "success";
+    request_id: string;
+    response: ControlDecision;
+  };
 }
 
 /** 所有 stdin 訊息聯集 */
@@ -65,7 +73,7 @@ export type CliBridgeEvent =
   | { type: "session_init"; sessionId: string }
   | { type: "result"; is_error: boolean; text?: string; session_id?: string }
   | { type: "error"; message: string }
-  | { type: "control_request"; requestId: string; tool: string; description: string }
+  | { type: "control_request"; requestId: string; tool: string; input: Record<string, unknown>; description: string }
   | { type: "status"; subtype: string; raw: unknown };
 
 // ── 設定型別 ──────────────────────────────────────────────────────────────────

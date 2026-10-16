@@ -13,7 +13,7 @@
  * - Discord 送達失敗 → 重試 3 次（指數退避 1s, 2s, 4s）
  * - 送達狀態回寫 StdoutLogger
  * - tool_call / thinking 可選顯示
- * - control_request → Discord 按鈕（Approve/Deny）
+ * - control_request → Discord 互動（AskUserQuestion / ExitPlanMode / 權限按鈕，見 control-request.ts）
  * - 附件支援（Discord attachment → 文字描述附加到 stdin）
  * - rate limit 保護（可設定 edit interval）
  */
@@ -32,6 +32,7 @@ import type { CliBridgeEvent, StdinImageBlock } from "./types.js";
 import type { BridgeConfig } from "../core/config.js";
 import type { CliBridgeConfig } from "./types.js";
 import type { BridgeSender } from "./discord-sender.js";
+import { handleControlRequest } from "./control-request.js";
 
 const SUPPORTED_IMAGE_TYPES: Record<string, StdinImageBlock["source"]["media_type"]> = {
   "image/png": "image/png",
@@ -666,61 +667,6 @@ export async function handleCliBridgeReply(
     );
 
     log.info(`[cli-bridge-reply] turn=${turnId.slice(0, 8)} delivery=${discordDelivery} edits=${editCount}`);
-  }
-}
-
-// ── control_request 處理 ────────────────────────────────────────────────────
-
-async function handleControlRequest(
-  evt: CliBridgeEvent & { type: "control_request" },
-  bridge: CliBridge,
-  originalMessage: Message,
-  sender: BridgeSender,
-): Promise<void> {
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`cb-approve-${evt.requestId}`)
-      .setLabel("Approve")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`cb-deny-${evt.requestId}`)
-      .setLabel("Deny")
-      .setStyle(ButtonStyle.Danger),
-  );
-
-  const promptMsg = await sender.sendComponents({
-    content: `🔐 **權限請求**\n工具：\`${evt.tool}\`\n${evt.description}`,
-    components: [row],
-  });
-
-  // 等待按鈕互動（預設 10 分鐘，可用 CATCLAW_PERMISSION_TIMEOUT_MS 覆寫）
-  const permissionTimeoutMs = Number(process.env.CATCLAW_PERMISSION_TIMEOUT_MS ?? 600_000);
-  try {
-    const interaction = await promptMsg.awaitMessageComponent({
-      componentType: ComponentType.Button,
-      filter: (i: ButtonInteraction) => i.user.id === originalMessage.author.id,
-      time: permissionTimeoutMs,
-    });
-
-    const allowed = interaction.customId.startsWith("cb-approve-");
-
-    // 回寫 stdin
-    bridge.sendControlResponse(evt.requestId, allowed);
-
-    await interaction.update({
-      content: `🔐 **權限請求** → ${allowed ? "✅ 已允許" : "❌ 已拒絕"}\n工具：\`${evt.tool}\`\n${evt.description}`,
-      components: [],
-    });
-
-    log.info(`[cli-bridge-reply] control_request ${evt.requestId} → ${allowed ? "approved" : "denied"}`);
-  } catch {
-    // 超時 → 自動拒絕
-    bridge.sendControlResponse(evt.requestId, false);
-    await sender.editComponents(promptMsg, {
-      content: `🔐 **權限請求** → ⏰ 超時（自動拒絕）\n工具：\`${evt.tool}\`\n${evt.description}`,
-      components: [],
-    }).catch((e) => { log.debug(`[cli-bridge-reply] control_request timeout edit 失敗：${e instanceof Error ? e.message : String(e)}`); });
-    log.info(`[cli-bridge-reply] control_request ${evt.requestId} → timeout (denied)`);
   }
 }
 

@@ -55,12 +55,12 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 ### 與 Claude provider 的關鍵差異
 
 - **協議**：Claude = 單向 NDJSON + 累積 diff（自管 lastTextLength）；Codex = 雙向 JSON-RPC，delta 直接是增量不需 diff。
-- **權限審批**：Claude 走 `--permission-prompt-tool` → MCP `request_permission` → Discord 按鈕（control_request event）；Codex **無 stdin control_response**，server 主動發 approval request，`handleServerRequest` 透過 `ctx.askUser`（= bridge `askUserForApproval`）發 Discord 按鈕，5 分鐘超時拒絕。有 callback → `turn/start` 帶 `approvalPolicy:"on-request"` + `sandboxPolicy:workspaceWrite`；無 callback → 退信任模式 `approvalPolicy:"never"` + `dangerFullAccess`。新 API（`item/.../requestApproval`）用 `accept`/`decline`，舊（`execCommandApproval`/`applyPatchApproval`）用 `approved`/`denied`。
+- **權限審批**：Claude 走 `--permission-prompt-tool stdio` → stdout `control_request` → `control-request.ts` Discord 互動 → stdin `control_response`；Codex **無 stdin control_response**，server 主動發 approval request，`handleServerRequest` 透過 `ctx.askUser`（= bridge `askUserForApproval`）發 Discord 按鈕，5 分鐘超時拒絕。有 callback → `turn/start` 帶 `approvalPolicy:"on-request"` + `sandboxPolicy:workspaceWrite`；無 callback → 退信任模式 `approvalPolicy:"never"` + `dangerFullAccess`。新 API（`item/.../requestApproval`）用 `accept`/`decline`，舊（`execCommandApproval`/`applyPatchApproval`）用 `approved`/`denied`。
 - **MCP 注入**：Claude 寫 `runtime/bridges/<label>.mcp.json` 經 `--mcp-config` 載入；Codex 寫 per-bridge `CODEX_HOME`（`runtime/bridges/<label>.codex/`），symlink 全域 `~/.codex` 的 auth/sessions/skills/memories/profiles，`config.toml` = 全域 config + 注入 `[mcp_servers.catclaw_bridge_discord]`。
 
-### MCP / 權限降級
+### MCP 注入缺件時
 
-- **Claude**：`writeMcpConfig` 缺 botToken/channelId 回 `null` → 不能用 `--permission-prompt-tool`（指向沒註冊的 MCP server 會 CLI 啟動 exit 1 crash loop），**fail-soft 降級 `--dangerously-skip-permissions`**。優先序：明確 `dangerouslySkipPermissions=true` → MCP 寫成功走 prompt tool → MCP 缺則降級 skip。
+- **Claude**：`writeMcpConfig` 缺 botToken/channelId 回 `null` → 只是不載 `--mcp-config`（CLI 內少 `discord` 工具）；權限審批走 stdio 不受影響，**不會降級成 `--dangerously-skip-permissions`**（是否 skip 只看 channel 的 `dangerouslySkipPermissions`）。
 - **Codex**：`writeCodexHome` 缺 botToken/channelId 不注入 MCP 區塊但仍 symlink + 抄全域 config（home 仍可用）；`CATCLAW_CONFIG_DIR` 未設才回 `null` 走全域 `~/.codex`。
 
 ## 檔案結構
@@ -74,6 +74,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 | `index.ts` | 全域單例：`initCliBridges` / `getCliBridge` / `shutdownAllBridges` |
 | `discord-sender.ts` | Discord 發送抽象層：IndependentBotSender / MainBotSender + `withChannel()` proxy |
 | `reply.ts` | Discord 回覆處理：streaming edit + 重試 fallback + 送達狀態追蹤 |
+| `control-request.ts` | control_request → Discord 互動（AskUserQuestion select menu / ExitPlanMode 核准退回 / 其他工具 允許拒絕）→ control_response |
 | `providers/provider.ts` | `CliProvider` interface — CLI 互動抽象（spawn/編解碼/resume/權限） |
 | `providers/claude.ts` | Claude provider — `claude -p` NDJSON diff 串流 |
 | `providers/codex.ts` | Codex provider — `codex app-server` JSON-RPC 2.0 |
@@ -100,10 +101,11 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 - **autoSpawn snapshot pre-empt** — `autoSpawnBridge()` 寫 `cli-bridges.json` 前先 `_lastConfigJson.set(channelId, ...)`，否則 watchFile 觸發的 hotReload 會把 `undefined` snapshot 跟新檔 diff 判定為 config 變更，立刻 shutdown 剛 spawn 出來的 bridge
 - **process.lastStderr** — `CliProcess` 記錄最後 stderr 輸出，供 bridge crash 偵測使用
 - **圖片附件（multimodal stdin）** — `reply.ts` `extractAttachments()` 下載支援的圖片（png/jpeg/gif/webp，≤5MB）並 base64 編碼成 `StdinImageBlock[]`；`bridge.send()` 有 `imageBlocks` 時改送 `content: [{type:"text"}, {type:"image", source:{type:"base64", ...}}]` 而非純字串。避免 Claude CLI 把 Discord CDN URL 當 image URL source 傳給 Anthropic API（CDN 權限/過期會導致 "Could not process image" 400）。下載失敗或超過大小限制時降級為 URL 文字描述。
-- **權限審批（D3）** — 以下為 **claude provider** 路徑；codex provider 的審批走 RPC server-request → `askUser`，見上方 Codex Provider 節。`dangerouslySkipPermissions` **預設 false**（fail-safe）。`process.ts` spawn 時走互斥分支：
-  - `true` → 加 `--dangerously-skip-permissions`，**不**加 `--permission-prompt-tool`（信任模式，沿用舊行為），同時 log warn
-  - `false`（預設）→ 加 `--permission-prompt-tool mcp__catclaw-bridge-discord__request_permission`，**不**加 dangerous flag
-  CLI 任何權限請求（含 `ExitPlanMode` / `AskUserQuestion`）會呼叫 MCP server 的 `request_permission` tool；`discord-server.ts` 開自己的 discord.js Gateway Client（用 bridge bot token），在 `DISCORD_CHANNEL_ID`（由 process.ts 注入）顯示按鈕：`ExitPlanMode` 顯示 plan 預覽 + Approve/Reject、`AskUserQuestion` 渲染 StringSelectMenu 收集答案塞回 `updatedInput.answers`、其他 tool 顯示 `tool_name + input JSON` + Approve/Deny。預設 10 分鐘內無回應 → `{behavior:"deny", interrupt:true}` 中斷整個 turn（可用環境變數 `CATCLAW_PERMISSION_TIMEOUT_MS` 覆寫）。stdin close 時 `client.destroy()` 收尾
+- **權限審批（stdio control_request）** — 以下為 **claude provider** 路徑；codex provider 的審批走 RPC server-request → `askUser`，見上方 Codex Provider 節。spawn 一律加 `--permission-prompt-tool stdio` + `--allowedTools TaskCreate,TaskUpdate,TaskList,TaskGet`：前者與 `dangerouslySkipPermissions` 無關（skip 時一般工具直接放行，但 `AskUserQuestion` / `ExitPlanMode` 仍以 control_request 送出；沒有 prompt tool 時 CLI 根本不開放這兩個工具），後者補 headless 預設不給的任務清單工具。stdout 格式 `{type:"control_request", request_id, request:{subtype:"can_use_tool", tool_name, input}}`（實測 CC 2.1.301），`providers/claude.ts` 解析成 `control_request` event；`reply.ts` 交給 `control-request.ts`：
+  - `AskUserQuestion` → 每題一個 StringSelectMenu（multiSelect → maxValues；「其他」開 modal 自填），答案塞回 `updatedInput.answers`
+  - `ExitPlanMode` → 貼 plan（>1800 字附 plan.md）+ 核准／退回；退回可在 modal 填意見，成為 deny message，Claude 會據此改計畫再送一次
+  - 其他工具（只有 `dangerouslySkipPermissions=false` 會收到）→ input JSON + 允許／拒絕
+  只有觸發 turn 的 Discord 使用者能作答；逾時（`CATCLAW_PERMISSION_TIMEOUT_MS`，預設 10 分鐘）回 deny 讓 CLI 結束回合，不卡 busy。回覆格式 `{type:"control_response", response:{subtype:"success", request_id, response:{behavior:"allow", updatedInput}|{behavior:"deny", message}}}`（CLI 只收這兩種形狀）。dashboard / cron 來源的 turn 收到 control_request 由 `bridge.ts` 直接 deny（沒人能按按鈕）。舊的 MCP `request_permission` 路徑（discord-server 自開 Gateway）已移除，`discord-server.ts` 現為 REST-only
 
 ## 整合點
 
@@ -124,8 +126,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 
 | 功能 | 實作位置 | 說明 |
 |------|---------|------|
-| control_request | `reply.ts` `handleControlRequest()` + `bridge.ts` `sendControlResponse()` | CLI 權限請求 → Discord Approve/Deny 按鈕，預設 10 分鐘超時自動拒絕（可用 `CATCLAW_PERMISSION_TIMEOUT_MS` 覆寫；舊版 fallback，`dangerouslySkipPermissions=false` 時主路徑為 D3） |
-| 權限審批（D3） | `mcp/discord-server.ts` `request_permission` + `process.ts` spawn 互斥分支 + `bridge.ts:517` 預設 false | Claude CLI `--permission-prompt-tool mcp__catclaw-bridge-discord__request_permission` → MCP server 啟自己的 Gateway Client → 綁定頻道顯示 Approve/Deny / Reject / SelectMenu。`ExitPlanMode` 顯示 plan、`AskUserQuestion` 渲染 select menu 把答案塞回 `updatedInput.answers`、其他 tool 顯示 JSON 預覽。60s timeout = `{behavior:"deny", interrupt:true}` |
+| control_request | `providers/claude.ts` 解析 + `control-request.ts` 互動 + `bridge.ts` `sendControlResponse()` | `--permission-prompt-tool stdio`：AskUserQuestion → select menu、ExitPlanMode → 核准／退回（退回可填意見）、其他工具 → 允許／拒絕；逾時 deny（`CATCLAW_PERMISSION_TIMEOUT_MS`，預設 10 分鐘）；非 Discord 來源自動 deny。舊 MCP `request_permission` 路徑已移除 |
 | thinking 顯示 | `reply.ts` + `types.ts` `showThinking` | `cliBridge.showThinking: true` → thinking 以 Discord spoiler (`||..||`) 顯示 |
 | 附件支援 | `reply.ts` `extractAttachments()` + `discord.ts` / `cli-bridge/index.ts` 路由 | 圖片下載後轉 base64 inline（stdin content 變 array），其他檔案仍以 URL 文字描述附加 |
 | 對話歷程匯出 | `dashboard.ts` `GET /api/cli-bridge/:label/export` + UI 匯出按鈕 | 一鍵匯出 Markdown，含 user/assistant/tools |

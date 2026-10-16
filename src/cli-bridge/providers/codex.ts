@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { log } from "../../logger.js";
-import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock } from "../types.js";
+import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock, ControlDecision } from "../types.js";
 import type { CliProvider, ProcessIO, ProviderContext, ProviderSpawnSpec } from "./provider.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -362,7 +362,7 @@ CATCLAW_BRIDGE_LABEL = "${escape(config.label)}"
     return null;
   }
 
-  sendControlResponse(_io: ProcessIO, _requestId: string, _allowed: boolean): void {
+  sendControlResponse(_io: ProcessIO, _requestId: string, _decision: ControlDecision): void {
     // Codex 沒有 stdin control_response 機制；server-request 由 handleServerRequest 直接走 RPC 回應
     // bridge.ts 不會走到這裡（codex 流程不會 emit type:"control_request"）
     log.debug(`[cli-bridge:${this.label}] codex sendControlResponse called but ignored (codex uses RPC server-request)`);

@@ -24,6 +24,7 @@ import type {
   CliBridgeChannelConfig,
   CliProcessConfig,
   CliBridgeEvent,
+  ControlDecision,
   TurnHandle,
   TurnRecord,
   BridgeStatus,
@@ -234,11 +235,12 @@ export class CliBridge {
 
   // ── control_request 回覆 ──────────────────────────────────────────────────
 
-  sendControlResponse(requestId: string, allowed: boolean): void {
+  sendControlResponse(requestId: string, decision: ControlDecision): void {
     if (!this.process?.alive) return;
     try {
-      this.process.sendControlResponse(requestId, allowed);
-      log.info(`[cli-bridge:${this.label}] control_response ${requestId} allowed=${allowed}`);
+      this.process.sendControlResponse(requestId, decision);
+      const detail = decision.behavior === "deny" ? `：${decision.message}` : "";
+      log.info(`[cli-bridge:${this.label}] control_response ${requestId.slice(0, 8)} ${decision.behavior}${detail}`);
     } catch (err) {
       log.warn(`[cli-bridge:${this.label}] control_response 寫入失敗：${err instanceof Error ? err.message : String(err)}`);
     }
@@ -809,6 +811,18 @@ export class CliBridge {
             last.durationMs = evt.duration_ms;
           }
         }
+      }
+    }
+
+    // control_request 只有 Discord 來源的 turn 有人能按按鈕；dashboard / cron 來源直接拒絕，避免 CLI 永久等待
+    if (evt.type === "control_request") {
+      const source = turnId ? this.pendingTurns.get(turnId)?.record.source : undefined;
+      if (source !== "discord") {
+        this.sendControlResponse(evt.requestId, {
+          behavior: "deny",
+          message: `此 turn 來源（${source ?? "unknown"}）無法互動，請改用文字說明或結束本回合`,
+        });
+        return;
       }
     }
 

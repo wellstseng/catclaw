@@ -16,7 +16,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { log } from "../../logger.js";
-import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock } from "../types.js";
+import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock, ControlDecision } from "../types.js";
 import type { CliProvider, ProcessIO, ProviderContext, ProviderSpawnSpec } from "./provider.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,6 +34,13 @@ interface ContentBlock {
 interface AssistantMessage {
   id: string;
   content: ContentBlock[];
+}
+
+/** 權限請求的一行摘要（log / turn 紀錄用；Discord 顯示用 input 全文） */
+function summarizeToolInput(input: Record<string, unknown>): string {
+  const pick = (k: string) => (typeof input[k] === "string" ? input[k] as string : "");
+  const line = pick("command") || pick("file_path") || pick("url") || pick("plan") || JSON.stringify(input);
+  return line.length > 300 ? line.slice(0, 300) + "…" : line;
 }
 
 // ── ClaudeProvider ─────────────────────────────────────────────────────────────
@@ -86,25 +93,21 @@ export class ClaudeProvider implements CliProvider {
       args.push("--resume", effectiveSessionId);
     }
 
-    // 寫入 per-bridge MCP config：catclaw-bridge-discord 用 bridge 自己的 bot token
-    // 若 botToken/channelId 缺 → writeMcpConfig 回 null → 必須 fail-soft 降級為 --dangerously-skip-permissions
-    // 否則下面 --permission-prompt-tool 指向沒註冊的 MCP server，Claude CLI 啟動就 exit code=1 crash loop
+    // 寫入 per-bridge MCP config：catclaw-bridge-discord 用 bridge 自己的 bot token（CLI 內的 discord 工具用）
     const mcpConfigPath = this.writeMcpConfig(config);
     if (mcpConfigPath) {
       args.push("--mcp-config", mcpConfigPath);
     }
 
-    // permission 模式三選一（順序：明確 skip > MCP 註冊成功走 prompt > MCP 缺則 fail-soft 降級 skip）
+    // 權限請求一律走 stdin/stdout：control_request → Discord 互動（control-request.ts）→ control_response。
+    // 不依賴 botToken，也不再降級；就算 skip permissions，AskUserQuestion / ExitPlanMode 仍要使用者互動，
+    // 沒有 prompt tool 時 CLI 根本不開放這兩個工具。
+    args.push("--permission-prompt-tool", "stdio");
+    // headless 預設不給任務清單工具，補上與互動模式對齊
+    args.push("--allowedTools", "TaskCreate,TaskUpdate,TaskList,TaskGet");
     if (config.dangerouslySkipPermissions) {
       args.push("--dangerously-skip-permissions");
       log.warn(`[cli-bridge:${config.label}] dangerouslySkipPermissions=true（fail-open，所有 tool 直接放行）`);
-    } else if (mcpConfigPath) {
-      // MCP server 已註冊 → permission-prompt-tool 找得到，走 Discord 按鈕審批
-      args.push("--permission-prompt-tool", "mcp__catclaw-bridge-discord__request_permission");
-    } else {
-      // MCP 缺 botToken/channelId → 不能用 prompt tool，降級為 skip（避免 crash loop）
-      args.push("--dangerously-skip-permissions");
-      log.warn(`[cli-bridge:${config.label}] MCP config 未寫成功（缺 botToken/channelId），fail-soft 降級為 dangerouslySkipPermissions 避免 crash loop`);
     }
 
     // 注入 bridge runtime env（讓 CLI 內可以 echo $CATCLAW_BRIDGE_* 查證部署資訊）
@@ -112,7 +115,6 @@ export class ClaudeProvider implements CliProvider {
     env.CATCLAW_BRIDGE_LABEL = config.label;
     if (config.channelId) {
       env.CATCLAW_BRIDGE_CHANNEL_ID = config.channelId;
-      // request_permission 用：MCP server 啟動 Discord Gateway 後要 fetch 哪個頻道發按鈕
       env.DISCORD_CHANNEL_ID = config.channelId;
     }
     if (effectiveSessionId) env.CATCLAW_BRIDGE_SESSION_ID = effectiveSessionId;
@@ -183,7 +185,6 @@ export class ClaudeProvider implements CliProvider {
             args: [serverPath],
             env: {
               DISCORD_TOKEN: config.botToken,
-              // request_permission tool 需要知道要在哪個頻道發審批按鈕
               DISCORD_CHANNEL_ID: config.channelId,
               CATCLAW_BRIDGE_LABEL: config.label,
             },
@@ -220,11 +221,10 @@ export class ClaudeProvider implements CliProvider {
     }
   }
 
-  sendControlResponse(io: ProcessIO, requestId: string, allowed: boolean): void {
+  sendControlResponse(io: ProcessIO, requestId: string, decision: ControlDecision): void {
     io.writeStdinLine(JSON.stringify({
       type: "control_response",
-      permission_request_id: requestId,
-      allowed,
+      response: { subtype: "success", request_id: requestId, response: decision },
     }));
   }
 
@@ -285,13 +285,22 @@ export class ClaudeProvider implements CliProvider {
       return;
     }
 
-    // ── control_request：權限請求 ──
+    // ── control_request：權限請求（--permission-prompt-tool stdio）──
+    // 實測格式：{type:"control_request", request_id, request:{subtype:"can_use_tool", tool_name, input, tool_use_id}}
     if (type === "control_request") {
+      const req = (obj["request"] ?? {}) as Record<string, unknown>;
+      if (req["subtype"] !== "can_use_tool") {
+        ctx.emit({ type: "status", subtype: `control_request:${String(req["subtype"])}`, raw: obj });
+        return;
+      }
+      const tool = String(req["tool_name"] ?? "");
+      const input = (req["input"] ?? {}) as Record<string, unknown>;
       ctx.emit({
         type: "control_request",
-        requestId: obj["id"] as string ?? "",
-        tool: obj["tool"] as string ?? "",
-        description: obj["description"] as string ?? "",
+        requestId: String(obj["request_id"] ?? ""),
+        tool,
+        input,
+        description: summarizeToolInput(input),
       });
       return;
     }
