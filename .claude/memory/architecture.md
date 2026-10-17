@@ -5,6 +5,7 @@
 - Trigger: 架構, 資料流, 目錄結構, session 策略, config, 環境變數, restart, cron, 安全, PM2, hot-reload, catclaw.json, CATCLAW_WORKSPACE, pi-ai, OAuth, provider, credentials
 - Last-used: 2026-04-02
 - Confirmations: 15
+- Source: commit:d49444a 2026-03-29（原對話已逾保留期）
 
 # catclaw 架構
 

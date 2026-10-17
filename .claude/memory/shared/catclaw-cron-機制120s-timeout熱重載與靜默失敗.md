@@ -6,6 +6,7 @@
 - Trigger: cron 120s timeout, SIGTERM cron, timeoutSec, cron-jobs.json, src/cron.ts, exec stdout 不回 Discord, claude-acp 逾時, CRON_JOB_IDS.md, fs.watch 熱重載, lastError lastResult
 - Created-at: 2026-06-03
 - Related: cron-claude-acp-timeout-no-discord-reply
+- Source: commit:2ceb8fb 2026-06-03（原對話已逾保留期）
 
 ## 知識
 

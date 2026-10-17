@@ -5,6 +5,7 @@
 - Trigger: CatClaw規劃層, planning layer, circuit breaker, catclaw優化, 規劃實作
 - Created-at: 2026-05-21
 - Related: catclaw-opt-planning-frameworks-6, catclaw-opt-agent-loop-2
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

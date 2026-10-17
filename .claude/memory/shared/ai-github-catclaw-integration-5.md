@@ -5,6 +5,7 @@
 - Trigger: catclaw github, github integration, AI code review, github webhook, catclaw agent github
 - Created-at: 2026-05-21
 - Related: ai-github-mcp-server-1, ai-github-actions-llm-2, ai-github-autonomous-agents-3, code-review-pre-review-web
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

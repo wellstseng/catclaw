@@ -5,6 +5,7 @@
 - Trigger: 自主開發, autonomous, harness agent, PM subagent, 實驗指南, AI協作指南
 - Last-used: 2026-04-02
 - Confirmations: 2
+- Source: commit:c2dc2df 2026-04-01（原對話已逾保留期）
 
 ## 知識
 

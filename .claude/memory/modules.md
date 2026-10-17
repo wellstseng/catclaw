@@ -5,6 +5,7 @@
 - Trigger: 模組, config.ts, discord.ts, session.ts, acp.ts, reply.ts, logger, cron.ts, pm2, index.ts, 函式, 介面, BridgeConfig, getChannelAccess, enqueue, AcpEvent, providers, claude-api, auth-profile, skills, configure, message-trace, trace, 追蹤
 - Last-used: 2026-04-02
 - Confirmations: 9
+- Source: commit:d49444a 2026-03-29（原對話已逾保留期）
 
 # catclaw 模組詳細說明
 

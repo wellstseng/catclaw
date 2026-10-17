@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: PreLlmCall, hook block, cost-brake, spend cap, estimatedCostUsd, MODEL_PRICING, hook-registry, observer, 花費上限, 成本估算
 - Created-at: 2026-07-02
+- Source: commit:0d6d9a6 2026-07-02（原對話已逾保留期）
 
 ## 知識
 

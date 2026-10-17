@@ -5,6 +5,7 @@
 - Trigger: context management, context rot, sliding window, sticky notes, CE壓縮, token管理, context window
 - Created-at: 2026-05-21
 - Related: catclaw-opt-agent-loop-2, catclaw-opt-memory-arch-3, catclaw-opt-planning-frameworks-6, catclaw-opt-tool-design-4
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

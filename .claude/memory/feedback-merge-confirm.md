@@ -2,6 +2,7 @@
 
 - Confidence: [固]
 - Trigger: merge, git merge, 合併, 上 GIT, push main
+- Source: commit:d49444a 2026-03-29（原對話已逾保留期）
 
 ## 知識
 

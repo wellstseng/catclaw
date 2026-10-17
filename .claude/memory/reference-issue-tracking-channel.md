@@ -5,6 +5,7 @@
 - Trigger: 議題追蹤, CatClaw議題追蹤, judy bridge, 階段議題, 議題頻道, 1498730217278148659
 - Last-used: 2026-04-30
 - Confirmations: 1
+- Source: commit:3d30cd4 2026-05-10（原對話已逾保留期）
 
 ## 知識
 

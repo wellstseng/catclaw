@@ -6,6 +6,7 @@
 - Trigger: workspace/sqlite, catclaw.json 不上傳, workspace/.mcp.json, runtime/bridges, tool-outputs 排除, catclaw git staging
 - Created-at: 2026-04-28
 - Related: catclaw-git-sync-status
+- Source: commit:2ceb8fb 2026-04-28（原對話已逾保留期）
 
 ## 知識
 

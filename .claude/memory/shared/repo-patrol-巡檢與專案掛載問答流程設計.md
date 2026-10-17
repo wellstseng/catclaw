@@ -6,6 +6,7 @@
 - Trigger: repo-patrol, patrol-state.md, patrol_diff.py, baseline rev, S0-S3 分級, 專案掛載, recall 回讀原檔 file:line
 - Tags: legacy-catclaw-path
 - Created-at: 2026-07-02
+- Source: commit:2ceb8fb 2026-07-02（原對話已逾保留期）
 
 ## 知識
 

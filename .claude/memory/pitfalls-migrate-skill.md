@@ -6,6 +6,7 @@
 - Last-used: 2026-03-31
 - Confirmations: 1
 - Related: pitfalls-cli, architecture
+- Source: commit:c02de2c 2026-03-31（原對話已逾保留期）
 
 ## 知識
 

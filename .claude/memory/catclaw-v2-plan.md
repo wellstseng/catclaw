@@ -5,6 +5,7 @@
 - Trigger: V2, catclaw v2, context engineering, inbound history, CE, compaction, token追蹤, turn audit, session snapshot, rollback, /stop
 - Last-used: 2026-03-26
 - Confirmations: 2
+- Source: commit:d49444a 2026-03-29（原對話已逾保留期）
 
 ## 知識
 

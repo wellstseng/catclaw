@@ -5,6 +5,7 @@
 - Trigger: quality-check, 自檢, 品質檢查, 幻覺偵測, hallucination, 套娃, externalization recursion, trace 異常, agent loop 異常, pnpm quality-check
 - Last-used: 2026-05-11
 - Confirmations: 1
+- Source: commit:9e7f577 2026-05-11（原對話已逾保留期）
 
 ## 知識
 

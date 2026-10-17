@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: subagent 並行上限, spawn_subagent 長文件, 8192 token 限制, explore runtime 不能寫, subagent timeout, commit 質性分類 subagent
 - Created-at: 2026-05-21
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

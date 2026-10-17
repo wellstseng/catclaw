@@ -5,6 +5,7 @@
 - Trigger: observability, agent evaluation, tracing, 可觀測性, 評估, benchmark, LLM-as-judge, red teaming
 - Created-at: 2026-05-21
 - Related: catclaw-opt-agent-loop-2, catclaw-opt-memory-arch-3
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

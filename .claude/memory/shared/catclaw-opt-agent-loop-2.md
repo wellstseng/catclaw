@@ -5,6 +5,7 @@
 - Trigger: agent架構, ReAct, plan-and-execute, multi-agent, reflexion, circuit breaker, agent loop
 - Created-at: 2026-05-21
 - Related: catclaw-opt-context-management-1, catclaw-opt-tool-design-4, catclaw-opt-observability-5, catclaw-opt-planning-frameworks-6, catclaw-opt-planning-impl-7
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

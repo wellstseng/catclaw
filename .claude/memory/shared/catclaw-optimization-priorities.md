@@ -4,6 +4,7 @@
 - Confidence: [觀]
 - Trigger: catclaw優化, 平台改進, agent架構, 優化方向
 - Created-at: 2026-05-21
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 - Related: catclaw-平台已實證能力與核心機制退役參考
 

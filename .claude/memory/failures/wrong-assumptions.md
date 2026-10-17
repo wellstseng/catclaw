@@ -4,6 +4,7 @@
 - Confidence: [臨]
 - Type: procedural
 - Created: 2026-04-04
+- Source: commit:0c90af3 2026-04-10（原對話已逾保留期）
 
 ## 知識
 

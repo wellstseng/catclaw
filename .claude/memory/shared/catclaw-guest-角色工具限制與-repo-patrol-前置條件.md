@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: guest 角色 工具限制, project-onboard, repo-patrol, patrol-state.md, config_get projects, baseline rev
 - Created-at: 2026-07-02
+- Source: commit:2ceb8fb 2026-07-02（原對話已逾保留期）
 
 ## 知識
 

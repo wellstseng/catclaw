@@ -5,6 +5,7 @@
 - Trigger: cron, 排程, claude-acp, 回應逾時, Discord沒回覆, 一次性排程
 - Created-at: 2026-06-08
 - Related: ext-20260608-0918-排程-id-格式為-請在-discor, catclaw-cron-機制120s-timeout熱重載與靜默失敗
+- Source: commit:2ceb8fb 2026-06-08（原對話已逾保留期）
 
 ## 知識
 

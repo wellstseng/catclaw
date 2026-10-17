@@ -5,6 +5,7 @@
 - Trigger: 完成, 回報, Discord, 主動
 - Last-used: 2026-03-28
 - Confirmations: 17
+- Source: commit:d49444a 2026-03-29（原對話已逾保留期）
 
 ## 知識
 

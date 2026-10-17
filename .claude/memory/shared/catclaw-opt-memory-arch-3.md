@@ -5,6 +5,7 @@
 - Trigger: memory architecture, episodic memory, semantic memory, working memory, 記憶系統, atom memory, LanceDB
 - Created-at: 2026-05-21
 - Related: catclaw-opt-context-management-1, catclaw-opt-observability-5
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

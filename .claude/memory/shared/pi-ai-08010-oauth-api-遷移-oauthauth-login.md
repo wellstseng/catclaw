@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: pi-ai, loginOpenAICodex, openaiCodexOAuth, codex oauth, pi-ai 升級, OAuthAuth, gpt-5.6
 - Created-at: 2026-07-20
+- Source: commit:da838d3 2026-07-20（原對話已逾保留期）
 
 ## 知識
 

@@ -5,6 +5,7 @@
 - Trigger: tool design, tool use, MCP, deferred tools, 工具設計, tool description
 - Created-at: 2026-05-21
 - Related: catclaw-opt-agent-loop-2, catclaw-opt-context-management-1
+- Source: commit:2ceb8fb 2026-05-21（原對話已逾保留期）
 
 ## 知識
 

@@ -6,6 +6,7 @@
 - Trigger: CatClaw 已實證能力, PostTurn 反思 hook, 自動除錯循環 重試 3 次, 情節記憶日誌, 長任務評估 guardrail, project/catclaw repo, BRAVE_SEARCH_API_KEY .env, mcp_catclaw-discord_discord, agent-safety-alignment.md
 - Created-at: 2026-04-26
 - Related: catclaw-optimization-priorities
+- Source: commit:2ceb8fb 2026-04-26（原對話已逾保留期）
 
 ## 知識
 

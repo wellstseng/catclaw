@@ -5,6 +5,7 @@
 - Trigger: 日文, Japanese, 語言, 中文, 回應語言
 - Last-used: 2026-03-31
 - Confirmations: 2
+- Source: commit:c02de2c 2026-03-31（原對話已逾保留期）
 
 ## 知識
 

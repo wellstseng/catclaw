@@ -4,6 +4,7 @@
 - Confidence: [固]
 - Trigger: model, models-config, 模型設定, provider, alias, routing, 切換模型, primary, fallback
 - Created-at: 2026-04-06
+- Source: commit:2ceb8fb 2026-04-06（原對話已逾保留期）
 
 ## 知識
 
