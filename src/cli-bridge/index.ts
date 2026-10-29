@@ -14,6 +14,7 @@ import { resolveCatclawDir, config } from "../core/config.js";
 import { checkBotMessage, resetOnHumanMessage } from "../discord/bot-circuit-breaker.js";
 import { CliBridge } from "./bridge.js";
 import { createBridgeSender } from "./discord-sender.js";
+import { handleDmMessage } from "./dm.js";
 import type { CliBridgeConfig, CliBridgeChannelConfig, CliBridgesConfig } from "./types.js";
 
 // ── 型別匯出 ────────────────────────────────────────────────────────────────
@@ -202,8 +203,19 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
   startIdleScanner();
 }
 
-// 跨頻道 mention 防重複：同一則訊息只讓一個 bridge 處理
+// 跨頻道 mention / DM 防重複：同 token 多 bridge 共用一個 Client，同一則訊息只讓一個 bridge 處理
 const _crossChannelClaimed = new Set<string>();
+
+/** 認領訊息：已被認領回 false；集合超過 100 筆時砍到 50 */
+function claimMessage(messageId: string): boolean {
+  if (_crossChannelClaimed.has(messageId)) return false;
+  _crossChannelClaimed.add(messageId);
+  if (_crossChannelClaimed.size > 100) {
+    const ids = Array.from(_crossChannelClaimed);
+    for (let i = 0; i < ids.length - 50; i++) _crossChannelClaimed.delete(ids[i]!);
+  }
+  return true;
+}
 
 /**
  * 跨頻道 mention 路由：
@@ -304,6 +316,46 @@ async function autoSpawnBridge(channelId: string, template: CliBridge, triggerMs
 }
 
 /**
+ * 建立並註冊一條 bridge（dm.ts auto-spawn 用）：
+ * new CliBridge → sender init → 掛 messageCreate → 預更新 snapshot → 持久化到 cli-bridges.json。
+ * 不 spawn CLI process（lazy start），由呼叫端 ensureAlive 喚醒。
+ * `cfg.channels` 必須只含這一個 channelId（持久化時整條 config 直接 push）。
+ */
+export async function registerBridge(
+  channelId: string,
+  cfg: CliBridgeConfig,
+  channelConfig: CliBridgeChannelConfig,
+): Promise<CliBridge> {
+  if (!_discordClient) throw new Error("[cli-bridge] registerBridge: discordClient 未初始化");
+  const existing = bridges.get(channelId);
+  if (existing) return existing;
+
+  const bridge = new CliBridge(channelConfig.label, channelId, cfg, channelConfig);
+  bridges.set(channelId, bridge);
+  bridgesByLabel.set(channelConfig.label, bridge);
+  try {
+    const sender = createBridgeSender(_discordClient, { botToken: cfg.botToken });
+    await sender.init(channelId);
+    bridge.setSender(sender);
+    if (sender.mode === "independent-bot") {
+      sender.onMessage((m: Message) => { handleIndependentBotMessage(bridge, m); });
+    }
+
+    // 先 update snapshot 再 save，pre-empt watchFile 觸發的 hotReload（同 autoSpawnBridge）
+    const allConfigs = loadAllCliBridgeConfigs();
+    allConfigs.push({ ...cfg, enabled: true });
+    _lastConfigJson.set(channelId, configSnapshotJson(cfg, channelId));
+    saveCliBridgeConfigs(allConfigs);
+    log.info(`[cli-bridge] 已註冊並持久化 bridge：${channelConfig.label} → channel ${channelId}`);
+    return bridge;
+  } catch (err) {
+    bridges.delete(channelId);
+    bridgesByLabel.delete(channelConfig.label);
+    throw err;
+  }
+}
+
+/**
  * 跨頻道路由：將訊息交給指定 bridge 處理（suspended bridge 復活後處理）
  */
 function handleCrossChannelRoute(bridge: CliBridge, msg: Message): void {
@@ -318,9 +370,7 @@ function handleCrossChannelRoute(bridge: CliBridge, msg: Message): void {
       const sender = bridge.getSender();
       let senderOverride: import("./discord-sender.js").BridgeSender | undefined;
       const ch = msg.channel;
-      if (ch.isTextBased() && !ch.isDMBased()) {
-        senderOverride = sender.withChannel(ch as import("discord.js").GuildTextBasedChannel);
-      }
+      if (ch.isSendable()) senderOverride = sender.withChannel(ch);
 
       log.info(`[cli-bridge] 跨頻道路由執行：${bridge.label} → channel=${msg.channelId}`);
       void handleCliBridgeReply(bridge, fullText, msg, {
@@ -336,6 +386,13 @@ function handleCrossChannelRoute(bridge: CliBridge, msg: Message): void {
  * 獨立 bot messageCreate handler
  */
 function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
+  // DM：不走 mention / home-channel 邏輯，交給 dm.ts（白名單 + 每人一條 bridge）
+  if (msg.channel.isDMBased()) {
+    if (!claimMessage(msg.id)) return;
+    void handleDmMessage(msg, bridge);
+    return;
+  }
+
   const isHomeChannel = msg.channelId === bridge.channelId;
 
   const sender = bridge.getSender();
@@ -363,12 +420,7 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
   if (!isHomeChannel) {
     if (!iAmMentioned) return;
     // 防重複：同一則訊息只處理一次
-    if (_crossChannelClaimed.has(msg.id)) return;
-    _crossChannelClaimed.add(msg.id);
-    if (_crossChannelClaimed.size > 100) {
-      const ids = Array.from(_crossChannelClaimed);
-      for (let i = 0; i < ids.length - 50; i++) _crossChannelClaimed.delete(ids[i]!);
-    }
+    if (!claimMessage(msg.id)) return;
 
     // 路由到最適合的 bridge 或 auto-spawn
     const target = findOrSpawnBridgeForChannel(msg.channelId, msg);
@@ -453,9 +505,7 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
       let senderOverride: import("./discord-sender.js").BridgeSender | undefined;
       if (!isHomeChannel) {
         const ch = msg.channel;
-        if (ch.isTextBased() && !ch.isDMBased()) {
-          senderOverride = sender.withChannel(ch as import("discord.js").GuildTextBasedChannel);
-        }
+        if (ch.isSendable()) senderOverride = sender.withChannel(ch);
       }
 
       log.info(`[cli-bridge] independent bot 路由：${bridge.label} channel=${msg.channelId}${isHomeChannel ? "" : " (跨頻道)"}`);

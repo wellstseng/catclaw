@@ -745,6 +745,9 @@ export class CliBridge {
       effort: this.channelConfig.effort ?? this.bridgeConfig.effort,
       model: this.channelConfig.model ?? this.bridgeConfig.model,
       thinking: this.channelConfig.thinking ?? this.bridgeConfig.thinking,
+      // team DM bridge：權限按鈕發到 owner 的 DM、CLI 以隔離模式啟動（見 dm.ts）
+      approvalChannelId: this.channelConfig.dm?.approvalChannelId,
+      isolation: this.channelConfig.dm?.isolation,
     };
 
     const provider: CliProvider = providerName === "codex"

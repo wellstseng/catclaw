@@ -1,6 +1,6 @@
 # CLI Bridge 模組
 
-> 原始碼：`src/cli-bridge/` | 更新：2026-05-26
+> 原始碼：`src/cli-bridge/` | 更新：2026-10-29
 
 ## 定位
 
@@ -63,6 +63,41 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 - **Claude**：`writeMcpConfig` 缺 botToken/channelId 回 `null` → 只是不載 `--mcp-config`（CLI 內少 `discord` 工具）；權限審批走 stdio 不受影響，**不會降級成 `--dangerously-skip-permissions`**（是否 skip 只看 channel 的 `dangerouslySkipPermissions`）。
 - **Codex**：`writeCodexHome` 缺 botToken/channelId 不注入 MCP 區塊但仍 symlink + 抄全域 config（home 仍可用）；`CATCLAW_CONFIG_DIR` 未設才回 `null` 走全域 `~/.codex`。
 
+## 私訊（DM）bridge（`dm.ts`）
+
+每位授權使用者與 bridge bot 的 DM = 一條獨立 bridge / CLI session。Discord 的 DM channel id 對「bot × 使用者」固定，所以沿用「一 channel 一 bridge」模型，auto-spawn 後持久化到 `cli-bridges.json`，重啟照常重建。
+
+**設定**：`~/.catclaw/cli-bridge-dm.json`（每則 DM 重讀，改完即生效）
+
+| 欄位 | 說明 |
+|------|------|
+| `enabled` | 總開關 |
+| `botToken` | 收 DM 的 bot；省略 = `cli-bridges.json` 第一條的 botToken |
+| `ownerId` | 本人 user id；省略 = `catclaw.json` `admin.allowedUserIds[0]` |
+| `ownerWorkingDir` | owner DM bridge 的工作目錄 |
+| `teamWorkspaceRoot` | 同事工作目錄的根（預設 `/Users/Shared/catclaw-dm`，刻意放家目錄外，否則被 denyPaths 擋） |
+| `users` | `userId → { name, enabled?, workingDir? }`；不在名單 = 回一句「僅限授權成員」後忽略（每人只回一次） |
+| `team.denyPaths` | 同事 session 不可讀寫的路徑前綴（預設本機 home） |
+| `team.disallowedTools` | 同事 session 直接禁用的工具 |
+| `team.claudeMdTemplatePath` | 同事工作目錄 CLAUDE.md 範本（省略 = 內建） |
+
+**流程**（`index.ts handleIndependentBotMessage` 開頭：`msg.channel.isDMBased()` → `claimMessage` 去重 → `handleDmMessage`）：白名單判定 → 文字指令 → `getCliBridge(dmChannelId)`，沒有就 `spawnDmBridge` → `registerBridge`（new bridge + sender + 持久化，lazy start）→ `routeDmToBridge`（與 home-channel 路徑相同：ensureAlive → inbound 消費 → `handleCliBridgeReply`）。
+
+**owner vs team**：
+
+| | owner | team |
+|--|-------|------|
+| workingDir | `ownerWorkingDir` | `<teamWorkspaceRoot>/<slug>`，首次 mkdir + 寫 CLAUDE.md（{name}/{userId}/{owner}/{workingDir} 佔位） |
+| CLI 啟動 | 與一般 bridge 相同 | `CliProcessConfig.isolation` → `--setting-sources project,local`（不載 ~/.claude 的 settings/hooks/CLAUDE.md，本機操作者身份與個人記憶不外流）+ `--settings {"permissions":{"deny":[Read/Edit/Write/Glob/Grep(//<denyPath>/**)]}}` + `--disallowedTools` |
+| 權限按鈕 | 自己的 DM | `channelConfig.dm.approvalChannelId` = owner 的 DM（spawn 時 `user.createDM()` 解析並持久化）；MCP env `DISCORD_CHANNEL_ID`=owner DM、`DISCORD_ORIGIN_CHANNEL_ID`=同事 DM。`discord-server.ts` 在來源頻道發「⏳ 已送管理者審批 → ✅/❌ 結果」，`AskUserQuestion` 仍問來源使用者 |
+| provider | 繼承模板 | 強制 `claude`（隔離旗標只有 claude provider 實作） |
+
+**隔離實測（2026-10-29，claude 2.1.312）**：`CLAUDE_CONFIG_DIR` 指到新目錄會「Not logged in」（macOS 憑證跟 config dir 綁），不可用；`--setting-sources project` 後 IDENTITY/USER 不再載入；`Read(//Users/wellstseng/.catclaw/**)` deny 規則實跑回「directory is denied by your permission settings」。Bash 無法用路徑規則擋，靠審批送 owner。
+
+**DM 文字指令**（slash 只註冊到 guild，DM 用不到）：`!help`、`!status`、`!session new`（= slash /session new）、`!cd <path>`（owner 限定，= slash /cd）。
+
+**Sender 變更**：SharedBotPool client 加 `DirectMessages` intent + `Partials.Channel`；`init()`/`withChannel()` 從 `GuildTextBasedChannel` 放寬為 `SendableChannels`（`ch.isSendable()`），log 用 `describeChannel()`（guild `#name` / `DM:<user>`）。`channel-naming.ts` 原本就以 `"name" in channel` 守門，DM 不會被改名。
+
 ## 檔案結構
 
 | 檔案 | 職責 |
@@ -71,7 +106,8 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 | `process.ts` | `CliProcess` — 持久 child process 封裝（EventEmitter、stdout diff 解析） |
 | `bridge.ts` | `CliBridge` — 生命週期管理（直送 stdin、自動重啟、keep-alive、中斷） |
 | `stdout-log.ts` | `StdoutLogger` — JSONL 日誌 + 記憶體快取 + WebSocket hook |
-| `index.ts` | 全域單例：`initCliBridges` / `getCliBridge` / `shutdownAllBridges` |
+| `index.ts` | 全域單例：`initCliBridges` / `getCliBridge` / `registerBridge` / `shutdownAllBridges` |
+| `dm.ts` | 私訊 bridge：白名單、每人一條 bridge auto-spawn、team 隔離與審批轉送、`!` 文字指令 |
 | `discord-sender.ts` | Discord 發送抽象層：IndependentBotSender / MainBotSender + `withChannel()` proxy |
 | `reply.ts` | Discord 回覆處理：streaming edit + 重試 fallback + 送達狀態追蹤 |
 | `control-request.ts` | control_request → Discord 互動（AskUserQuestion select menu / ExitPlanMode 核准退回 / 其他工具 允許拒絕）→ control_response |

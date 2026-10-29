@@ -160,6 +160,23 @@ function buildAction(keyword: ActionKeyword, content: string, channelId: string)
   }
 }
 
+/**
+ * 排程顯示名稱（也是 id 前綴）。
+ * exec 只留「做什麼」：剝 --verbose/--silent flag、去掉 `cd … &&` 前綴與 bash/python3 等直譯器、
+ * 路徑只留檔名並去副檔名——否則名字會被 flag 與長路徑吃光（舊症狀：「--verbose bash /Users/wellstse」）。
+ */
+const INTERPRETERS = new Set(["bash", "sh", "zsh", "python", "python3", "node", "npx", "pnpm"]);
+function jobName(keyword: ActionKeyword, content: string): string {
+  if (keyword !== "exec") return content.slice(0, 40);
+  let tokens = parseExecFlags(content).command.split(/\s+/);
+  const andIdx = tokens.indexOf("&&");
+  if (tokens[0] === "cd" && andIdx > 0) tokens = tokens.slice(andIdx + 1);
+  if (INTERPRETERS.has(tokens[0]) && tokens.length > 1) tokens = tokens.slice(1);
+  tokens = tokens.map(t => t.includes("/") ? t.slice(t.lastIndexOf("/") + 1) : t);
+  tokens[0] = tokens[0].replace(/\.(sh|py|js|mjs|ts)$/, "");
+  return tokens.join(" ").slice(0, 40);
+}
+
 /** action 類型的顯示名稱 */
 function actionLabel(keyword: ActionKeyword): string {
   switch (keyword) {
@@ -256,7 +273,7 @@ function handleAdd(rest: string, channelId: string, agentId?: string): SkillResu
 
     const action = buildAction(actionKw, content, channelId);
     const id = addCronJob({
-      name: content.slice(0, 30),
+      name: jobName(actionKw, content),
       enabled: true,
       agentId,
       schedule: { kind: "at", at: parsed.at },
@@ -282,7 +299,7 @@ function handleAdd(rest: string, channelId: string, agentId?: string): SkillResu
 
     const action = buildAction(actionKw, content, channelId);
     const id = addCronJob({
-      name: content.slice(0, 30),
+      name: jobName(actionKw, content),
       enabled: true,
       agentId,
       schedule: { kind: "every", everyMs: interval.ms },
@@ -304,7 +321,7 @@ function handleAdd(rest: string, channelId: string, agentId?: string): SkillResu
 
     const action = buildAction(actionKw, content, channelId);
     const id = addCronJob({
-      name: content.slice(0, 30),
+      name: jobName(actionKw, content),
       enabled: true,
       agentId,
       schedule: { kind: "cron", expr, tz: "Asia/Taipei" },
