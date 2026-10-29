@@ -317,6 +317,23 @@
         "顯示名截斷"
       ],
       "scope": "shared"
+    },
+    {
+      "name": "catclaw-兩台機器輪流開發-上git前先fetch看遠端是否領先-架構可能已被另一台改掉",
+      "path": "memory/shared/版控/catclaw-兩台機器輪流開發-上git前先fetch看遠端是否領先-架構可能已被另一台改掉.md",
+      "triggers": [
+        "上GIT",
+        "git push",
+        "non-fast-forward",
+        "rebase",
+        "兩台機器",
+        "Windows 機",
+        "遠端領先",
+        "fetch",
+        "架構變更",
+        "control_request"
+      ],
+      "scope": "shared"
     }
   ]
 }

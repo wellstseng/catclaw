@@ -34,9 +34,10 @@
 
 | 範疇 | atom 數 | 深入 |
 |------|---------|------|
+| 版控 | 1 | `memory/shared/版控/catclaw-兩台機器輪流開發-上git前先fetch看遠端是否領先-架構可能已被另一台改掉.md` |
 | 工作流 | 2 | `memory/shared/工作流/` |
-| personal | 1 | `memory/personal/` |
 | failures | 1 | `memory/failures/` |
+| personal | 1 | `memory/personal/` |
 
 | 尚未歸類（shared/ 平鋪） | 說明 |
 |------|------|
