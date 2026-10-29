@@ -27,3 +27,4 @@
 | catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級 | memory/shared/工作流/catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級.md | cli-bridge, botToken, bypassPermissions, dangerouslySkipPermissions, control-request.ts, main-bot | shared |
 | 將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri | memory/personal/wellstseng/將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri.md | catclaw, 一般router, cli-bridge | personal:wellstseng |
 | catclaw-cli-bridge頻道文字訊息直通cli-文字skill與router-session指令無效-rebuild會銷毀舊bot-client | memory/shared/工作流/catclaw-cli-bridge頻道文字訊息直通cli-文字skill與router-session指令無效-rebuild會銷毀舊bot-client.md | cli-bridge, 開新對話, session new, rebuildBridgeForChannel, startNewSession, /session clear, /reset-session, bridge skill | shared |
+| feedback-截斷的顯示名不能當判重依據-要看底層定義再說重複 | memory/failures/驗證與實證/feedback-截斷的顯示名不能當判重依據-要看底層定義再說重複.md | 排程重複, cron-jobs.json, 名字相同, 判重, duplicate, 去重, 顯示名截斷 | shared |

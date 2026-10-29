@@ -303,6 +303,20 @@
         "bridge skill"
       ],
       "scope": "shared"
+    },
+    {
+      "name": "feedback-截斷的顯示名不能當判重依據-要看底層定義再說重複",
+      "path": "memory/failures/驗證與實證/feedback-截斷的顯示名不能當判重依據-要看底層定義再說重複.md",
+      "triggers": [
+        "排程重複",
+        "cron-jobs.json",
+        "名字相同",
+        "判重",
+        "duplicate",
+        "去重",
+        "顯示名截斷"
+      ],
+      "scope": "shared"
     }
   ]
 }
