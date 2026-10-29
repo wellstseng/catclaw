@@ -119,8 +119,9 @@ export interface CliBridgeDmBinding {
   userName: string;
   /** owner = 本人（完整權限）；team = 同事（隔離 + 審批送 owner） */
   kind: "owner" | "team";
-  /** team 專用：權限按鈕改發到此頻道（owner 的 DM channel） */
+  /** team 專用：權限按鈕改發到此頻道（owner 的 DM channel），並只接受 approverId 的互動 */
   approvalChannelId?: string;
+  approverId?: string;
   /** team 專用：spawn 時套用的隔離設定（從 cli-bridge-dm.json 快照） */
   isolation?: CliIsolation;
 }
@@ -205,8 +206,6 @@ export interface CliProcessConfig {
   model?: string;
   /** Thinking 開關（claude 端 alwaysThinkingEnabled，僅 provider=claude） */
   thinking?: boolean;
-  /** 權限按鈕改發到此頻道（預設 = channelId；team DM bridge 設為 owner 的 DM） */
-  approvalChannelId?: string;
   /** 隔離模式（team DM bridge，僅 provider=claude） */
   isolation?: CliIsolation;
 }

@@ -9,7 +9,8 @@
  *  - team（同事）：workingDir = <teamWorkspaceRoot>/<slug>（首次建立 + 寫 CLAUDE.md），
  *    CLI 以隔離模式啟動（不載 ~/.claude、拒讀 denyPaths），權限按鈕改發 owner 的 DM
  *
- * DM 內沒有 slash command，改用文字指令：!help / !status / !session new / !cd <path>（owner 限定）
+ * DM 內沒有 slash command，改用文字指令：!help / !status / !session new / !cd <path>（owner 限定）；
+ * 「開新對話」等口令（index.ts isNewSessionCommand）同樣有效
  *
  * Discord 的 DM channel id 對「bot × 使用者」固定，所以 auto-spawn 的 bridge 持久化到
  * cli-bridges.json 後，重啟會照常由 initBridgesFromConfig 重建。
@@ -28,9 +29,11 @@ import {
   consumeBridgeInboundHistory,
   getCliBridge,
   getCliBridgeByLabel,
+  isNewSessionCommand,
   loadCliBridgeConfigs,
   rebuildBridgeForChannel,
   registerBridge,
+  startNewSession,
 } from "./index.js";
 
 // ── 設定 ────────────────────────────────────────────────────────────────────
@@ -209,6 +212,7 @@ async function spawnDmBridge(msg: Message, who: DmUser, dmCfg: DmBridgeConfig, v
       await msg.reply("⚠️ 無法連到管理者的私訊，暫時無法服務。").catch(() => {});
       return null;
     }
+    binding.approverId = ownerId;
     binding.isolation = teamIsolation(dmCfg);
   }
 
@@ -320,6 +324,7 @@ const HELP_TEXT = [
 /** 回 true = 已當指令處理完，不再送進 CLI */
 async function handleDmCommand(msg: Message, who: DmUser): Promise<boolean> {
   const text = msg.content.trim();
+  if (isNewSessionCommand(text)) return newSession(msg);
   if (!text.startsWith("!")) return false;
   const [cmd, ...rest] = text.slice(1).split(/\s+/);
   const arg = rest.join(" ").trim();
@@ -341,18 +346,9 @@ async function handleDmCommand(msg: Message, who: DmUser): Promise<boolean> {
       return true;
     }
 
-    case "session": {
+    case "session":
       if (arg.toLowerCase() !== "new") { await msg.reply("用法：`!session new`"); return true; }
-      if (!bridge) { await msg.reply("尚未建立工作階段，沒有可重置的 session。"); return true; }
-      try {
-        bridge.clearSessionId(); // 與 slash /session new 同：先清 runtime，再刪持久化，重建時不帶 --resume
-        await rebuildBridgeForChannel(msg.channelId, (_c, chc) => { delete chc.sessionId; });
-        await msg.reply("✅ 已開新對話。");
-      } catch (err) {
-        await msg.reply(`❌ 重置失敗：${err instanceof Error ? err.message : String(err)}`);
-      }
-      return true;
-    }
+      return newSession(msg);
 
     case "cd": {
       if (who.kind !== "owner") { await msg.reply("此指令僅管理者可用。"); return true; }
@@ -373,4 +369,17 @@ async function handleDmCommand(msg: Message, who: DmUser): Promise<boolean> {
       await msg.reply(`未知指令 \`!${cmd}\`\n${HELP_TEXT}`);
       return true;
   }
+}
+
+/** = slash /session new（index.ts startNewSession）。rebuild 會換 sender，先用原 msg 回 ⏳ */
+async function newSession(msg: Message): Promise<boolean> {
+  if (!getCliBridge(msg.channelId)) { await msg.reply("尚未建立工作階段，沒有可重置的 session。"); return true; }
+  try {
+    await msg.reply("⏳ 開新對話中…");
+    const nb = await startNewSession(msg.channelId);
+    await nb?.getSender().send("✅ 已開新對話（舊 session 已清除，下次對話建立新 session）");
+  } catch (err) {
+    await msg.reply(`❌ 重置失敗：${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+  }
+  return true;
 }

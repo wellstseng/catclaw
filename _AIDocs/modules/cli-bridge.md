@@ -89,12 +89,12 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 |--|-------|------|
 | workingDir | `ownerWorkingDir` | `<teamWorkspaceRoot>/<slug>`，首次 mkdir + 寫 CLAUDE.md（{name}/{userId}/{owner}/{workingDir} 佔位） |
 | CLI 啟動 | 與一般 bridge 相同 | `CliProcessConfig.isolation` → `--setting-sources project,local`（不載 ~/.claude 的 settings/hooks/CLAUDE.md，本機操作者身份與個人記憶不外流）+ `--settings {"permissions":{"deny":[Read/Edit/Write/Glob/Grep(//<denyPath>/**)]}}` + `--disallowedTools` |
-| 權限按鈕 | 自己的 DM | `channelConfig.dm.approvalChannelId` = owner 的 DM（spawn 時 `user.createDM()` 解析並持久化）；MCP env `DISCORD_CHANNEL_ID`=owner DM、`DISCORD_ORIGIN_CHANNEL_ID`=同事 DM。`discord-server.ts` 在來源頻道發「⏳ 已送管理者審批 → ✅/❌ 結果」，`AskUserQuestion` 仍問來源使用者 |
+| 權限按鈕 | 自己的 DM | `control-request.ts resolveApprovalRoute()`：`channelConfig.dm.approvalChannelId`（spawn 時 `user.createDM()` 解析並持久化）+ `approverId`（owner id）→ ExitPlanMode／其他工具的按鈕改發 owner 的 DM、只接受 owner 互動，訊息開頭標「來自 <名字> 的私訊」；發話者 DM 只收「⏳ 已送管理者審批 → ✅/❌」。`AskUserQuestion` 仍問發話者。送不到 owner 一律 deny，不退回發話者自審 |
 | provider | 繼承模板 | 強制 `claude`（隔離旗標只有 claude provider 實作） |
 
-**隔離實測（2026-10-29，claude 2.1.312）**：`CLAUDE_CONFIG_DIR` 指到新目錄會「Not logged in」（macOS 憑證跟 config dir 綁），不可用；`--setting-sources project` 後 IDENTITY/USER 不再載入；`Read(//Users/wellstseng/.catclaw/**)` deny 規則實跑回「directory is denied by your permission settings」。Bash 無法用路徑規則擋，靠審批送 owner。
+**隔離實測（2026-10-29，claude 2.1.312）**：`CLAUDE_CONFIG_DIR` 指到新目錄會「Not logged in」（macOS 憑證跟 config dir 綁），不可用；`--setting-sources project` 後 IDENTITY/USER 不再載入；`Read(//Users/wellstseng/.catclaw/**)` deny 規則實跑回「directory is denied by your permission settings」。Bash 無法用路徑規則擋，靠審批送 owner。審批走 `--permission-prompt-tool stdio` 的 control_request（10/16 架構），MCP `discord-server.ts` 已與審批無關。
 
-**DM 文字指令**（slash 只註冊到 guild，DM 用不到）：`!help`、`!status`、`!session new`（= slash /session new）、`!cd <path>`（owner 限定，= slash /cd）。
+**DM 文字指令**（slash 只註冊到 guild，DM 用不到）：`!help`、`!status`、`!session new` 與「開新對話」等口令（都走 `index.ts startNewSession`）、`!cd <path>`（owner 限定，= slash /cd）。
 
 **Sender 變更**：SharedBotPool client 加 `DirectMessages` intent + `Partials.Channel`；`init()`/`withChannel()` 從 `GuildTextBasedChannel` 放寬為 `SendableChannels`（`ch.isSendable()`），log 用 `describeChannel()`（guild `#name` / `DM:<user>`）。`channel-naming.ts` 原本就以 `"name" in channel` 守門，DM 不會被改名。
 

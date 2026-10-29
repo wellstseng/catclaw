@@ -790,8 +790,8 @@ const NEW_SESSION_PHRASES = new Set([
   "newsession", "/new", "/clear", "/reset",
 ]);
 
-/** 整則訊息（去 mention、空白、句尾標點）等於口令才算，避免句中提到「新對話」誤觸 */
-function isNewSessionCommand(content: string): boolean {
+/** 整則訊息（去 mention、空白、句尾標點）等於口令才算，避免句中提到「新對話」誤觸。dm.ts 也用 */
+export function isNewSessionCommand(content: string): boolean {
   const normalized = content
     .replace(/<@!?\d+>/g, "")
     .replace(/[\s!！。.~～]+/g, "")

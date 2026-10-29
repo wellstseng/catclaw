@@ -745,8 +745,7 @@ export class CliBridge {
       effort: this.channelConfig.effort ?? this.bridgeConfig.effort,
       model: this.channelConfig.model ?? this.bridgeConfig.model,
       thinking: this.channelConfig.thinking ?? this.bridgeConfig.thinking,
-      // team DM bridge：權限按鈕發到 owner 的 DM、CLI 以隔離模式啟動（見 dm.ts）
-      approvalChannelId: this.channelConfig.dm?.approvalChannelId,
+      // team DM bridge：CLI 以隔離模式啟動（見 dm.ts；審批改送 owner 在 control-request.ts 處理）
       isolation: this.channelConfig.dm?.isolation,
     };
 
