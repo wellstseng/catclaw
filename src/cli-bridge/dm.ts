@@ -104,6 +104,73 @@ export function loadDmConfig(): DmBridgeConfig | null {
   }
 }
 
+// ── 本機開關（/dm skill 用）────────────────────────────────────────────────────
+
+/** 同事工作目錄根的平台預設：刻意放在操作者家目錄外，否則會被 denyPaths 擋住 */
+function defaultTeamWorkspaceRoot(): string {
+  if (process.platform === "win32") return "C:/catclaw-dm";
+  if (process.platform === "darwin") return "/Users/Shared/catclaw-dm";
+  return "/srv/catclaw-dm";
+}
+
+export interface DmToggleResult {
+  /** 設定檔絕對路徑 */
+  path: string;
+  /** 本次是否新建設定檔（首次在此機開啟） */
+  created: boolean;
+  enabled: boolean;
+  ownerWorkingDir: string;
+  teamWorkspaceRoot: string;
+  /** users 名單人數（不含 owner 自動允許） */
+  userCount: number;
+}
+
+/**
+ * 切換本機 DM bridge 開關。檔案不存在且要開 → 以平台預設新建（名單只有 owner，同事待補）；
+ * 其餘只改 enabled、保留檔內所有欄位。寫完 loadDmConfig() 下一則 DM 就生效（每次讀檔）。
+ */
+export function setDmBridgeEnabled(enabled: boolean, owner: { userId: string; name: string }): DmToggleResult {
+  const p = getDmConfigPath();
+  const exists = existsSync(p);
+  const raw: Partial<DmBridgeConfig> = exists
+    ? (JSON.parse(readFileSync(p, "utf-8")) as Partial<DmBridgeConfig>)
+    : {
+        ownerId: owner.userId,
+        ownerWorkingDir: "~/.claude",
+        teamWorkspaceRoot: defaultTeamWorkspaceRoot(),
+        users: { [owner.userId]: { name: owner.name } },
+        team: { denyPaths: [homedir()], disallowedTools: [] },
+      };
+  const next = { ...raw, enabled };
+  if (enabled) mkdirSync(expandHome(next.teamWorkspaceRoot ?? defaultTeamWorkspaceRoot()), { recursive: true });
+  writeFileSync(p, JSON.stringify(next, null, 2) + "\n", "utf-8");
+  log.info(`[cli-bridge:dm] 本機 DM bridge ${enabled ? "開啟" : "關閉"}（${exists ? "更新" : "新建"} ${p}）`);
+  const users = next.users ?? {};
+  return {
+    path: p,
+    created: !exists,
+    enabled,
+    ownerWorkingDir: expandHome(next.ownerWorkingDir ?? ""),
+    teamWorkspaceRoot: expandHome(next.teamWorkspaceRoot ?? ""),
+    userCount: Object.keys(users).filter(id => id !== (next.ownerId ?? owner.userId)).length,
+  };
+}
+
+/** 本機 DM bridge 現況（status 用）；檔案不存在 = 關閉 */
+export function getDmBridgeStatus(): DmToggleResult | null {
+  const cfg = loadDmConfig();
+  if (!cfg) return null;
+  const ownerId = resolveOwnerId(cfg);
+  return {
+    path: getDmConfigPath(),
+    created: false,
+    enabled: cfg.enabled,
+    ownerWorkingDir: cfg.ownerWorkingDir,
+    teamWorkspaceRoot: cfg.teamWorkspaceRoot,
+    userCount: Object.keys(cfg.users).filter(id => id !== ownerId).length,
+  };
+}
+
 function expandHome(p: string): string {
   return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
 }

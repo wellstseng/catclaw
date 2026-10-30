@@ -69,6 +69,8 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 
 **設定**：`~/.catclaw/cli-bridge-dm.json`（每則 DM 重讀，改完即生效）
 
+> **本機開關**：對主 bot 下 `/dm on` / `/dm off` / `/dm status`（或口令「把私訊切成cli bridge」「私訊切回」），只改本機 `cli-bridge-dm.json` 的 `enabled`，不需重啟；檔不存在時 on 會用平台預設新建（名單只有 owner）。同一 bot 的私訊同時只能一台機器接，換機前先在舊機 off。skill 在 `skills/builtin/dm-bridge.ts`。
+
 | 欄位 | 說明 |
 |------|------|
 | `enabled` | 總開關 |
@@ -77,7 +79,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 | `ownerWorkingDir` | owner DM bridge 的工作目錄 |
 | `teamWorkspaceRoot` | 同事工作目錄的根（預設 `/Users/Shared/catclaw-dm`，刻意放家目錄外，否則被 denyPaths 擋） |
 | `users` | `userId → { name, enabled?, workingDir? }`；不在名單 = 回一句「僅限授權成員」後忽略（每人只回一次） |
-| `team.denyPaths` | 同事 session 不可讀寫的路徑前綴（預設本機 home） |
+| `team.denyPaths` | 同事 session 不可讀寫的路徑前綴（預設本機 home）。接受 `/abs` 與 Windows `C:/…`／`C:\\…`；非絕對路徑會 warn 並跳過 |
 | `team.disallowedTools` | 同事 session 直接禁用的工具 |
 | `team.claudeMdTemplatePath` | 同事工作目錄 CLAUDE.md 範本（省略 = 內建） |
 
