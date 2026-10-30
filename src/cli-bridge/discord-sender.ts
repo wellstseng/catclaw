@@ -255,6 +255,10 @@ export class MainBotSender implements BridgeSender {
 
   constructor(private readonly mainClient: Client) {}
 
+  getClient(): Client {
+    return this.mainClient;
+  }
+
   async init(channelId: string): Promise<void> {
     const ch = await this.mainClient.channels.fetch(channelId);
     if (!ch?.isSendable()) {

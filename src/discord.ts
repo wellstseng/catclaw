@@ -494,6 +494,11 @@ async function handleMessage(
         return;
       }
     }
+
+    // DM bridge：收 DM 的 bot 是主 bot 時，名單內的人走 CLI Bridge；名單外照舊進 agent-loop
+    const { handleDmMessage, dmSourceFromMainBot } = await import("./cli-bridge/dm.js");
+    const dmSource = dmSourceFromMainBot(message.client);
+    if (dmSource && await handleDmMessage(message, dmSource)) return;
   }
 
   // 查詢 per-channel 存取設定（含繼承鏈：Thread → Parent → Guild）

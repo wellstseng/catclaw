@@ -33,7 +33,7 @@ import {
 import { log } from "../logger.js";
 import type { CliBridge } from "./bridge.js";
 import type { CliBridgeEvent, ControlDecision } from "./types.js";
-import type { BridgeSender, IndependentBotSender } from "./discord-sender.js";
+import type { BridgeSender, IndependentBotSender, MainBotSender } from "./discord-sender.js";
 
 const TIMEOUT_MS = Number(process.env.CATCLAW_PERMISSION_TIMEOUT_MS ?? 600_000);
 const TIMEOUT_MIN = Math.round(TIMEOUT_MS / 60_000);
@@ -86,8 +86,9 @@ async function resolveApprovalRoute(bridge: CliBridge, sender: BridgeSender): Pr
   if (dm?.kind !== "team") return null;
   if (!dm.approvalChannelId || !dm.approverId) throw new Error("team DM bridge 缺 approvalChannelId/approverId，無法送審");
   const base = bridge.getSender();
-  if (base.mode !== "independent-bot") throw new Error("team DM bridge 需要獨立 bot 才能送審到 owner");
-  const client = (base as IndependentBotSender).getClient();
+  const client = base.mode === "independent-bot"
+    ? (base as IndependentBotSender).getClient()
+    : (base as MainBotSender).getClient();
   const ch = await client.channels.fetch(dm.approvalChannelId);
   if (!ch?.isSendable()) throw new Error(`owner 審批頻道 ${dm.approvalChannelId} 不可發送`);
   return {

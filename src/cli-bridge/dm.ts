@@ -23,7 +23,7 @@ import type { Client, Message } from "discord.js";
 import { log } from "../logger.js";
 import { config, resolveCatclawDir } from "../core/config.js";
 import type { CliBridge } from "./bridge.js";
-import { IndependentBotSender } from "./discord-sender.js";
+import { IndependentBotSender, MainBotSender } from "./discord-sender.js";
 import type { CliBridgeChannelConfig, CliBridgeConfig, CliBridgeDmBinding, CliIsolation } from "./types.js";
 import {
   claimMessage,
@@ -107,7 +107,7 @@ export function loadDmConfig(): DmBridgeConfig | null {
 
 // ── DM 監聽 bot ───────────────────────────────────────────────────────────────
 
-export type DmListenerState = "disabled" | "no-token" | "via-bridge" | "listening";
+export type DmListenerState = "disabled" | "no-token" | "main-bot" | "via-bridge" | "listening";
 
 let _listener: IndependentBotSender | null = null;
 
@@ -122,9 +122,10 @@ export async function ensureDmListener(): Promise<DmListenerState> {
   if (!dmCfg?.enabled) return "disabled";
   const token = resolveDmBotToken(dmCfg);
   if (!token) {
-    log.warn("[cli-bridge:dm] 沒有收 DM 的 bot token（cli-bridge-dm.json.botToken 或 cli-bridges.json 任一條 botToken），私訊不會進 DM bridge");
+    log.warn("[cli-bridge:dm] 沒有收 DM 的 bot token（cli-bridge-dm.json / cli-bridges.json / catclaw.json 都沒有），私訊不會進 DM bridge");
     return "no-token";
   }
+  if (token === mainBotToken()) return "main-bot"; // 主 bot 本來就在線，discord.ts 直接路由
   if (loadCliBridgeConfigs().some(c => c.botToken === token)) return "via-bridge";
   if (_listener) return "listening";
 
@@ -141,7 +142,8 @@ export async function ensureDmListener(): Promise<DmListenerState> {
   return "listening";
 }
 
-/** 新建 DM bridge 的設定模板：沿用 cli-bridges.json 第一條的 CLI 參數，bot 換成收 DM 的那顆 */
+/** 新建 DM bridge 的設定模板：沿用 cli-bridges.json 第一條的 CLI 參數，bot 換成收 DM 的那顆；
+ *  主 bot 時 botToken 留空 → sender 走 main-bot fallback，不會用同一 token 再登入一個 client */
 function dmTemplate(dmCfg: DmBridgeConfig, token: string): CliBridgeConfig {
   const base = loadCliBridgeConfigs()[0];
   return {
@@ -150,7 +152,7 @@ function dmTemplate(dmCfg: DmBridgeConfig, token: string): CliBridgeConfig {
     label: "dm",
     workingDir: dmCfg.ownerWorkingDir,
     channels: {},
-    botToken: token,
+    botToken: token === mainBotToken() ? undefined : token,
   };
 }
 
@@ -173,8 +175,8 @@ export interface DmToggleResult {
   teamWorkspaceRoot: string;
   /** users 名單人數（不含 owner 自動允許） */
   userCount: number;
-  /** 有沒有收 DM 的 bot token（cli-bridge-dm.json.botToken 或 cli-bridges.json 任一條） */
-  hasToken: boolean;
+  /** 收 DM 的是哪種 bot（主 bot／獨立 bot／無） */
+  botLabel: string;
 }
 
 /**
@@ -205,7 +207,7 @@ export function setDmBridgeEnabled(enabled: boolean, owner: { userId: string; na
     ownerWorkingDir: expandHome(next.ownerWorkingDir ?? ""),
     teamWorkspaceRoot: expandHome(next.teamWorkspaceRoot ?? ""),
     userCount: Object.keys(users).filter(id => id !== (next.ownerId ?? owner.userId)).length,
-    hasToken: !!(next.botToken || loadCliBridgeConfigs().find(c => c.botToken)),
+    botLabel: describeDmBot({ ...next, users, team: next.team ?? { denyPaths: [], disallowedTools: [] } } as DmBridgeConfig),
   };
 }
 
@@ -221,7 +223,7 @@ export function getDmBridgeStatus(): DmToggleResult | null {
     ownerWorkingDir: cfg.ownerWorkingDir,
     teamWorkspaceRoot: cfg.teamWorkspaceRoot,
     userCount: Object.keys(cfg.users).filter(id => id !== ownerId).length,
-    hasToken: resolveDmBotToken(cfg) !== null,
+    botLabel: describeDmBot(cfg),
   };
 }
 
@@ -234,9 +236,21 @@ function resolveOwnerId(dmCfg: DmBridgeConfig): string | null {
   return config.admin?.allowedUserIds?.[0] ?? null;
 }
 
+/** 收 DM 的 bot token：cli-bridge-dm.json → cli-bridges.json 任一條 → catclaw.json 主 bot */
 function resolveDmBotToken(dmCfg: DmBridgeConfig): string | null {
   if (dmCfg.botToken) return dmCfg.botToken;
-  return loadCliBridgeConfigs().find(c => c.botToken)?.botToken ?? null;
+  return loadCliBridgeConfigs().find(c => c.botToken)?.botToken ?? mainBotToken();
+}
+
+function mainBotToken(): string | null {
+  return config.discord?.token || null;
+}
+
+/** 收 DM 的是哪種 bot（status 顯示用） */
+function describeDmBot(dmCfg: DmBridgeConfig): string {
+  const token = resolveDmBotToken(dmCfg);
+  if (!token) return "❌ 無（cli-bridge-dm.json / cli-bridges.json / catclaw.json 都沒 token）";
+  return token === mainBotToken() ? "主 bot（catclaw.json discord.token）" : "獨立 bot";
 }
 
 interface DmUser {
@@ -280,31 +294,51 @@ export interface DmSource {
 export function dmSourceFromBridge(bridge: CliBridge): DmSource | null {
   const cfg = bridge.getBridgeConfig();
   const sender = bridge.getSender();
-  if (!cfg.botToken || sender.mode !== "independent-bot") return null;
-  return { botToken: cfg.botToken, client: (sender as IndependentBotSender).getClient(), template: cfg };
+  if (sender.mode === "independent-bot" && cfg.botToken) {
+    return { botToken: cfg.botToken, client: (sender as IndependentBotSender).getClient(), template: cfg };
+  }
+  const main = mainBotToken();
+  if (sender.mode === "main-bot" && main) {
+    return { botToken: main, client: (sender as MainBotSender).getClient(), template: cfg };
+  }
+  return null;
 }
 
 /**
- * 收到 DM 的唯一入口（index.ts handleIndependentBotMessage 或下方 DM 監聽 bot 轉來，同一則訊息只進來一次）。
- * @param source 收到這則訊息的 bot——只拿它的 token / client / 模板，不代表路由目標
+ * 主 bot 收到 DM 時（discord.ts）取 DmSource；收 DM 的 bot 不是主 bot 時回 null，
+ * 讓私訊照舊進 agent-loop。
  */
-export async function handleDmMessage(msg: Message, source: DmSource): Promise<void> {
-  if (msg.author.bot) return;
+export function dmSourceFromMainBot(client: Client): DmSource | null {
   const dmCfg = loadDmConfig();
-  if (!dmCfg?.enabled) return;
+  if (!dmCfg?.enabled) return null;
+  const main = mainBotToken();
+  if (!main || resolveDmBotToken(dmCfg) !== main) return null;
+  return { botToken: main, client, template: dmTemplate(dmCfg, main) };
+}
 
-  if (source.botToken !== resolveDmBotToken(dmCfg)) return; // 不是指定收 DM 的 bot
+/**
+ * 收到 DM 的唯一入口（index.ts handleIndependentBotMessage、discord.ts 主 bot、或 DM 監聽 bot 轉來，
+ * 同一則訊息只進來一次）。
+ * @param source 收到這則訊息的 bot——只拿它的 token / client / 模板，不代表路由目標
+ * @returns true = 這則由 DM bridge 處理；false = 不歸這裡（停用／不是收 DM 的 bot／不在名單），呼叫端自行決定後續
+ */
+export async function handleDmMessage(msg: Message, source: DmSource): Promise<boolean> {
+  if (msg.author.bot) return false;
+  const dmCfg = loadDmConfig();
+  if (!dmCfg?.enabled) return false;
+
+  if (source.botToken !== resolveDmBotToken(dmCfg)) return false; // 不是指定收 DM 的 bot
 
   // 名單外一律靜默：同一個 bot 可能由多台機器同時接，各機名單分流，不是本機的人不能回話
   const who = resolveDmUser(dmCfg, msg.author.id, msg.author.displayName || msg.author.username);
   if (!who) {
     log.info(`[cli-bridge:dm] 不在本機名單，忽略 ${msg.author.tag} (${msg.author.id})`);
-    return;
+    return false;
   }
 
   if (msg.channel.partial) await msg.channel.fetch();
 
-  if (await handleDmCommand(msg, who)) return;
+  if (await handleDmCommand(msg, who)) return true;
 
   let bridge = getCliBridge(msg.channelId);
   if (!bridge) {
@@ -315,8 +349,9 @@ export async function handleDmMessage(msg: Message, source: DmSource): Promise<v
     }
     bridge = (await p) ?? undefined;
   }
-  if (!bridge) return;
+  if (!bridge) return true; // 建不起來已回覆使用者，不再丟給 agent-loop
   await routeDmToBridge(bridge, msg);
+  return true;
 }
 
 // ── 建 bridge ───────────────────────────────────────────────────────────────

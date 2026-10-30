@@ -74,7 +74,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 | 欄位 | 說明 |
 |------|------|
 | `enabled` | 總開關 |
-| `botToken` | 收 DM 的 bot token；省略 = cli-bridges.json 第一條的 botToken。**兩邊都沒有 = 私訊永遠進不來**（啟動與 `/dm on` 會 warn）。有頻道 bridge 用同一顆 bot 就沿用它的連線；沒有則 `ensureDmListener()` 單獨登入一個只收私訊的 client |
+| `botToken` | 收 DM 的 bot。優先序：此欄 → cli-bridges.json 任一條的 botToken → **catclaw.json 主 bot（預設，不用填）**。主 bot 收時由 `discord.ts` 直接路由（名單內走 bridge、名單外進 agent-loop）；獨立 bot 且沒有頻道 bridge 用它時，`ensureDmListener()` 單獨登入只收私訊 |
 | `ownerId` | 本人 user id；省略 = `catclaw.json` `admin.allowedUserIds[0]` |
 | `ownerWorkingDir` | owner DM bridge 的工作目錄 |
 | `teamWorkspaceRoot` | 同事工作目錄的根（預設 `/Users/Shared/catclaw-dm`，刻意放家目錄外，否則被 denyPaths 擋） |

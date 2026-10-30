@@ -10,6 +10,7 @@
  *   /dm status | 狀態  看本機現況（預設）
  *
  * 設定檔：~/.catclaw/cli-bridge-dm.json（格式見 cli-bridge/dm.ts DmBridgeConfig）
+ * 收私訊的 bot：cli-bridge-dm.json.botToken → cli-bridges.json 任一條 → catclaw.json 主 bot（預設就能用）
  * 多機：每台機器各自接自己名單上的人（名單外靜默不回），兩台可同時開；
  *       同一個人不要出現在兩台的名單，否則會被回兩次。
  *
@@ -48,7 +49,7 @@ function describe(r: DmToggleResult): string {
     `- owner 工作目錄：\`${r.ownerWorkingDir}\``,
     `- 同事工作目錄根：\`${r.teamWorkspaceRoot}\``,
     `- 同事名單：${r.userCount} 人`,
-    `- 收私訊的 bot token：${r.hasToken ? "有" : "❌ 無（請在 cli-bridge-dm.json 加 botToken）"}`,
+    `- 收私訊的 bot：${r.botLabel}`,
   ].join("\n");
 }
 
@@ -86,7 +87,7 @@ export const skill: Skill = {
     });
     const lines = [`私訊已切到本機（\`${hostname()}\`）的 CLI Bridge ✅`, describe(r), ...lines0];
     if (listener === "no-token") {
-      lines.push("", "❌ **這台沒有收私訊的 bot token**：cli-bridges.json 沒有任何一條有 `botToken`。請在 `cli-bridge-dm.json` 加 `\"botToken\": \"<茱蒂的 token>\"` 再 `/dm on` 一次，否則私訊到不了這裡。");
+      lines.push("", "❌ **這台沒有任何 bot token**（catclaw.json、cli-bridges.json、cli-bridge-dm.json 都沒有），私訊到不了這裡。");
     }
     if (r.created) {
       lines.push("", "⚠ 這台是第一次開，設定檔剛用預設值新建：名單只有你，同事請編輯 `users` 加入（可直接複製另一台的 `users` 區塊）。");
