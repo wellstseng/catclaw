@@ -10,8 +10,8 @@
  *   /dm status | 狀態  看本機現況（預設）
  *
  * 設定檔：~/.catclaw/cli-bridge-dm.json（格式見 cli-bridge/dm.ts DmBridgeConfig）
- * 限制：同一個 bot 的私訊同一時間只能由一台機器接，兩台都開會每則回兩次——
- *       在新機器 on 之前，先到舊機器 off。
+ * 多機：每台機器各自接自己名單上的人（名單外靜默不回），兩台可同時開；
+ *       同一個人不要出現在兩台的名單，否則會被回兩次。
  *
  * tier: admin
  */
@@ -85,7 +85,7 @@ export const skill: Skill = {
     if (r.userCount === 0) {
       lines.push("", "目前沒有同事在名單上，同事私訊會被回「僅限授權成員」。");
     }
-    lines.push("", "⚠ 同一個 bot 的私訊同一時間只能一台機器接；另一台若還開著，先去那邊 `/dm off`，否則每則會回兩次。");
+    lines.push("", "⚠ 每台機器只接自己名單上的人；同一個人若同時在兩台的名單，會被回兩次。");
     return { text: lines.join("\n") };
   },
 };

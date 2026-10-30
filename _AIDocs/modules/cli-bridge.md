@@ -69,7 +69,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 
 **設定**：`~/.catclaw/cli-bridge-dm.json`（每則 DM 重讀，改完即生效）
 
-> **本機開關**：對主 bot 下 `/dm on` / `/dm off` / `/dm status`（或口令「把私訊切成cli bridge」「私訊切回」），只改本機 `cli-bridge-dm.json` 的 `enabled`，不需重啟；檔不存在時 on 會用平台預設新建（名單只有 owner）。同一 bot 的私訊同時只能一台機器接，換機前先在舊機 off。skill 在 `skills/builtin/dm-bridge.ts`。
+> **本機開關**：對主 bot 下 `/dm on` / `/dm off` / `/dm status`（或口令「把私訊切成cli bridge」「私訊切回」），只改本機 `cli-bridge-dm.json` 的 `enabled`，不需重啟；檔不存在時 on 會用平台預設新建（名單只有 owner）。多台機器可同時開：各機只接自己名單上的人、名單外靜默不回，同一個人不要同時在兩台名單。skill 在 `skills/builtin/dm-bridge.ts`。
 
 | 欄位 | 說明 |
 |------|------|

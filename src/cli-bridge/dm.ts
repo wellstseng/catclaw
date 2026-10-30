@@ -212,8 +212,6 @@ function slugify(name: string, userId: string): string {
 
 // ── 入口 ────────────────────────────────────────────────────────────────────
 
-/** 已回過「未授權」的使用者（每個 process 只回一次，避免被當成探測器刷） */
-const _deniedOnce = new Set<string>();
 /** 同一 DM channel 併發訊息共用同一個 spawn Promise */
 const _spawning = new Map<string, Promise<CliBridge | null>>();
 
@@ -229,13 +227,10 @@ export async function handleDmMessage(msg: Message, viaBridge: CliBridge): Promi
   const token = viaBridge.getBridgeConfig().botToken;
   if (!token || token !== resolveDmBotToken(dmCfg)) return; // 不是指定收 DM 的 bot
 
+  // 名單外一律靜默：同一個 bot 可能由多台機器同時接，各機名單分流，不是本機的人不能回話
   const who = resolveDmUser(dmCfg, msg.author.id, msg.author.displayName || msg.author.username);
   if (!who) {
-    if (!_deniedOnce.has(msg.author.id)) {
-      _deniedOnce.add(msg.author.id);
-      await msg.reply("此 bot 的私訊僅限授權成員使用。").catch(() => {});
-    }
-    log.info(`[cli-bridge:dm] 忽略未授權使用者 ${msg.author.tag} (${msg.author.id})`);
+    log.info(`[cli-bridge:dm] 不在本機名單，忽略 ${msg.author.tag} (${msg.author.id})`);
     return;
   }
 
