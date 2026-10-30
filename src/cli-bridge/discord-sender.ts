@@ -175,6 +175,12 @@ export class IndependentBotSender implements BridgeSender {
     log.info(`[bridge-sender] independent bot ready: ${this.client.user?.tag} → ${describeChannel(ch)}`);
   }
 
+  /** 只登入、不綁頻道（DM 監聽用）：onMessage 照常收這顆 bot 的所有訊息 */
+  async initClientOnly(): Promise<void> {
+    this.client = await acquireSharedClient(this.botToken, this);
+    log.info(`[bridge-sender] independent bot ready: ${this.client.user?.tag}（僅監聽，未綁頻道）`);
+  }
+
   /** 由 SharedBotPool 的 messageCreate 呼叫，分派訊息給此 sender 的 callbacks */
   dispatchMessage(msg: Message): void {
     for (const cb of this.messageCallbacks) {

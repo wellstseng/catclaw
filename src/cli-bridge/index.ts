@@ -14,7 +14,7 @@ import { resolveCatclawDir, config } from "../core/config.js";
 import { checkBotMessage, resetOnHumanMessage } from "../discord/bot-circuit-breaker.js";
 import { CliBridge } from "./bridge.js";
 import { createBridgeSender } from "./discord-sender.js";
-import { handleDmMessage } from "./dm.js";
+import { handleDmMessage, dmSourceFromBridge, ensureDmListener } from "./dm.js";
 import type { CliBridgeConfig, CliBridgeChannelConfig, CliBridgesConfig } from "./types.js";
 
 // ── 型別匯出 ────────────────────────────────────────────────────────────────
@@ -139,6 +139,7 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
     log.info("[cli-bridge] 無啟用的 CLI Bridge");
     watchConfigFile();
     startIdleScanner();
+    await ensureDmListener().catch(err => log.error(`[cli-bridge:dm] DM 監聽 bot 啟動失敗：${err instanceof Error ? err.message : String(err)}`));
     return;
   }
 
@@ -197,6 +198,7 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
   );
 
   log.info(`[cli-bridge] 啟動完成（${allBridges.length} 個 bridge）`);
+  await ensureDmListener().catch(err => log.error(`[cli-bridge:dm] DM 監聽 bot 啟動失敗：${err instanceof Error ? err.message : String(err)}`));
 
   // 啟動 hot-reload 監聽 + idle scanner
   watchConfigFile();
@@ -207,7 +209,7 @@ export async function startAllBridges(discordClient: Client): Promise<void> {
 const _crossChannelClaimed = new Set<string>();
 
 /** 認領訊息：已被認領回 false；集合超過 100 筆時砍到 50 */
-function claimMessage(messageId: string): boolean {
+export function claimMessage(messageId: string): boolean {
   if (_crossChannelClaimed.has(messageId)) return false;
   _crossChannelClaimed.add(messageId);
   if (_crossChannelClaimed.size > 100) {
@@ -389,7 +391,8 @@ function handleIndependentBotMessage(bridge: CliBridge, msg: Message): void {
   // DM：不走 mention / home-channel 邏輯，交給 dm.ts（白名單 + 每人一條 bridge）
   if (msg.channel.isDMBased()) {
     if (!claimMessage(msg.id)) return;
-    void handleDmMessage(msg, bridge);
+    const source = dmSourceFromBridge(bridge);
+    if (source) void handleDmMessage(msg, source);
     return;
   }
 

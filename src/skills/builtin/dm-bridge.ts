@@ -18,7 +18,7 @@
 
 import { hostname } from "node:os";
 import type { Skill, SkillContext, SkillResult } from "../types.js";
-import { setDmBridgeEnabled, getDmBridgeStatus } from "../../cli-bridge/dm.js";
+import { setDmBridgeEnabled, getDmBridgeStatus, ensureDmListener } from "../../cli-bridge/dm.js";
 import type { DmToggleResult } from "../../cli-bridge/dm.js";
 
 const ON_TRIGGERS = ["把私訊切成cli bridge", "私訊切成cli bridge"];
@@ -48,6 +48,7 @@ function describe(r: DmToggleResult): string {
     `- owner 工作目錄：\`${r.ownerWorkingDir}\``,
     `- 同事工作目錄根：\`${r.teamWorkspaceRoot}\``,
     `- 同事名單：${r.userCount} 人`,
+    `- 收私訊的 bot token：${r.hasToken ? "有" : "❌ 無（請在 cli-bridge-dm.json 加 botToken）"}`,
   ].join("\n");
 }
 
@@ -73,12 +74,20 @@ export const skill: Skill = {
 
     const ownerName = ctx.message?.author.displayName || ctx.message?.author.username || "owner";
     const r = setDmBridgeEnabled(action === "on", { userId: ctx.authorId, name: ownerName });
+    const lines0: string[] = [];
 
     if (action === "off") {
       return { text: `本機（\`${hostname()}\`）已**停止**接私訊；設定保留在 \`${r.path}\`，\`/dm on\` 可再開。` };
     }
 
-    const lines = [`私訊已切到本機（\`${hostname()}\`）的 CLI Bridge ✅`, describe(r)];
+    const listener = await ensureDmListener().catch(err => {
+      lines0.push(`❌ 收 DM 的 bot 登入失敗：${err instanceof Error ? err.message : String(err)}`);
+      return "no-token" as const;
+    });
+    const lines = [`私訊已切到本機（\`${hostname()}\`）的 CLI Bridge ✅`, describe(r), ...lines0];
+    if (listener === "no-token") {
+      lines.push("", "❌ **這台沒有收私訊的 bot token**：cli-bridges.json 沒有任何一條有 `botToken`。請在 `cli-bridge-dm.json` 加 `\"botToken\": \"<茱蒂的 token>\"` 再 `/dm on` 一次，否則私訊到不了這裡。");
+    }
     if (r.created) {
       lines.push("", "⚠ 這台是第一次開，設定檔剛用預設值新建：名單只有你，同事請編輯 `users` 加入（可直接複製另一台的 `users` 區塊）。");
     }
