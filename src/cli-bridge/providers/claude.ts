@@ -53,10 +53,16 @@ function summarizeToolInput(input: Record<string, unknown>): string {
 function buildDenyRules(denyPaths: string[]): string[] {
   const rules: string[] = [];
   for (const raw of denyPaths) {
-    const p = raw.replace(/\/+$/, "");
-    if (!p.startsWith("/")) continue;
+    // Windows 路徑統一成正斜線（C:\Users\x → C:/Users/x）；規則格式 //C:/Users/x/**
+    const p = raw.replace(/\\/g, "/").replace(/\/+$/, "");
+    const isAbsolute = p.startsWith("/") || /^[A-Za-z]:\//.test(p);
+    if (!isAbsolute) {
+      log.warn(`[cli-bridge] isolation denyPaths 跳過非絕對路徑「${raw}」，此路徑不會被擋`);
+      continue;
+    }
+    const body = p.startsWith("/") ? p : `/${p}`;
     for (const tool of ["Read", "Edit", "Write", "Glob", "Grep"]) {
-      rules.push(`${tool}(/${p}/**)`);
+      rules.push(`${tool}(/${body}/**)`);
     }
   }
   return rules;
