@@ -87,6 +87,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 - **Idle Scanner** — `index.ts` 背景 interval（每 30s），掃描所有 status=idle 的 bridge，`Date.now() - lastUsedAt > idleSuspendMs` 時觸發 `suspend()`。
 - **`rebuildBridgeForChannel(channelId, mutator)` 原子重建** — 單一入口執行「改設定 → 預更新 `_lastConfigJson` → 寫 `cli-bridges.json` → 關舊建新」，消除 `/cd`、`/session new/set` 過去「in-place 重啟 + hot-reload 重建」雙重啟導致 bridge 實例洩漏的 race condition
 - **不排隊，直送 stdin** — CLI 自己管內部 queue，CatClaw 只管送和收
+- **CLI 自發回合（`source=background`）** — Claude CLI 背景 Bash 完成時會自己發 task-notification 開新回合，沒經過 `send()`、`activeTurnId` 為 null。`handleEvent` 收到第一個內容事件（text／thinking／tool_call；不用 `session_init`，Codex 一 spawn 就發它）就補開 `background` turn，照常累積 text／toolCalls 寫 `turns.jsonl`；`reply.ts handleCliBridgeBackgroundReply` 只送最後一個 tool_call 之後的文字到綁定頻道，第一段 reply 在該頻道最後處理的 Discord 訊息下（發話者收得到通知）。期間 Discord 新訊息走 `send()` 既有插話路徑：背景已累積文字先送出、後續事件歸新 turn。此來源的 `control_request` 一律 deny；不掛 idle timeout（沒人能按 ask 按鈕，卡住時使用者發訊息即插話接手）。上線補處理（`drainInboundHistoryOnStartup`）開的 turn 也走同一條回覆路徑。
 - **一 channel 一 process** — CLI session 是單對話，避免 context 混亂
 - **指數退避自動重啟** — 1s, 2s, 4s, 8s, 16s, 30s
 - **SIGINT 中斷** — 5s 超時 → 重啟 process

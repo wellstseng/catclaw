@@ -6,7 +6,7 @@
  * - 自動重啟（指數退避）
  * - Keep-alive（定期 ping）
  * - 訊息直送 stdin（不排隊，CLI 自己管內部 queue）
- * - Turn 追蹤 + 中斷
+ * - Turn 追蹤 + 中斷（含 CLI 自發的背景回合）
  */
 
 import { randomUUID } from "node:crypto";
@@ -156,29 +156,11 @@ export class CliBridge {
       return this.createErrorHandle(turnId, "CLI process 未啟動，正在重啟...");
     }
 
-    // 建立 turn 追蹤
-    const turnState = {
-      resolve: null as ((event: CliBridgeEvent) => void) | null,
-      queue: [] as CliBridgeEvent[],
-      done: false,
-    };
-    this.turnListeners.set(turnId, turnState);
-
-    // 建立 pending turn record（存原始 text，不污染日誌）
-    this.pendingTurns.set(turnId, {
-      record: {
-        turnId,
-        startedAt: new Date().toISOString(),
-        source,
-        userInput: text,
-        toolCalls: [],
-        assistantReply: "",
-        discordDelivery: source === "dashboard" ? "skipped" : "pending",
-      },
-      textParts: [],
-    });
+    // 建立 turn 追蹤 + pending turn record（存原始 text，不污染日誌）
+    this.trackTurn(turnId, source, text);
 
     // 如果有前一個 turn 還在等 → abort 它（插話場景：CLI 內部會中斷舊 turn，但 listener 不知道）
+    // 前一個是 background turn 也走這裡：已累積的文字由背景回覆送出，後續事件併入本 turn
     if (this.activeTurnId && this.activeTurnId !== turnId) {
       const prevTurnId = this.activeTurnId;
       const prevListener = this.turnListeners.get(prevTurnId);
@@ -621,7 +603,7 @@ export class CliBridge {
 
       // 加前綴讓 CLI 知道這批是離線期累積的，而非使用者當下意圖
       const prefixed = `[bridge 上線補處理：以下是你離線期間累積的頻道訊息，請當成要回應的使用者請求處理]\n\n${result.text}`;
-      this.send(prefixed, "discord", { user: "system-inbound-replay", ts: new Date().toISOString() });
+      this.deliverToHomeChannel(this.send(prefixed, "discord", { user: "system-inbound-replay", ts: new Date().toISOString() }));
     } catch (err) {
       log.warn(`[cli-bridge:${this.label}] drainInboundHistoryOnStartup 失敗: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -639,7 +621,8 @@ export class CliBridge {
    * 效果：
    * - CLI 內的 Claude 每 turn 都能從 tag 讀到自己的 bridge label / chat_id / user
    * - 不怕 context 被壓縮（下一 turn 又會重新注入）
-   * - 包含使用 `catclaw-bridge-discord` MCP 的提示，避免誤用官方 plugin 撞 Missing Access
+   * - 有 botToken 時附 `catclaw-bridge-discord` MCP 的提示，避免誤用官方 plugin 撞 Missing Access；
+   *   沒 botToken 時 provider 不注入該 MCP，提示也不提，免得 CLI 找不存在的工具
    */
   private wrapWithChannelTag(
     text: string,
@@ -662,12 +645,15 @@ export class CliBridge {
     if (meta?.user) attrs.push(`user="${escape(meta.user)}"`);
     if (isCrossChannel) attrs.push(`home_channel="${escape(this.channelId)}"`);
 
+    const hasBridgeDiscordTools = !!this.bridgeConfig.botToken;
+    const stdoutHint = "一般回覆直接用 stdout 即可，CatClaw 會自動轉送到 Discord。";
     const hint = isCrossChannel
       ? `這是跨頻道 mention。回覆會自動送到來源頻道 ${chatId}。` +
-        `要操作該頻道請用 mcp__catclaw-bridge-discord__* 工具並指定 channelId="${chatId}"。`
-      : "要主動操作 Discord 請用 mcp__catclaw-bridge-discord__* 工具（走 Bridge 自己的 bot token，限定本頻道）。" +
-        "官方 plugin:discord:discord 的 bot 可能無權限存取本頻道，會撞 Missing Access。" +
-        "一般回覆直接用 stdout 即可，CatClaw 會自動轉送到 Discord。";
+        (hasBridgeDiscordTools ? `要操作該頻道請用 mcp__catclaw-bridge-discord__* 工具並指定 channelId="${chatId}"。` : "")
+      : hasBridgeDiscordTools
+        ? "要主動操作 Discord 請用 mcp__catclaw-bridge-discord__* 工具（走 Bridge 自己的 bot token，限定本頻道）。" +
+          "官方 plugin:discord:discord 的 bot 可能無權限存取本頻道，會撞 Missing Access。" + stdoutHint
+        : stdoutHint;
 
     // 注入當前日期到 tag 屬性（Asia/Taipei），避免 model 以 knowledge cutoff 推斷錯誤年份
     const nowTW = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }).replace(" ", "T");
@@ -769,6 +755,52 @@ export class CliBridge {
     await this.process.spawn();
   }
 
+  // ── 內部：turn 追蹤 ───────────────────────────────────────────────────────
+
+  private trackTurn(turnId: string, source: TurnRecord["source"], userInput: string): void {
+    this.turnListeners.set(turnId, { resolve: null, queue: [], done: false });
+    this.pendingTurns.set(turnId, {
+      record: {
+        turnId,
+        startedAt: new Date().toISOString(),
+        source,
+        userInput,
+        toolCalls: [],
+        assistantReply: "",
+        discordDelivery: source === "dashboard" ? "skipped" : "pending",
+      },
+      textParts: [],
+    });
+  }
+
+  /**
+   * CLI 自發回合（背景任務完成的 task-notification 等）：沒經過 send() 就開始吐內容，
+   * 補開 source=background 的 turn，result 時由 reply 端送回綁定頻道。
+   * 起點用第一個內容事件而非 session_init：Codex 在 spawn 時就發 session_init，不代表有回合。
+   * 不掛 idle timeout — 沒有發話者能回 ask 按鈕；卡住時使用者發新訊息即走 send() 插話接手。
+   */
+  private startBackgroundTurn(): void {
+    const turnId = randomUUID();
+    this.trackTurn(turnId, "background", "(CLI 自發回合)");
+    this.activeTurnId = turnId;
+    this._status = "busy";
+    log.info(`[cli-bridge:${this.label}] turn=${turnId.slice(0, 8)} source=background（CLI 自發回合）`);
+    this.deliverToHomeChannel({
+      turnId,
+      events: this.createTurnGenerator(turnId),
+      abort: () => this.abortTurn(turnId),
+    });
+  }
+
+  /** 沒有 Discord 觸發訊息可回覆的 turn：交給 reply 端消費事件、把最終文字送到綁定頻道 */
+  private deliverToHomeChannel(handle: TurnHandle): void {
+    void import("./reply.js")
+      .then(({ handleCliBridgeBackgroundReply }) => handleCliBridgeBackgroundReply(this, handle))
+      .catch((err) => {
+        log.warn(`[cli-bridge:${this.label}] turn=${handle.turnId.slice(0, 8)} 轉送頻道失敗：${err instanceof Error ? err.message : String(err)}`);
+      });
+  }
+
   // ── 內部：事件處理 ────────────────────────────────────────────────────────
 
   private handleEvent(evt: CliBridgeEvent): void {
@@ -788,6 +820,10 @@ export class CliBridge {
       this.sessionId = evt.session_id;
       log.info(`[cli-bridge:${this.label}] session_id=${evt.session_id} (from result)`);
       this.persistSessionId(evt.session_id);
+    }
+
+    if (!this.activeTurnId && (evt.type === "text_delta" || evt.type === "thinking_delta" || evt.type === "tool_call")) {
+      this.startBackgroundTurn();
     }
 
     // 收到事件 → 重置 idle timeout
@@ -814,7 +850,7 @@ export class CliBridge {
       }
     }
 
-    // control_request 只有 Discord 來源的 turn 有人能按按鈕；dashboard / cron 來源直接拒絕，避免 CLI 永久等待
+    // control_request 只有 Discord 來源的 turn 有人能按按鈕；dashboard / cron / background 來源直接拒絕，避免 CLI 永久等待
     if (evt.type === "control_request") {
       const source = turnId ? this.pendingTurns.get(turnId)?.record.source : undefined;
       if (source !== "discord") {

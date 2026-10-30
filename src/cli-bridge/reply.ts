@@ -16,6 +16,7 @@
  * - control_request → Discord 互動（AskUserQuestion / ExitPlanMode / 權限按鈕，見 control-request.ts）
  * - 附件支援（Discord attachment → 文字描述附加到 stdin）
  * - rate limit 保護（可設定 edit interval）
+ * - 無觸發訊息的 turn（CLI 自發背景回合、上線補處理）→ handleCliBridgeBackgroundReply 只送最終文字到綁定頻道
  */
 
 import {
@@ -28,7 +29,7 @@ import {
 } from "discord.js";
 import { log } from "../logger.js";
 import type { CliBridge } from "./bridge.js";
-import type { CliBridgeEvent, StdinImageBlock } from "./types.js";
+import type { CliBridgeEvent, StdinImageBlock, TurnHandle } from "./types.js";
 import type { BridgeConfig } from "../core/config.js";
 import type { CliBridgeConfig } from "./types.js";
 import type { BridgeSender } from "./discord-sender.js";
@@ -60,6 +61,9 @@ function detectImageMediaType(buf: Buffer): StdinImageBlock["source"]["media_typ
 
 const TEXT_LIMIT = 2000;
 const RETRY_DELAYS = [1000, 2000, 4000];
+
+/** 各 bridge 在綁定頻道最後處理的 Discord 訊息；背景回合回覆接在它下面，讓發話者收到提及通知 */
+const lastHomeMessage = new WeakMap<CliBridge, Message>();
 
 // ── 工具函式 ────────────────────────────────────────────────────────────────
 
@@ -213,6 +217,7 @@ export async function handleCliBridgeReply(
     imageBlocks,
     sourceChannelId,
   });
+  if (originalMessage.channelId === bridge.channelId) lastHomeMessage.set(bridge, originalMessage);
   const turnId = handle.turnId;
   const stdoutLogger = bridge.getStdoutLogger();
   const showToolCalls = bridgeConfig.showToolCalls;
@@ -667,6 +672,56 @@ export async function handleCliBridgeReply(
     );
 
     log.info(`[cli-bridge-reply] turn=${turnId.slice(0, 8)} delivery=${discordDelivery} edits=${editCount}`);
+  }
+}
+
+/**
+ * 消費沒有 Discord 觸發訊息的 turn，result 時把最終文字送到 bridge 綁定頻道。
+ * 只送最後一個 tool_call 之後的文字（中間推理不送）；第一段接在該頻道最後處理的訊息下，失敗改直接發。
+ */
+export async function handleCliBridgeBackgroundReply(bridge: CliBridge, handle: TurnHandle): Promise<void> {
+  const turnId = handle.turnId;
+  let buffer = "";
+  let discordDelivery: "success" | "failed" | "skipped" = "skipped";
+  let discordMessageId: string | undefined;
+
+  try {
+    for await (const evt of handle.events) {
+      if (evt.type === "text_delta") { buffer += evt.text; continue; }
+      if (evt.type === "tool_call") { buffer = ""; continue; }
+      if (evt.type !== "result" && evt.type !== "error") continue;
+
+      const finalText = buffer.trim() ? buffer : (evt.type === "result" ? evt.text ?? "" : "");
+      const content = evt.type === "error" ? `${finalText}\n\n❌ ${evt.message}` : finalText;
+      const chunks = splitForDiscord(content.trim());
+      if (chunks.length === 0) break;
+
+      const sender = bridge.getSender();
+      const anchor = lastHomeMessage.get(bridge);
+      discordDelivery = "success";
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]!;
+        const ok = await retrySend(async () => {
+          const msg = i === 0 && anchor
+            ? await sender.reply(anchor, chunk).catch(() => sender.send(chunk))
+            : await sender.send(chunk);
+          discordMessageId ??= msg.id;
+        });
+        if (!ok) discordDelivery = "failed";
+      }
+      break;
+    }
+  } catch (err) {
+    log.error(`[cli-bridge-reply] turn=${turnId.slice(0, 8)} 背景回合事件消費錯誤：${err instanceof Error ? err.message : String(err)}`);
+    discordDelivery = "failed";
+  } finally {
+    bridge.getStdoutLogger().updateTurnDelivery(
+      turnId,
+      discordDelivery,
+      discordMessageId,
+      discordDelivery === "failed" ? "Discord 送達失敗" : undefined,
+    );
+    log.info(`[cli-bridge-reply] turn=${turnId.slice(0, 8)} background delivery=${discordDelivery}`);
   }
 }
 

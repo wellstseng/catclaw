@@ -199,7 +199,8 @@ export interface TurnRecord {
   turnId: string;
   startedAt: string;          // ISO 8601
   completedAt?: string;
-  source: "discord" | "dashboard" | "cron";
+  /** background = CLI 自發回合（背景任務完成通知等），沒有經過 send() */
+  source: "discord" | "dashboard" | "cron" | "background";
   userInput: string;
   toolCalls: Array<{ name: string; preview: string; durationMs?: number }>;
   assistantReply: string;
