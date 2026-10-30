@@ -731,6 +731,8 @@ export class CliBridge {
       effort: this.channelConfig.effort ?? this.bridgeConfig.effort,
       model: this.channelConfig.model ?? this.bridgeConfig.model,
       thinking: this.channelConfig.thinking ?? this.bridgeConfig.thinking,
+      // team DM bridge：CLI 以隔離模式啟動（見 dm.ts；審批改送 owner 在 control-request.ts 處理）
+      isolation: this.channelConfig.dm?.isolation,
     };
 
     const provider: CliProvider = providerName === "codex"

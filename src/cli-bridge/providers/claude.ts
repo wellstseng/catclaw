@@ -43,6 +43,25 @@ function summarizeToolInput(input: Record<string, unknown>): string {
   return line.length > 300 ? line.slice(0, 300) + "…" : line;
 }
 
+// ── 隔離模式 deny 規則 ──────────────────────────────────────────────────────────
+
+/**
+ * 把絕對路徑前綴轉成 claude settings 的 permissions.deny 規則。
+ * `//` 開頭 = 檔案系統絕對路徑；Read 規則同時管 Glob/Grep，Edit 規則同時管 Write/NotebookEdit，
+ * 仍逐一列出讓意圖一目了然。
+ */
+function buildDenyRules(denyPaths: string[]): string[] {
+  const rules: string[] = [];
+  for (const raw of denyPaths) {
+    const p = raw.replace(/\/+$/, "");
+    if (!p.startsWith("/")) continue;
+    for (const tool of ["Read", "Edit", "Write", "Glob", "Grep"]) {
+      rules.push(`${tool}(/${p}/**)`);
+    }
+  }
+  return rules;
+}
+
 // ── ClaudeProvider ─────────────────────────────────────────────────────────────
 
 export class ClaudeProvider implements CliProvider {
@@ -73,10 +92,29 @@ export class ClaudeProvider implements CliProvider {
     if (config.model) {
       args.push("--model", config.model);
     }
-    // thinking：claude CLI 無 --thinking 旗標，用 --settings 注入 alwaysThinkingEnabled
+    // --settings 只能給一次：thinking 開關與隔離模式的 deny 規則合併成同一個 JSON
+    // thinking：claude CLI 無 --thinking 旗標，用 settings 注入 alwaysThinkingEnabled
     // （Opus 等 adaptive 模型 thinking 由 effort 驅動，此旗標主要控制 thinking block 是否輸出）
+    const settings: Record<string, unknown> = {};
     if (typeof config.thinking === "boolean") {
-      args.push("--settings", JSON.stringify({ alwaysThinkingEnabled: config.thinking }));
+      settings.alwaysThinkingEnabled = config.thinking;
+    }
+    // 隔離模式（team DM bridge）：
+    // - --setting-sources project,local：不載 ~/.claude 的 settings/hooks/CLAUDE.md（本機操作者的身份與個人記憶不外流）
+    // - permissions.deny：Read/Edit 規則連帶蓋 Glob/Grep/Write，擋住 denyPaths 下所有檔案存取
+    // - --disallowedTools：整顆工具關掉
+    // 實測（2026-10-29，claude 2.1.312）：CLAUDE_CONFIG_DIR 隔離會失去登入態不可用；setting-sources + deny 可行。
+    if (config.isolation) {
+      args.push("--setting-sources", "project,local");
+      const deny = buildDenyRules(config.isolation.denyPaths);
+      if (deny.length > 0) settings.permissions = { deny };
+      if (config.isolation.disallowedTools.length > 0) {
+        args.push("--disallowedTools", ...config.isolation.disallowedTools);
+      }
+      log.info(`[cli-bridge:${config.label}] isolation: denyPaths=${config.isolation.denyPaths.join(",") || "(none)"} disallowedTools=${config.isolation.disallowedTools.join(",") || "(none)"}`);
+    }
+    if (Object.keys(settings).length > 0) {
+      args.push("--settings", JSON.stringify(settings));
     }
     if (config.effort || config.model || typeof config.thinking === "boolean") {
       log.info(`[cli-bridge:${config.label}] effort=${config.effort ?? "(inherit)"} model=${config.model ?? "(inherit)"} thinking=${config.thinking ?? "(inherit)"}`);

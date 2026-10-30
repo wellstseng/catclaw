@@ -36,6 +36,7 @@
 |------|---------|------|
 | 工作流 | 2 | `memory/shared/工作流/` |
 | personal | 1 | `memory/personal/` |
+| failures | 1 | `memory/failures/` |
 
 | 尚未歸類（shared/ 平鋪） | 說明 |
 |------|------|

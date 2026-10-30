@@ -12,8 +12,10 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  Partials,
+  type Channel,
   type Message,
-  type GuildTextBasedChannel,
+  type SendableChannels,
   type MessageCreateOptions,
   type MessageEditOptions,
 } from "discord.js";
@@ -59,7 +61,7 @@ export interface BridgeSender {
   getBotUserId(): string | null;
 
   /** 回傳指向指定 channel 的 proxy sender（跨頻道 mention 用） */
-  withChannel(channel: GuildTextBasedChannel): BridgeSender;
+  withChannel(channel: SendableChannels): BridgeSender;
 
   /** 銷毀（logout / 清理） */
   destroy(): Promise<void>;
@@ -96,7 +98,10 @@ async function acquireSharedClient(botToken: string, sender: IndependentBotSende
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
     ],
+    // DM 必須加 Partials.Channel，否則 discord.js 不會觸發 DM 的 messageCreate（與主 bot 同）
+    partials: [Partials.Channel],
   });
 
   entry = { client, refCount: 1, ready: false, senders: new Set([sender]) };
@@ -151,7 +156,7 @@ export function destroyAllSharedClients(): void {
 export class IndependentBotSender implements BridgeSender {
   readonly mode = "independent-bot" as const;
   private client: Client | null = null;
-  private channel: GuildTextBasedChannel | null = null;
+  private channel: SendableChannels | null = null;
   private messageCallbacks: OnMessageCallback[] = [];
   private _channelId: string | null = null;
 
@@ -162,12 +167,12 @@ export class IndependentBotSender implements BridgeSender {
     this.client = await acquireSharedClient(this.botToken, this);
 
     const ch = await this.client.channels.fetch(channelId);
-    if (!ch?.isTextBased() || ch.isDMBased()) {
-      throw new Error(`[bridge-sender] channel ${channelId} 不是 guild text channel`);
+    if (!ch?.isSendable()) {
+      throw new Error(`[bridge-sender] channel ${channelId} 不是可發送的文字頻道`);
     }
     this.channel = ch;
 
-    log.info(`[bridge-sender] independent bot ready: ${this.client.user?.tag} → #${this.channel.name}`);
+    log.info(`[bridge-sender] independent bot ready: ${this.client.user?.tag} → ${describeChannel(ch)}`);
   }
 
   /** 由 SharedBotPool 的 messageCreate 呼叫，分派訊息給此 sender 的 callbacks */
@@ -217,7 +222,7 @@ export class IndependentBotSender implements BridgeSender {
     return this.client?.user?.id ?? null;
   }
 
-  withChannel(channel: GuildTextBasedChannel): BridgeSender {
+  withChannel(channel: SendableChannels): BridgeSender {
     return createChannelProxy(this, channel);
   }
 
@@ -240,17 +245,17 @@ export class IndependentBotSender implements BridgeSender {
 
 export class MainBotSender implements BridgeSender {
   readonly mode = "main-bot" as const;
-  private channel: GuildTextBasedChannel | null = null;
+  private channel: SendableChannels | null = null;
 
   constructor(private readonly mainClient: Client) {}
 
   async init(channelId: string): Promise<void> {
     const ch = await this.mainClient.channels.fetch(channelId);
-    if (!ch?.isTextBased() || ch.isDMBased()) {
-      throw new Error(`[bridge-sender] channel ${channelId} 不是 guild text channel`);
+    if (!ch?.isSendable()) {
+      throw new Error(`[bridge-sender] channel ${channelId} 不是可發送的文字頻道`);
     }
     this.channel = ch;
-    log.info(`[bridge-sender] main-bot fallback → #${this.channel.name}`);
+    log.info(`[bridge-sender] main-bot fallback → ${describeChannel(ch)}`);
   }
 
   async reply(originalMessage: Message, content: string): Promise<Message> {
@@ -289,7 +294,7 @@ export class MainBotSender implements BridgeSender {
     return this.mainClient.user?.id ?? null;
   }
 
-  withChannel(channel: GuildTextBasedChannel): BridgeSender {
+  withChannel(channel: SendableChannels): BridgeSender {
     return createChannelProxy(this, channel);
   }
 
@@ -300,7 +305,14 @@ export class MainBotSender implements BridgeSender {
 
 // ── Channel Proxy ────────────────────────────────────────────────────────────
 
-function createChannelProxy(base: BridgeSender, channel: GuildTextBasedChannel): BridgeSender {
+/** log 用的頻道描述：guild 頻道 #name、DM 顯示對象、其餘印 id */
+export function describeChannel(ch: Channel): string {
+  if ("name" in ch && typeof ch.name === "string" && ch.name) return `#${ch.name}`;
+  if (ch.isDMBased() && "recipient" in ch && ch.recipient) return `DM:${ch.recipient.username}`;
+  return ch.id;
+}
+
+function createChannelProxy(base: BridgeSender, channel: SendableChannels): BridgeSender {
   return {
     mode: base.mode,
     init: () => Promise.resolve(),
@@ -313,7 +325,7 @@ function createChannelProxy(base: BridgeSender, channel: GuildTextBasedChannel):
     onMessage: () => {},
     stopReceiving: () => {},
     getBotUserId: () => base.getBotUserId(),
-    withChannel: (ch: GuildTextBasedChannel) => createChannelProxy(base, ch),
+    withChannel: (ch: SendableChannels) => createChannelProxy(base, ch),
     destroy: () => Promise.resolve(),
   };
 }

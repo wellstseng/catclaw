@@ -466,9 +466,11 @@ async function execCommand(command: string, channelId?: string, silent?: boolean
     execFile(shell.bin, shell.args(command), { cwd, timeout, maxBuffer: 1024 * 1024, env, windowsHide: background !== false }, (err, stdout, stderr) => {
       if (err) {
         const detail = (err as NodeJS.ErrnoException & { killed?: boolean; signal?: string });
+        // 非零 exit 時 stdout 常是腳本的彙報本體（如記帳同步），stderr 可能只有 warning 雜訊 → 兩者都帶，stdout 優先
+        const body = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n--- stderr ---\n") || err.message;
         const reason = detail.killed
           ? `timeout (${detail.signal ?? "SIGTERM"}) after ${timeout / 1000}s`
-          : `exit ${err.code ?? "unknown"}: ${stderr.trim() || err.message}`;
+          : `exit ${err.code ?? "unknown"}: ${body}`;
         reject(new Error(reason));
       } else {
         resolve({ stdout: stdout.trim(), stderr: stderr.trim() });

@@ -9,6 +9,10 @@
  *
  * 只有觸發這個 turn 的 Discord 使用者能作答；逾時（CATCLAW_PERMISSION_TIMEOUT_MS，預設 10 分鐘）一律 deny，
  * 讓 CLI 收到明確訊息結束回合，不會卡在 busy。
+ *
+ * team DM bridge（channelConfig.dm.kind === "team"，見 dm.ts）：AskUserQuestion 仍問發話者，
+ * ExitPlanMode / 其他工具的審批改發到 owner 的 DM、只接受 owner 互動；發話者只看到「已送審 → 結果」。
+ * 送不到 owner 一律 deny，不退回給發話者自審。
  */
 
 import {
@@ -29,7 +33,7 @@ import {
 import { log } from "../logger.js";
 import type { CliBridge } from "./bridge.js";
 import type { CliBridgeEvent, ControlDecision } from "./types.js";
-import type { BridgeSender } from "./discord-sender.js";
+import type { BridgeSender, IndependentBotSender } from "./discord-sender.js";
 
 const TIMEOUT_MS = Number(process.env.CATCLAW_PERMISSION_TIMEOUT_MS ?? 600_000);
 const TIMEOUT_MIN = Math.round(TIMEOUT_MS / 60_000);
@@ -45,16 +49,52 @@ export async function handleControlRequest(
 ): Promise<void> {
   const userId = originalMessage.author.id;
   let decision: ControlDecision;
+  let routed = false;
   try {
-    if (evt.tool === "AskUserQuestion") decision = await askUserQuestion(evt, sender, userId);
-    else if (evt.tool === "ExitPlanMode") decision = await approvePlan(evt, sender, userId);
-    else decision = await genericPermission(evt, sender, userId);
+    if (evt.tool === "AskUserQuestion") {
+      decision = await askUserQuestion(evt, sender, userId);
+    } else {
+      const route = await resolveApprovalRoute(bridge, sender);
+      routed = route !== null;
+      const approver = route ?? { sender, userId, note: "" };
+      if (route) await sender.send(`⏳ 權限請求已送交管理者審批：\`${evt.tool}\``).catch(() => {});
+      decision = evt.tool === "ExitPlanMode"
+        ? await approvePlan(evt, approver.sender, approver.userId, approver.note)
+        : await genericPermission(evt, approver.sender, approver.userId, approver.note);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`[cli-bridge-control] ${evt.tool} Discord 互動失敗：${msg}`);
     decision = { behavior: "deny", message: `Discord 互動失敗：${msg}` };
   }
   bridge.sendControlResponse(evt.requestId, decision);
+  if (routed) {
+    await sender.send(decision.behavior === "allow"
+      ? `✅ 管理者已核准：\`${evt.tool}\``
+      : `❌ 管理者拒絕或逾時：\`${evt.tool}\``).catch(() => {});
+  }
+}
+
+interface ApprovalRoute { sender: BridgeSender; userId: string; note: string }
+
+/**
+ * team DM bridge → 回 owner 的 DM 作為審批頻道；一般 bridge 回 null（發話者自審）。
+ * team 但缺 approvalChannelId/approverId 或頻道取不到 → throw（上層轉 deny），不給發話者自審。
+ */
+async function resolveApprovalRoute(bridge: CliBridge, sender: BridgeSender): Promise<ApprovalRoute | null> {
+  const dm = bridge.getChannelConfig().dm;
+  if (dm?.kind !== "team") return null;
+  if (!dm.approvalChannelId || !dm.approverId) throw new Error("team DM bridge 缺 approvalChannelId/approverId，無法送審");
+  const base = bridge.getSender();
+  if (base.mode !== "independent-bot") throw new Error("team DM bridge 需要獨立 bot 才能送審到 owner");
+  const client = (base as IndependentBotSender).getClient();
+  const ch = await client.channels.fetch(dm.approvalChannelId);
+  if (!ch?.isSendable()) throw new Error(`owner 審批頻道 ${dm.approvalChannelId} 不可發送`);
+  return {
+    sender: sender.withChannel(ch),
+    userId: dm.approverId,
+    note: `（來自 **${dm.userName}** 的私訊，bridge \`${bridge.label}\`）\n`,
+  };
 }
 
 // ── 共用 ─────────────────────────────────────────────────────────────────────
@@ -175,9 +215,9 @@ async function askUserQuestion(evt: ControlRequestEvent, sender: BridgeSender, u
 
 // ── ExitPlanMode ─────────────────────────────────────────────────────────────
 
-async function approvePlan(evt: ControlRequestEvent, sender: BridgeSender, userId: string): Promise<ControlDecision> {
+async function approvePlan(evt: ControlRequestEvent, sender: BridgeSender, userId: string, prefix = ""): Promise<ControlDecision> {
   const plan = String(evt.input.plan ?? "").trim() || "(空計畫)";
-  const head = "📋 **計畫待核准**";
+  const head = `${prefix}📋 **計畫待核准**`;
   const tooLong = plan.length > 1800;
   const body = tooLong ? plan.slice(0, 1800) + "\n…（完整計畫見附件）" : plan;
   const id = evt.requestId.slice(0, 8);
@@ -218,8 +258,8 @@ async function approvePlan(evt: ControlRequestEvent, sender: BridgeSender, userI
 
 // ── 其他工具 ─────────────────────────────────────────────────────────────────
 
-async function genericPermission(evt: ControlRequestEvent, sender: BridgeSender, userId: string): Promise<ControlDecision> {
-  const head = `🔐 **權限請求**\n工具：\`${evt.tool}\``;
+async function genericPermission(evt: ControlRequestEvent, sender: BridgeSender, userId: string, prefix = ""): Promise<ControlDecision> {
+  const head = `${prefix}🔐 **權限請求**\n工具：\`${evt.tool}\``;
   const json = JSON.stringify(evt.input, null, 2);
   const budget = 1900 - head.length - 20;
   const shown = json.length > budget ? json.slice(0, budget) + "\n…(truncated)" : json;

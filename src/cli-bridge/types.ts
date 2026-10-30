@@ -99,6 +99,31 @@ export interface CliBridgeChannelConfig {
   model?: string;
   /** 覆寫 bridge 層 thinking（per-channel） */
   thinking?: boolean;
+  /** 私訊 bridge 專用：這條 bridge 綁的是哪位使用者的 DM（由 dm.ts auto-spawn 寫入） */
+  dm?: CliBridgeDmBinding;
+}
+
+/** 隔離模式（team DM bridge）：不載 user 層設定、拒讀指定路徑、禁用工具 */
+export interface CliIsolation {
+  /** 不可讀寫的絕對路徑前綴（轉成 permissions.deny 的 Read/Edit/Write/Glob/Grep 規則） */
+  denyPaths: string[];
+  /** 直接禁用的工具（--disallowedTools） */
+  disallowedTools: string[];
+}
+
+/** 私訊 bridge 的綁定資訊 */
+export interface CliBridgeDmBinding {
+  /** Discord user id */
+  userId: string;
+  /** 顯示名（名冊暱稱或 Discord 名） */
+  userName: string;
+  /** owner = 本人（完整權限）；team = 同事（隔離 + 審批送 owner） */
+  kind: "owner" | "team";
+  /** team 專用：權限按鈕改發到此頻道（owner 的 DM channel），並只接受 approverId 的互動 */
+  approvalChannelId?: string;
+  approverId?: string;
+  /** team 專用：spawn 時套用的隔離設定（從 cli-bridge-dm.json 快照） */
+  isolation?: CliIsolation;
 }
 
 /** Provider 類型（決定 spawn 哪個 CLI binary 與用什麼 protocol） */
@@ -181,6 +206,8 @@ export interface CliProcessConfig {
   model?: string;
   /** Thinking 開關（claude 端 alwaysThinkingEnabled，僅 provider=claude） */
   thinking?: boolean;
+  /** 隔離模式（team DM bridge，僅 provider=claude） */
+  isolation?: CliIsolation;
 }
 
 // ── Turn 追蹤型別 ─────────────────────────────────────────────────────────────
