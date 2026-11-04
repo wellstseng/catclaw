@@ -198,6 +198,7 @@ export const skill: Skill = {
     "建立：`/cron add at <time> <action> <content>`（一次性）、" +
     "`/cron add every <interval> <action> <content>`（重複）、" +
     "`/cron add expr <分 時 日 月 週> <action> <content>`（cron 表達式）。" +
+    "一次性排程（at）執行完即自動從排程清單移除（成功或重試用盡皆同），不留 completed/disabled 殘留，不需再手動 delete。" +
     "action：msg / exec / claude / codex / acp / agent。" +
     "exec 預設不推 Discord（避免「(no output)」雜訊）；想看執行通知加 `--verbose` 或 `-v`，如 `exec --verbose npm run build`。" +
     "claude 走 Claude CLI ACP；codex 走 Codex CLI app-server JSON-RPC（每次獨立 thread，不 resume）。" +
@@ -282,7 +283,7 @@ function handleAdd(rest: string, channelId: string, agentId?: string): SkillResu
     });
 
     const display = new Date(parsed.at).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
-    return { text: `已建立排程：**${content.slice(0, 50)}**\n類型：一次性（${actionLabel(actionKw)}）\n時間：${display}\nID：\`${id}\`` };
+    return { text: `已建立排程：**${content.slice(0, 50)}**\n類型：一次性（${actionLabel(actionKw)}）\n時間：${display}\nID：\`${id}\`\n（執行完自動從排程清單移除）` };
   }
 
   // ── every <interval> <action> <content> ──
@@ -424,7 +425,7 @@ function showUsage(): SkillResult {
     text: `**排程管理** — \`/cron\`
 
 **建立排程：**
-\`/cron add at <時間> <動作> <內容>\` — 一次性
+\`/cron add at <時間> <動作> <內容>\` — 一次性（執行完自動移除）
 \`/cron add every <間隔> <動作> <內容>\` — 重複
 \`/cron add expr <cron五段> <動作> <內容>\` — Cron 表達式
 
