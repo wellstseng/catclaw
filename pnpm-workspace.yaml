@@ -15,3 +15,8 @@ ignoredBuiltDependencies:
 # 公司全域 pnpm 啟用 strictDepBuilds（未核准 build script 即 exit 1）。
 # 本專案 build script 已逐一審視，降為非致命避免 catclaw 啟動被擋。
 strictDepBuilds: false
+
+allowBuilds:
+  '@google/genai': set this to true or false
+  protobufjs: set this to true or false
+  sharp: set this to true or false

@@ -1,1 +1,1 @@
-{"schema": "atom-access-v3", "read_hits": 1, "last_used": "2026-06-02", "confirmations": 0, "useful_hits": 1, "used_fail": 1, "last_promoted_at": null, "first_seen": "2026-06-02", "timestamps": [1780369454.886], "confirmation_events": []}
+{"schema": "atom-access-v3", "read_hits": 3, "last_used": "2026-10-16", "confirmations": 0, "useful_hits": 1, "used_fail": 1, "last_promoted_at": null, "first_seen": "2026-06-02", "timestamps": [1780369454.886, 1792124876.1769834, 1792127961.482], "confirmation_events": [], "last_decay_date": null}
