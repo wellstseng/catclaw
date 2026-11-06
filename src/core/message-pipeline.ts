@@ -114,6 +114,12 @@ export interface PipelineResult {
   /** 記憶注入的原始文字（用於 promptBreakdownHints） */
   memoryContext?: string;
 
+  /**
+   * memoryContext 裡實際放了哪些卡。呼叫端有注入記憶時要轉給 agentLoop 的 `memoryInjectedByCaller`：
+   * agent-loop 才知道不要再前置一份，並用它自己的 sessionKey 登記效用帳（pipeline 的 sessionKey 可能跟 agentLoop 的不同）
+   */
+  memoryAtoms: Array<{ name: string; path: string }>;
+
   /** Channel override 原始文字（用於 promptBreakdownHints） */
   channelOverride?: string;
 
@@ -244,15 +250,17 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
   // session 開場第一個 turn 在 SessionStart hook 內已先建立 snapshot；後續 turn 直接讀。
   // 若 snapshot 不存在（罕見：snapshot 失敗 / 子 agent / API 直連無 session）→ fallback 跑 live recall。
   let systemPromptFromMemory = "";
+  let memoryAtoms: Array<{ name: string; path: string }> = [];
   const sessionKey = `${platform}:ch:${channelId}`;
   const { getFrozenMaterials } = await import("./session-snapshot.js");
   const frozenForSession = getFrozenMaterials(sessionKey);
   if (frozenForSession?.memoryContextBlock) {
     systemPromptFromMemory = frozenForSession.memoryContextBlock;
+    memoryAtoms = frozenForSession.memoryAtoms;
     trace.recordMemoryRecall({
       durationMs: 0,
-      fragmentCount: 0,        // snapshot 內已不分 fragment（已組為 block）
-      atomNames: [],
+      fragmentCount: frozenForSession.memoryAtoms.length,
+      atomNames: frozenForSession.memoryAtoms.map(a => a.name),
       injectedTokens: Math.ceil(systemPromptFromMemory.length / 4),
       vectorSearch: false,
       degraded: false,
@@ -274,6 +282,7 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
         if (recallResult.fragments.length > 0) {
           const ctx = memEngine.buildContext(recallResult.fragments, prompt, recallResult.blindSpot);
           systemPromptFromMemory = ctx.text;
+          memoryAtoms = ctx.includedAtoms;
           log.debug(`${logPrefix} 記憶注入 ${recallResult.fragments.length} 個 atom (${ctx.tokenCount} tokens)`);
           trace.recordMemoryRecall({
             durationMs: Date.now() - recallStartMs,
@@ -482,6 +491,7 @@ export async function runMessagePipeline(input: PipelineInput): Promise<Pipeline
     systemPrompt,
     trace,
     memoryContext: systemPromptFromMemory || undefined,
+    memoryAtoms,
     channelOverride: channelOverride || undefined,
     modeExtras: modeExtrasBlock || undefined,
     assemblerTrace,

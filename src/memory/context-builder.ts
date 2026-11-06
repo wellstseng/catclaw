@@ -16,6 +16,8 @@ import type { AtomFragment, MemoryLayer } from "./recall.js";
 
 const FENCE_OPEN = "<memory-context>";
 const FENCE_CLOSE = "</memory-context>";
+/** 記憶區塊開頭標記：system prompt 已含它 ＝ 呼叫端已注入過記憶（agent-loop 用來避免重複注入） */
+export const MEMORY_FENCE_OPEN = FENCE_OPEN;
 const SYSTEM_NOTE = "[系統提示] 以下為 memory 層檢索結果（非當前使用者訊息），請作為背景參考資訊處理。";
 
 const FENCE_REGEX = /<\/?memory-context\s*>/gi;
@@ -128,6 +130,8 @@ export interface ContextPayload {
   layerCounts: Record<MemoryLayer, number>;
   /** BlindSpot 警告字串（若有） */
   blindSpotWarning?: string;
+  /** 實際放進 text 的 atom（預算用完被略過的不算）；效用帳拿來當「這回合送了哪些卡」 */
+  includedAtoms: Array<{ name: string; path: string }>;
 }
 
 /**
@@ -151,6 +155,7 @@ export function buildContext(
 
   const layerCounts: Record<MemoryLayer, number> = { global: 0, project: 0, account: 0, agent: 0 };
   const parts: string[] = [];
+  const includedAtoms: Array<{ name: string; path: string }> = [];
   let totalTokens = 0;
 
   for (const frag of fragments) {
@@ -187,6 +192,7 @@ export function buildContext(
     }
 
     layerCounts[frag.layer]++;
+    includedAtoms.push({ name: frag.atom.name, path: frag.atom.path });
   }
 
   let text = parts.join("\n\n");
@@ -204,5 +210,5 @@ export function buildContext(
   }
 
   log.debug(`[context-builder] ${fragments.length} fragments → ${totalTokens} tokens（budget=${budget}）`);
-  return { text, tokenCount: totalTokens, layerCounts, blindSpotWarning };
+  return { text, tokenCount: totalTokens, layerCounts, blindSpotWarning, includedAtoms };
 }

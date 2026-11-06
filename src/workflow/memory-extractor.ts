@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { log } from "../logger.js";
 import { getMemoryEngine } from "../memory/engine.js";
 import { writeAtom, touchAtom } from "../memory/atom.js";
+import { findSensitiveWords } from "../memory/write-gate.js";
 import type { CatClawEvents } from "../core/event-bus.js";
 import type { KnowledgeItem } from "../memory/extract.js";
 import type { AtomFragment } from "../memory/recall.js";
@@ -27,6 +28,22 @@ function layerDir(globalDir: string, layer: KnowledgeItem["targetLayer"], ctx: {
   }
 }
 
+/**
+ * 背景萃取的落層：global／project 層所有使用者都會撈到，萃取內容（含觸發詞）有個人隱私或內網位址字眼時
+ * 沒人能判斷該不該公開 → 降到說話者自己的 account 層（對拍 ~/.claude 背景萃取「命中就不寫進共用層」）。
+ * 累積的對話裡有不只一人發言（群組頻道）→ 分不出是誰的資訊，降層會放進別人的私人層 → 不寫（layer=null）。
+ */
+export function decideExtractLayer(
+  text: string,
+  targetLayer: KnowledgeItem["targetLayer"],
+  speakerCount = 1,
+): { layer: KnowledgeItem["targetLayer"] | null; sensitiveWords: string[] } {
+  const sensitiveWords = findSensitiveWords(text);
+  if (sensitiveWords.length === 0) return { layer: targetLayer, sensitiveWords };
+  if (speakerCount > 1) return { layer: null, sensitiveWords };
+  return { layer: "account", sensitiveWords };
+}
+
 /** 把內容前 N 字轉為安全檔名：只過濾檔名禁止字元（保留中文/Unicode） */
 function safeName(content: string): string {
   return content
@@ -46,7 +63,7 @@ function tsName(): string {
 // ── 累積制 buffer（per session key）─────────────────────────────────────────
 
 interface AccumBuffer {
-  turns: { user: string; assistant: string }[];
+  turns: { user: string; assistant: string; accountId: string }[];
   totalChars: number;
   lastCtx: CatClawEvents["turn:after"][0];
 }
@@ -92,13 +109,22 @@ async function checkVectorDedup(
   }
 }
 
-async function writeItems(items: KnowledgeItem[], ctx: { accountId: string; projectId?: string }): Promise<void> {
+async function writeItems(items: KnowledgeItem[], ctx: { accountId: string; projectId?: string }, speakerCount = 1): Promise<void> {
   if (!items.length) return;
   const engine = getMemoryEngine();
   const { globalDir } = engine.getStatus();
 
   for (const item of items) {
     try {
+      const { layer, sensitiveWords } = decideExtractLayer([item.content, ...(item.triggers ?? [])].join("\n"), item.targetLayer, speakerCount);
+      if (layer === null) {
+        log.info(`[memory-extractor] 含敏感字眼（${sensitiveWords.join("、")}）且這段對話有 ${speakerCount} 人發言，分不出是誰的資訊 → 不寫：${item.content.slice(0, 40)}`);
+        continue;
+      }
+      if (layer !== item.targetLayer) {
+        log.info(`[memory-extractor] 含敏感字眼（${sensitiveWords.join("、")}）→ ${item.targetLayer} 層改寫 account 層：${item.content.slice(0, 40)}`);
+        item.targetLayer = layer;
+      }
       const ns = item.targetLayer === "global" ? "global"
         : item.targetLayer === "project" ? `project/${ctx.projectId ?? "default"}`
         : `account/${ctx.accountId}`;
@@ -153,7 +179,7 @@ async function flushAccumBuffer(sessionKey: string, reason: string): Promise<voi
       userInput: combinedUser,
       cooldownMs: _cooldownMs,
     });
-    await writeItems(items, ctx);
+    await writeItems(items, ctx, new Set(buf.turns.map(t => t.accountId)).size);
   } catch (err) {
     log.debug(`[memory-extractor] flush 萃取失敗：${err instanceof Error ? err.message : String(err)}`);
   }
@@ -173,7 +199,7 @@ export function initMemoryExtractor(eventBus: EventBus, cfg?: ExtractorConfig): 
       _accumBuffers.set(sessionKey, buf);
     }
     buf.lastCtx = ctx;
-    buf.turns.push({ user: ctx.prompt, assistant: response });
+    buf.turns.push({ user: ctx.prompt, assistant: response, accountId: ctx.accountId });
     buf.totalChars += ctx.prompt.length + response.length;
 
     if (buf.totalChars >= accumCharThreshold || buf.turns.length >= accumTurnThreshold) {

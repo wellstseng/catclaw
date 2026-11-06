@@ -115,6 +115,21 @@ export function recordFailure(name: string, error: string): void {
   }
 }
 
+/**
+ * 一次就足以判定的嚴重狀態（不必等連續失敗累積）：直接標 unhealthy 並通報（同 component 1 小時內只通報一次）。
+ * 之後該 component 任何 recordSuccess 照常走 recovered。
+ */
+export function recordCritical(name: string, error: string): void {
+  const c = ensureComponent(name);
+  c.totalFailure++;
+  c.lastFailure = Date.now();
+  c.lastError = error;
+  c.consecutiveFailures = Math.max(c.consecutiveFailures + 1, CRITICAL_THRESHOLD);
+  c.status = "unhealthy";
+  log.error(`[health] ${name} → CRITICAL：${error}`);
+  notifyOnce(name, error, "critical");
+}
+
 function notifyOnce(name: string, error: string, level: "critical"): void {
   const now = Date.now();
   const last = _notifyDedup.get(name) ?? 0;

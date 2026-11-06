@@ -14,9 +14,13 @@
  *   last_promoted_at: string | null,
  *   first_seen: "YYYY-MM-DD",
  *   timestamps: number[],          // epoch ms，最多 50 筆
- *   confirmation_events: Array<{ ts: number; source?: string }>
+ *   confirmation_events: Array<{ ts: number; source?: string }>,
+ *   used_count: number,            // 效用帳：被判「用上」的回合數（不管結果）
+ *   useful_hits: number,           // 效用帳 α：用上且成功（含先驗 1，同 ~/.claude lib/atom_access.py）
+ *   used_fail: number              // 效用帳 β：用上但失敗（含先驗 1）
  * }
  * ```
+ * 效用帳三欄舊檔沒有 → 讀取時補預設（0／1／1），任何寫入都原樣保留。
  *
  * 寫入策略：atomic（tmp + rename）。
  * 讀取策略：缺檔 → null；caller（atom.ts:readAtom）負責 fallback。
@@ -31,6 +35,8 @@ import { log } from "../logger.js";
 export const ACCESS_SCHEMA = "atom-access-v2-catclaw";
 const MAX_TIMESTAMPS = 50;
 const MAX_CONFIRMATION_EVENTS = 50;
+/** Beta-Bernoulli Laplace 先驗：useful_hits／used_fail 起始皆 1（成功數 = α−1、失敗數 = β−1） */
+export const USEFULNESS_PRIOR = 1;
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -48,6 +54,9 @@ export interface AtomAccess {
   first_seen: string;
   timestamps: number[];
   confirmation_events: ConfirmationEvent[];
+  used_count: number;
+  useful_hits: number;
+  used_fail: number;
 }
 
 // ── 內部工具 ─────────────────────────────────────────────────────────────────
@@ -71,7 +80,15 @@ function blankAccess(firstSeen?: string): AtomAccess {
     first_seen: day,
     timestamps: [],
     confirmation_events: [],
+    used_count: 0,
+    useful_hits: USEFULNESS_PRIOR,
+    used_fail: USEFULNESS_PRIOR,
   };
+}
+
+function numOr(v: unknown, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function pushBounded<T>(arr: T[], item: T, cap: number): T[] {
@@ -115,6 +132,9 @@ export function readAccess(atomPath: string): AtomAccess | null {
       first_seen: typeof o.first_seen === "string" ? o.first_seen : todayISO(),
       timestamps: Array.isArray(o.timestamps) ? (o.timestamps as number[]) : [],
       confirmation_events: events,
+      used_count: numOr(o.used_count, 0),
+      useful_hits: numOr(o.useful_hits, USEFULNESS_PRIOR),
+      used_fail: numOr(o.used_fail, USEFULNESS_PRIOR),
     };
   } catch (err) {
     log.warn(`[atom-access] 讀取失敗 ${p}：${err instanceof Error ? err.message : String(err)}`);
@@ -182,6 +202,23 @@ export function incrementConfirmation(atomPath: string, source?: string): AtomAc
   return data;
 }
 
+/** 效用帳：本回合判定「用上」→ used_count +1。 */
+export function recordUse(atomPath: string): AtomAccess {
+  const data = readAccess(atomPath) ?? blankAccess();
+  data.used_count += 1;
+  writeAccess(atomPath, data);
+  return data;
+}
+
+/** 效用帳：用上的回合有了結果 → 成功 useful_hits +1、失敗 used_fail +1。 */
+export function recordUsefulness(atomPath: string, success: boolean): AtomAccess {
+  const data = readAccess(atomPath) ?? blankAccess();
+  if (success) data.useful_hits += 1;
+  else data.used_fail += 1;
+  writeAccess(atomPath, data);
+  return data;
+}
+
 /**
  * 記錄晉升動作：寫 last_promoted_at = today。
  */
@@ -221,6 +258,9 @@ export function migrateFromMd(atomPath: string, meta: MdMetadataForMigration): A
     first_seen: firstSeen,
     timestamps: [],
     confirmation_events: [],
+    used_count: existing?.used_count ?? 0,
+    useful_hits: existing?.useful_hits ?? USEFULNESS_PRIOR,
+    used_fail: existing?.used_fail ?? USEFULNESS_PRIOR,
   };
   writeAccess(atomPath, data);
   return data;

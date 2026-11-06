@@ -165,6 +165,8 @@ export interface FrozenPromptMaterials {
   failureRecallText: string;
   // 從 memory engine 凍結
   memoryContextBlock: string;
+  /** memoryContextBlock 裡實際放了哪些 atom（trace 與效用帳用） */
+  memoryAtoms: Array<{ name: string; path: string }>;
   // metadata
   preparedAt: string;
   sessionKey: string;
@@ -211,6 +213,7 @@ export async function prepareSessionSnapshot(opts: {
 
   // 2. session 開場 memory recall（以首則 user message 為 query）
   let memoryContextBlock = "";
+  let memoryAtoms: Array<{ name: string; path: string }> = [];
   if (opts.initialPrompt) {
     try {
       const { getPlatformMemoryEngine } = await import("./platform.js");
@@ -223,6 +226,7 @@ export async function prepareSessionSnapshot(opts: {
         if (recall.fragments.length > 0) {
           const ctx = memEngine.buildContext(recall.fragments, opts.initialPrompt, recall.blindSpot);
           memoryContextBlock = ctx.text;
+          memoryAtoms = ctx.includedAtoms;
         }
       }
     } catch (err) {
@@ -233,6 +237,7 @@ export async function prepareSessionSnapshot(opts: {
   return {
     ...moduleFrozen,
     memoryContextBlock,
+    memoryAtoms,
     preparedAt: new Date().toISOString(),
     sessionKey: opts.sessionKey,
     accountId: opts.accountId,

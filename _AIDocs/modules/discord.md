@@ -15,11 +15,15 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMessageReactions,   // 效用帳：使用者對 bot 回覆按 👍／👎
+    GatewayIntentBits.DirectMessageReactions,
   ],
   // NOTE: DM 必須加 Partials.Channel，否則 discord.js 不會觸發 DM 的 messageCreate 事件
   partials: [Partials.Channel],
 });
 ```
+
+**Reaction（效用帳）**：`messageReactionAdd` 只處理 bot 自己發出、仍在快取內的訊息（沒開 `Partials.Message`／`Reaction`，舊訊息的 reaction 不會進來），轉給 `memory/usefulness.ts` 的 `noteReaction("discord:ch:<channelId>", …)`。兩個 reaction intent 都不是特權 intent，不必到 Developer Portal 開。使用者訊息在 debounce 合併後、寫 history 前呼叫 `noteUserMessage()`，判它是不是在糾正／肯定上一則回覆。
 
 ## 訊息過濾完整 8 步流程
 

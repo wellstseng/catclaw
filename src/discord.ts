@@ -30,6 +30,7 @@ import { config, getChannelAccess } from "./core/config.js";
 import { matchSkill } from "./skills/registry.js";
 import { recordUserMessage } from "./history.js";
 import { log } from "./logger.js";
+import { noteReaction, noteUserMessage } from "./memory/usefulness.js";
 import {
   isPlatformReady,
   resolveDiscordIdentity,
@@ -294,6 +295,14 @@ async function downloadAttachments(message: Message): Promise<AttachmentResult> 
 // ── Discord Client 建立 ──────────────────────────────────────────────────────
 
 /**
+ * 效用帳用的 sessionKey：跟 agentLoop 實際用的一致（綁定子 agent 的 thread 走子 agent 的 key）。
+ * autoThread 第一回合的 key 是新 thread，使用者之後在 thread 裡說話時 channelId 就是 thread，自然對得上。
+ */
+function usefulnessSessionKey(channelId: string): string {
+  return getSubagentThreadBinding(channelId) ?? `discord:ch:${channelId}`;
+}
+
+/**
  * 建立並設定 Discord Client，綁定 messageCreate 事件
  * NOTE: 不捕獲 config 在 closure 中，每次 messageCreate 都讀全域 config
  *       這樣 hot-reload config 後，新訊息就會用新設定
@@ -306,6 +315,9 @@ export function createBot(): Client {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
+      // 記憶卡效用帳：收使用者對 bot 回覆按的 reaction（非特權 intent，不必到 Developer Portal 開）
+      GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.DirectMessageReactions,
     ],
     // NOTE: DM 必須加 Partials.Channel，否則 discord.js 不會觸發 DM 的 messageCreate 事件
     partials: [Partials.Channel],
@@ -314,6 +326,19 @@ export function createBot(): Client {
   client.on("messageCreate", (message: Message) => {
     // 每次都讀最新的全域 config，支援 hot-reload
     void handleMessage(message, config);
+  });
+
+  // 記憶卡效用帳：使用者對 bot 回覆按 👍／👎 → 結算那一回合用上的卡。
+  // 沒開 Partials.Message／Reaction：只收快取內的訊息（bot 剛送出的回覆都在快取），舊訊息的 reaction 不處理。
+  client.on("messageReactionAdd", (reaction, user) => {
+    try {
+      const msg = reaction.message;
+      if (!client.user || msg.author?.id !== client.user.id) return;
+      const reactorAccountId = resolveDiscordIdentity(user.id, config.admin?.allowedUserIds ?? []).accountId;
+      noteReaction(usefulnessSessionKey(msg.channelId), reaction.emoji.name ?? "", msg.createdTimestamp, user.bot === true, reactorAccountId);
+    } catch (err) {
+      log.warn(`[discord] reaction 效用帳處理失敗：${err instanceof Error ? err.message : String(err)}`);
+    }
   });
 
   client.on("messageUpdate", (_oldMessage, newMessage) => {
@@ -656,6 +681,12 @@ async function handleMessage(
       attachments: [...firstMessage.attachments.values()].length + allImages.length,
     });
 
+    // 記憶卡效用帳：這句話是不是在糾正／肯定上一則回覆（判完就關掉上一回合的待結算）
+    noteUserMessage(
+      usefulnessSessionKey(firstMessage.channelId), combinedText, firstMessage.author.bot ?? false,
+      resolveDiscordIdentity(firstMessage.author.id, config.admin?.allowedUserIds ?? []).accountId,
+    );
+
     // 記錄 user 訊息到 history DB
     recordUserMessage({
       turnId,
@@ -969,6 +1000,7 @@ async function handleMessage(
         speakerRole: accountRole,
         provider,
         systemPrompt: combinedSystemPrompt || undefined,
+        ...(pipeline.memoryContext ? { memoryInjectedByCaller: { atoms: pipeline.memoryAtoms } } : {}),
         inboundContext,
         turnTimeoutMs: config.turnTimeoutMs,
         turnTimeoutToolCallMs: config.turnTimeoutToolCallMs,

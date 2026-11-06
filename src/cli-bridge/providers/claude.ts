@@ -16,6 +16,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { log } from "../../logger.js";
+import { recordCritical, recordSuccess } from "../../core/health-monitor.js";
 import type { CliBridgeEvent, CliProcessConfig, StdinImageBlock, ControlDecision } from "../types.js";
 import type { CliProvider, ProcessIO, ProviderContext, ProviderSpawnSpec } from "./provider.js";
 
@@ -34,6 +35,26 @@ interface ContentBlock {
 interface AssistantMessage {
   id: string;
   content: ContentBlock[];
+}
+
+/** 精簡模式（`--bare`／`CLAUDE_CODE_SIMPLE`）的內建工具只有這三個；實測 claude 2.1.318：正常 40 個、精簡模式剛好這 3 個 */
+const BARE_MODE_TOOLS = new Set(["Bash", "Edit", "Read"]);
+
+/**
+ * 從 system/init 判斷 CLI 是不是跑在精簡模式。
+ * 官方預告 `-p` 將來預設改成 `--bare`：不載 hook、CLAUDE.md、skills、記憶，也不讀 OAuth 登入。
+ * bridge 只傳 `-p`，到時會悄悄失去全部記憶；內建工具縮成 Bash／Edit／Read 是最直接的訊號。
+ * 只看內建工具：明確給 `--mcp-config` 的 MCP 在精簡模式照樣載入（實測 bare＋mcp-config：Bash/Edit/Read＋9 個 mcp__*），
+ * 不濾掉會漏報——bridge 有 botToken 時正好會帶 `--mcp-config`。
+ * 隔離模式 `--setting-sources project,local` 只關 ~/.claude 設定，內建工具照常，不會誤判。
+ */
+export function detectBareInit(init: Record<string, unknown>): { bare: boolean; detail: string } {
+  const tools = Array.isArray(init["tools"]) ? (init["tools"] as unknown[]).map(String) : [];
+  const builtin = tools.filter(t => !t.startsWith("mcp__"));
+  const count = (key: string) => (Array.isArray(init[key]) ? (init[key] as unknown[]).length : 0);
+  const detail = `內建工具=${builtin.length} 全部工具=${tools.length} mcp=${count("mcp_servers")} skills=${count("skills")} version=${String(init["claude_code_version"] ?? "?")}`;
+  const bare = builtin.length > 0 && builtin.length <= BARE_MODE_TOOLS.size && builtin.every(t => BARE_MODE_TOOLS.has(t));
+  return { bare, detail };
 }
 
 /** 權限請求的一行摘要（log / turn 紀錄用；Discord 顯示用 input 全文） */
@@ -73,6 +94,9 @@ function buildDenyRules(denyPaths: string[]): string[] {
 export class ClaudeProvider implements CliProvider {
   readonly name = "claude";
 
+  /** bridge label（buildSpawn 時記下，init 檢查通報用） */
+  private label = "claude";
+
   // 串流 diff 追蹤狀態（per-instance，process restart 時 resetStreamState 清掉）
   private lastMessageId = "";
   private lastTextLength = 0;
@@ -82,6 +106,7 @@ export class ClaudeProvider implements CliProvider {
   // ── 啟動 ──────────────────────────────────────────────────────────────────
 
   buildSpawn(config: CliProcessConfig): ProviderSpawnSpec {
+    this.label = config.label;
     const args = [
       "-p",
       "--input-format", "stream-json",
@@ -295,6 +320,20 @@ export class ClaudeProvider implements CliProvider {
    *
    * 原版 process.ts 在 parseAssistantEvent 內直接 this.emit("event", ...) 多次，這裡改為 ctx.emit。
    */
+  /** init 檢查：精簡模式 → health CRITICAL（Discord 通報，1 小時內同 bridge 只發一次）；正常載入 → 標恢復 */
+  private checkInitLoad(init: Record<string, unknown>): void {
+    const component = `cli-bridge:${this.label}:full-load`;
+    const { bare, detail } = detectBareInit(init);
+    if (bare) {
+      recordCritical(component,
+        `Claude CLI 以精簡模式啟動（${detail}）：hook、原子記憶、CLAUDE.md、skills、MCP 都沒載入。` +
+        `多半是 CLI 升級後 \`-p\` 預設改成 --bare；需在 bridge 啟動參數補上關閉精簡模式的旗標。`);
+      return;
+    }
+    log.debug(`[cli-bridge:${this.label}] init 載入正常：${detail}`);
+    recordSuccess(component);
+  }
+
   parseStdoutLine(obj: Record<string, unknown>, ctx: ProviderContext): void {
     const type = obj["type"] as string | undefined;
 
@@ -302,6 +341,7 @@ export class ClaudeProvider implements CliProvider {
     if (type === "system" && obj["subtype"] === "init") {
       const sid = obj["session_id"] as string | undefined;
       if (sid) ctx.emit({ type: "session_init", sessionId: sid });
+      this.checkInitLoad(obj);
       return;
     }
 

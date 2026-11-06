@@ -18,6 +18,8 @@ import { initAidocsManager } from "./aidocs-manager.js";
 import { initMemoryExtractor } from "./memory-extractor.js";
 import { scheduleConsolidate } from "./consolidate-scheduler.js";
 import { initMemoryVectorSync } from "./memory-vector-sync.js";
+import { initUsefulnessTracker } from "../memory/usefulness.js";
+import { getFrozenMaterials } from "../core/session-snapshot.js";
 import type { FileWatcherConfig, MemoryConfig } from "../core/config.js";
 
 export interface WorkflowConfig {
@@ -89,6 +91,9 @@ export function initWorkflow(
       accumTurnThreshold: memoryExtractCfg.accumTurnThreshold,
       cooldownMs: memoryExtractCfg.cooldownMs,
     } : undefined);
+
+    // ── 8b. 記憶卡效用帳（送出去的卡有沒有被用上、用上後回合成不成功）
+    initUsefulnessTracker(eventBus, dataDir, (sessionKey) => getFrozenMaterials(sessionKey)?.memoryAtoms ?? []);
 
     // ── 9. Consolidate Scheduler
     scheduleConsolidate();

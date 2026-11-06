@@ -73,12 +73,12 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/platform.md](modules/platform.md) | `src/core/platform.ts` | 子系統初始化工廠 | 2026-04-05 |
 | [modules/context-engine.md](modules/context-engine.md) | `src/core/context-engine.ts` | Context 壓縮策略 | 2026-04-05 |
 | [modules/prompt-assembler.md](modules/prompt-assembler.md) | `src/core/prompt-assembler.ts` | 模組化 system prompt 組裝 | 2026-04-05 |
-| [modules/dashboard.md](modules/dashboard.md) | `src/core/dashboard.ts` | Web dashboard + REST API | 2026-04-13 |
-| [modules/memory-engine.md](modules/memory-engine.md) | `src/memory/` | 四層記憶引擎 + episodic + session-memory | 2026-04-13 |
+| [modules/dashboard.md](modules/dashboard.md) | `src/core/dashboard.ts` | Web dashboard + REST API | 2026-11-06 |
+| [modules/memory-engine.md](modules/memory-engine.md) | `src/memory/` | 四層記憶引擎 + episodic + session-memory + 效用帳 | 2026-11-06 |
 | [modules/tool-registry.md](modules/tool-registry.md) | `src/tools/` | Tool 註冊 + 30 builtin tools | 2026-04-15 |
 | [modules/message-trace.md](modules/message-trace.md) | `src/core/message-trace.ts` | 7 階段訊息追蹤 + TraceStore + ContextStore | 2026-04-06 |
 | [modules/config.md](modules/config.md) | `src/core/config.ts` | JSON 設定載入 | 2026-04-05 |
-| [modules/discord.md](modules/discord.md) | `src/discord.ts` + `src/discord/` | Discord 入口 + messageUpdate 編輯感知 + Bot Circuit Breaker | 2026-04-23 |
+| [modules/discord.md](modules/discord.md) | `src/discord.ts` + `src/discord/` | Discord 入口 + messageUpdate 編輯感知 + Bot Circuit Breaker + reaction 效用帳 | 2026-11-06 |
 | [modules/providers.md](modules/providers.md) | `src/providers/` | LLM Provider 系統 | 2026-04-05 |
 | [modules/skills.md](modules/skills.md) | `src/skills/` | Skill 系統 | 2026-05-26 |
 | [modules/session.md](modules/session.md) | `src/core/session.ts` | SessionManager | 2026-04-05 |
@@ -106,7 +106,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/tool-log-store.md](modules/tool-log-store.md) | `src/core/tool-log-store.ts` | Tool log 持久化 | 2026-04-06 |
 | [modules/inbound-history.md](modules/inbound-history.md) | `src/discord/inbound-history.ts` | 未處理訊息記錄 | 2026-04-06 |
 | [modules/cron.md](modules/cron.md) | `src/cron.ts` | 排程服務 | 2026-04-29 |
-| [modules/cli-bridge.md](modules/cli-bridge.md) | `src/cli-bridge/` | CLI Bridge 持久 process 模組（claude / codex multi-provider） | 2026-05-26 |
+| [modules/cli-bridge.md](modules/cli-bridge.md) | `src/cli-bridge/` | CLI Bridge 持久 process 模組（claude / codex multi-provider） | 2026-11-06 |
 | [modules/index.md](modules/index.md) | `src/index.ts` | 進入點 | 2026-03-22 |
 | [modules/logger.md](modules/logger.md) | `src/logger.ts` | Log 系統 | 2026-03-22 |
 | [modules/pm2.md](modules/pm2.md) | `catclaw.js` | PM2 進程管理 | 2026-03-22 |

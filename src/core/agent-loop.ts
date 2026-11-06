@@ -36,6 +36,8 @@ import { registerTurnAbort, clearTurnAbort } from "../skills/builtin/stop.js";
 import type { MemoryEngine } from "../memory/engine.js";
 import { createApproval, sendApprovalDm, isCommandAllowed } from "./exec-approval.js";
 import { getSessionNote, checkAndSaveNote } from "../memory/session-memory.js";
+import { MEMORY_FENCE_OPEN } from "../memory/context-builder.js";
+import { noteTurnAtoms } from "../memory/usefulness.js";
 import { config } from "./config.js";
 import { MessageTrace, getTraceStore } from "./message-trace.js";
 import { isPlanMode, PLAN_MODE_BLOCKED_TOOLS } from "../skills/builtin/plan.js";
@@ -558,6 +560,11 @@ export interface AgentLoopOpts {
    * 請勿同時啟用此選項，否則同一批 atoms 會被注入兩次。
    * 此選項設計用於無前置 recall 的情境（子 agent、cron）。
    */
+  /**
+   * 呼叫端（message-pipeline）已把記憶區塊組進 systemPrompt：agent-loop 不再前置凍結區塊，
+   * 並用本 loop 的 sessionKey 把這些卡登記進效用帳（pipeline 的 sessionKey 在 autoThread／dashboard／綁定子 agent 時跟這裡不同）。
+   */
+  memoryInjectedByCaller?: { atoms: Array<{ name: string; path: string }> };
   memoryRecall?: {
     enabled: boolean;
     /** true = hybrid（vector + trigger），false = 僅 trigger */
@@ -1293,13 +1300,26 @@ export async function* agentLoop(
 
   // ── 3b. Memory Recall（可選，供子 agent 等無前置 recall 的情境使用）──────────
   // 先看 frozen snapshot；命中即用，未命中再 fallback live recall（仍保留原行為）。
+  // 呼叫端（message-pipeline）已把記憶區塊組進 systemPrompt → 不再前置第二份（之前每回合重複注入同一塊）。
+  // 主要看 memoryInjectedByCaller；systemPrompt 含記憶區塊開頭標記是備援（漏帶旗標的呼叫端也不會重複）。
   let memoryContextBlock = "";
   const { getFrozenMaterials: _getFrozenForRecall } = await import("./session-snapshot.js");
   const _frozenForRecall = _getFrozenForRecall(sessionKey);
-  if (_frozenForRecall?.memoryContextBlock) {
+  const _callerInjectedMemory = opts.memoryInjectedByCaller !== undefined || (opts.systemPrompt ?? "").includes(MEMORY_FENCE_OPEN);
+  // 效用帳：這回合實際送進 prompt 的卡。exclusive＝只認這份名單（呼叫端注入時，本 session 的凍結卡其實沒送）；
+  // 否則效用帳另外合併本 session 的凍結卡。
+  let _usefulnessAtoms: Array<{ name: string; path: string }> = [];
+  let _usefulnessExclusive = false;
+  if (_callerInjectedMemory) {
+    _usefulnessAtoms = opts.memoryInjectedByCaller?.atoms ?? [];
+    _usefulnessExclusive = true;
+    log.debug(`[agent-loop] systemPrompt 已含記憶區塊（呼叫端注入），略過 3b`);
+  } else if (_frozenForRecall?.memoryContextBlock) {
     memoryContextBlock = _frozenForRecall.memoryContextBlock;
     trace?.recordMemoryRecall({
-      durationMs: 0, fragmentCount: 0, atomNames: [],
+      durationMs: 0,
+      fragmentCount: _frozenForRecall.memoryAtoms.length,
+      atomNames: _frozenForRecall.memoryAtoms.map(a => a.name),
       injectedTokens: Math.ceil(memoryContextBlock.length / 4),
       vectorSearch: false, degraded: false, blindSpot: false, hits: [],
       source: "frozen-snapshot",
@@ -1316,6 +1336,7 @@ export async function* agentLoop(
       if (recallResult.fragments.length > 0) {
         const ctx = deps.memoryEngine.buildContext(recallResult.fragments, prompt, recallResult.blindSpot);
         memoryContextBlock = ctx.text;
+        _usefulnessAtoms = ctx.includedAtoms;
         log.debug(`[agent-loop] memory recall 注入 ${recallResult.fragments.length} fragments (vectorSearch=${opts.memoryRecall.vectorSearch})`);
         trace?.recordMemoryRecall({
           durationMs: Date.now() - recallStartMs,
@@ -1338,6 +1359,7 @@ export async function* agentLoop(
       log.debug(`[agent-loop] memory recall 失敗（繼續）：${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  noteTurnAtoms(sessionKey, _usefulnessAtoms, _usefulnessExclusive);
 
   // ── 4. System prompt ──────────────────────────────────────────────────────
   // 注：群組多人聲明（speakerDisplay）已移到 user message [meta] 前綴（見上方 firstUserContent 構造）。

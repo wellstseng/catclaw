@@ -863,6 +863,11 @@ label.cfg-toggle { min-width: 36px; }
       <div id="mem-recall-result" style="font-size:0.82rem;max-height:300px;overflow-y:auto"></div>
     </div>
   </div>
+  <!-- 效用帳：送出去的卡有沒有被用上 -->
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="margin:0 0 8px">效用帳（近 30 天）</h3>
+    <div id="mem-effect" style="font-size:0.82rem">載入中...</div>
+  </div>
   <!-- Atom Browser -->
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -4621,6 +4626,32 @@ async function loadMemory() {
   } catch (e) {
     document.getElementById('mem-stats').textContent = '載入失敗: ' + e.message;
   }
+  try {
+    const report = await authFetch('/api/memory/effect-report' + memAgentParam()).then(r => r.json());
+    renderMemEffect(report);
+  } catch (e) {
+    document.getElementById('mem-effect').textContent = '載入失敗: ' + e.message;
+  }
+}
+
+function renderMemEffect(r) {
+  const el = document.getElementById('mem-effect');
+  if (r.error) { el.textContent = '載入失敗: ' + r.error; return; }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const lg = r.ledger;
+  const since = r.trackingSince ? r.trackingSince.slice(0, 10) : '尚未開始（重啟後第一個回合起記）';
+  const table = (rows, cols) => rows.length
+    ? '<table class="tbl"><thead><tr>' + cols.map(c => '<th>' + c[0] + '</th>').join('') + '</tr></thead><tbody>' +
+      rows.map(row => '<tr>' + cols.map(c => '<td>' + esc(c[1](row)) + '</td>').join('') + '</tr>').join('') + '</tbody></table>'
+    : '<div style="color:var(--fg3);padding:4px 0">（無）</div>';
+  el.innerHTML =
+    '<div style="margin-bottom:8px;color:var(--fg2)">記帳起點 ' + esc(since) + '｜回合 ' + lg.turns + '（有送卡 ' + lg.turnsWithCandidates + '、有用上 ' + lg.turnsWithUse + '）｜結果 成功 ' + lg.outcomes.success + '・失敗 ' + lg.outcomes.fail + '・判不出 ' + lg.outcomes.unknown + '｜共 ' + r.totalAtoms + ' 張卡</div>' +
+    '<div style="margin:8px 0 4px;font-weight:600">有用的卡（有用率下界排序）</div>' +
+    table(r.topUseful, [['卡片', x => x.name], ['信心', x => x.confidence], ['用上', x => x.usedCount], ['成功/失敗', x => x.success + '/' + x.fail], ['有用率下界', x => x.wilson], ['在 prompt 回合', x => x.exposures]]) +
+    '<div style="margin:12px 0 4px;font-weight:600">常送卻沒用上（在 prompt 裡 ≥5 回合、0 次用上：token 稅，考慮收斂觸發詞或退役）</div>' +
+    table(r.exposedNeverUsed, [['卡片', x => x.name], ['信心', x => x.confidence], ['在 prompt 回合', x => x.exposures]]) +
+    '<div style="margin:12px 0 4px;font-weight:600">近 30 天沒被撈過：' + r.neverExposed.count + ' 張（最久沒用的前幾張）</div>' +
+    table(r.neverExposed.sample, [['卡片', x => x.name], ['信心', x => x.confidence], ['最後使用', x => x.lastUsed || '-']]);
 }
 
 function renderMemStats(s) {
@@ -8041,6 +8072,7 @@ export class DashboardServer {
                 accountId,
                 provider,
                 systemPrompt: pipeline.systemPrompt || undefined,
+                ...(pipeline.memoryContext ? { memoryInjectedByCaller: { atoms: pipeline.memoryAtoms } } : {}),
                 allowSpawn: true,
                 _sessionKeyOverride: sessionKey,
                 ...(thinking ? { thinking } : {}),
@@ -8201,6 +8233,21 @@ export class DashboardServer {
             const memRoot = await resolveMemRootForAgent();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(getStats([memRoot])));
+          } catch (err) {
+            res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+          }
+        })();
+        return;
+      }
+
+      // GET /api/memory/effect-report — 記憶卡效用帳報表（有用的卡／常被撈卻沒用上／沒被撈過）
+      if (url === "/api/memory/effect-report" && method === "GET") {
+        void (async () => {
+          try {
+            const { buildEffectReport } = await import("../memory/usefulness.js");
+            const memRoot = await resolveMemRootForAgent();
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(buildEffectReport([memRoot])));
           } catch (err) {
             res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
           }

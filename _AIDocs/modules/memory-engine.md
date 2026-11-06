@@ -1,7 +1,7 @@
 # modules/memory-engine — 記憶引擎（global + project + account + agent）
 
 > 檔案：`src/memory/engine.ts` + `src/memory/` 子模組
-> 更新日期：2026-04-09
+> 更新日期：2026-11-06
 
 ## 職責
 
@@ -19,7 +19,9 @@
 | `consolidate.ts` | 整合：promotion / archive / ACT-R decay（與 recall 共用 `computeActivation()`） |
 | `context-builder.ts` | Context 組裝：budget 截斷（ACT-R/層級預算已移除） |
 | `atom.ts` | Atom CRUD：讀寫 markdown atom 檔案 |
-| `write-gate.ts` | 寫入閘門：dedup（餘弦相似度閾值） |
+| `write-gate.ts` | 寫入閘門：dedup（餘弦相似度閾值）＋威脅掃描＋敏感字眼（`findSensitiveWords`） |
+| `usefulness.ts` | 效用帳：送出去的卡有沒有被用上、用上後回合成不成功 → access.json 三欄＋帳本＋報表 |
+| `atom-access.ts` | `<atom>.access.json` 遙測讀寫（曝光 read_hits／timestamps、confirmations、效用三欄） |
 | `index-manager.ts` | MEMORY.md 索引管理 |
 | `episodic.ts` | Episodic memory：session 統計 + rut 偵測 + TTL 清理 |
 | `session-memory.ts` | Session note：per-channel 對話筆記（Ollama 萃取） |
@@ -113,7 +115,13 @@ WriteGateResult：
 - `reason: "bypass" | "injection" | "duplicate" | "ok"`
 - `similarity?: number` — dedup 比對相似度（duplicate 時有值）
 
-`bypass=true` 跳過向量 dedup（保留 prompt injection / secret 掃描）。LLM 端透過 `atom_write` tool 的 `bypass` 參數觸發；agent 應依使用者明確指令（「記住 / 記下來 / 強制存 / 覆蓋記憶」）才填 true，autonomous 自主寫入維持 false。
+`bypass=true` 跳過 gate，但真實 token／私鑰照擋（記憶會被注入送給模型供應商）。LLM 端透過 `atom_write` tool 的 `bypass` 參數觸發；agent 應依使用者明確指令（「記住 / 記下來 / 強制存 / 覆蓋記憶」）才填 true，autonomous 自主寫入維持 false。
+
+真實 token 格式：`sk-`、`sk-ant-`、JWT 三段式、`gh[pousr]_`、`github_pat_`、`glpat-`、`AKIA`、`xox?-`、各式 `BEGIN … PRIVATE KEY`。
+
+敏感字眼（`findSensitiveWords`，對拍 ~/.claude `lib/sensitive_gate.py`）：密碼／私鑰／金鑰／憑證／api key／access token、身分證、手機號碼、信用卡、銀行帳號、住家地址、薪資、內網 IP（10.x、172.16–31.x、192.168.x）、共用資料夾（`\\host\share`、`//host/share`）。排除「密碼學」「1Password」、協定相對網址（`src="//cdn…"`）、前後接數字或點的 IP 樣式。只回報不擋；背景萃取（`workflow/memory-extractor.ts decideExtractLayer`，內容＋觸發詞一起判）命中時 global／project 層改寫 account 層——沒人能判斷該不該公開，就不放進所有使用者都撈得到的層；累積的那段對話有不只一人發言（群組）→ 分不出是誰的資訊，不寫。
+
+擋下真實 token／私鑰時 `reason` 回 `secret`（混有 prompt injection 才回 `injection`）；JWT 樣式要 `eyJ` 開頭，長套件名三段式不再被當 token。
 
 ### Seed & Rebuild
 
@@ -269,3 +277,32 @@ checkAndSaveNote(channelId, turnCount, messages, memoryDir, opts): Promise<void>
 ## Hook 整合
 
 `MemoryEngine.recall()` 執行後觸發 **MemoryRecall** hook（observer），附 query / hitCount / durationMs。
+
+## 效用帳（`usefulness.ts`）
+
+回答「送出去的卡有沒有幫上忙」。晉升（`consolidate.ts`）目前只看被撈次數，撈得多不代表有用；這本帳記「用上」與「用上之後的結果」，報表分出有用的卡、常被撈卻沒用上的卡。對拍 ~/.claude 效用歸因（`hooks/handlers/stop.py _attribute_usefulness`），依 catclaw 改三處（判用扣掉使用者原句的詞、結果訊號、送卡單位）。
+
+### 一回合的流程
+
+| 時機 | 做什麼 |
+|------|--------|
+| 送卡 | agent-loop 3b 每回合用**自己的 sessionKey** 呼一次 `noteTurnAtoms()`：呼叫端（pipeline）注入記憶時帶 `memoryInjectedByCaller.atoms`，只認這份名單（exclusive）；用凍結區塊時效用帳自己向 `session-snapshot` 拿 `memoryAtoms`；即時撈的用 `buildContext().includedAtoms`（預算用完沒放進去的不算）。pipeline 的 sessionKey 在 autoThread、Dashboard 對話、綁定子 agent 時跟 agent-loop 不同，所以不由 pipeline 登記 |
+| `turn:after` | 每張卡判用 → 用上的 `used_count +1`、帳本記 `turn`；回合內已有 `workflow:rut`／`workflow:retry_escalation` → 直接結算失敗；否則掛「待結算」（每個 session 只留最新一回合；最新回合沒用上卡 → 前一筆作廢） |
+| 使用者下一句（`discord.ts` → `noteUserMessage`） | 開頭 45 字內、不帶「嗎」的子句有糾正詞 → 失敗（排除不對稱／不對外、「我搞錯了」這種自責）；40 字內、不帶轉折與問句的肯定 → 成功；其他 → 判不出（記 unknown、不動分數）。bot 的訊息不算；**群組裡只認問那回合的同一人**（別人說話不判、待結算留著）。綁定子 agent 的 thread 用子 agent 的 sessionKey |
+| reaction（`discord.ts messageReactionAdd` → `noteReaction`） | 對 bot 回覆按 👍✅❤️💯🙏🎉👏👌 → 成功、👎❌😡🙅🚫⛔ → 失敗；只認待結算那回合開始後送出的訊息、非 bot 按的、同一人按的 |
+| 結算 | 成功 `useful_hits +1`、失敗 `used_fail +1`（先驗 1，同 ~/.claude），帳本記 `outcome` |
+
+待結算放 6 小時；`session:end` 清狀態。
+
+### 判用（`detectAtomUse`）
+
+卡片本文（去標題與 `- Key:` 欄位行）抽識別詞：程式識別碼／路徑片段（≥5 字或含 `_ . 數字 / -`）＋中文雙字，去停用詞與路徑噪音，**再扣掉使用者這句話也有的詞**（卡是因為這些詞才被撈出來，AI 複述題目不算用上）。跟 AI 回覆共享數 ≥ need 才算用上：need = 識別詞一半夾在 3～6，且不少於識別詞的 15%；識別詞不到 3 個的卡永遠不判。
+
+校準（2026-11-06 唯讀回放 100 個真實回合、972 次送卡）：沒有 15% 下限時判用上 84 次，抽看明確誤判都是上百詞的長卡撞泛用雙字；加下限後 33 次，抽看約 85–90% 是真的照卡片回答。使用者訊息 2525 則：判糾正 22（抽看都是真糾正）、判肯定 1——**成功訊號主要靠 👍 reaction**。
+
+### 帳本與報表
+
+- 帳本：`<workspace>/data/workflow/memory-usefulness.ndjson`，append-only，一行一筆 `{ts, kind: "turn"|"outcome", sessionKey, …}`；`turn` 的 `candidates` 是那回合在 prompt 裡的卡名名單
+- `access.json` 三欄：`used_count`（判用上次數）、`useful_hits`（α）、`used_fail`（β）；舊檔讀取時補 0／1／1，任何寫入原樣保留
+- `buildEffectReport(roots)`（Dashboard `GET /api/memory/effect-report`、記憶分頁「效用帳」卡）：有用的卡（Wilson 下界 z=1.28 排序）、在 prompt 裡 ≥5 回合卻 0 次用上（token 稅）、近 30 天沒被撈過。「在 prompt 回合」從帳本 `candidates` 算（凍結卡每回合都送＝每回合都付 token），不用 access.json 的 timestamps——那是 recall 階段就記，預算用完沒放進 prompt 的卡也算在內；「沒被撈過」才看 timestamps
+- 晉升條件目前不吃這本帳；累積兩週數據後再決定要不要把 consolidate 從「被撈 ≥3 次」換成看有用率

@@ -1,7 +1,7 @@
 # modules/dashboard — Web Dashboard + REST API
 
 > 檔案：`src/core/dashboard.ts` (~5700 行)
-> 更新日期：2026-05-19
+> 更新日期：2026-11-06
 
 ## 職責
 
@@ -156,6 +156,7 @@ Auth/Models 分頁的模型設定卡片提供 `Dashboard Think Level` 操作選�
 | `/api/memory/atoms/:name` | DELETE | 刪除 atom |
 | `/api/memory/recall-test` | POST | 測試 recall（skipCache），body: `{ prompt, accountId? }` |
 | `/api/memory/stats` | GET | 統計：by confidence、confirmation 分布、top/bottom atoms |
+| `/api/memory/effect-report` | GET | 效用帳報表（記憶分頁「效用帳」卡）：有用的卡、記帳後常被撈卻沒用上、近 30 天沒被撈過；見 memory-engine.md「效用帳」 |
 | `/api/memory/vector/stats` | GET | LanceDB table count + sizes |
 | `/api/memory/pipeline` | GET | 記憶管線設定（embedding/extraction/reranker + vector stats） |
 | `/api/memory/pipeline` | PUT | 更新管線設定（embedding/extraction），寫入 catclaw.json |
