@@ -8,6 +8,7 @@
  *   /dm on | 開       本機開始接私訊（設定檔不存在就用平台預設新建）
  *   /dm off | 關      本機停止接私訊（設定保留，只改 enabled）
  *   /dm status | 狀態  看本機現況（預設）
+ *   /dm check | 自檢   逐項檢查這台能不能收私訊（設定、bot、目錄、名單、claude CLI）
  *
  * 設定檔：~/.catclaw/cli-bridge-dm.json（格式見 cli-bridge/dm.ts DmBridgeConfig）
  * 收私訊的 bot：cli-bridge-dm.json.botToken → cli-bridges.json 任一條 → catclaw.json 主 bot（預設就能用）
@@ -19,7 +20,7 @@
 
 import { hostname } from "node:os";
 import type { Skill, SkillContext, SkillResult } from "../types.js";
-import { setDmBridgeEnabled, getDmBridgeStatus, ensureDmListener } from "../../cli-bridge/dm.js";
+import { setDmBridgeEnabled, getDmBridgeStatus, ensureDmListener, runDmSelfCheck } from "../../cli-bridge/dm.js";
 import type { DmToggleResult } from "../../cli-bridge/dm.js";
 
 const ON_TRIGGERS = ["把私訊切成cli bridge", "私訊切成cli bridge"];
@@ -31,12 +32,13 @@ function isAdmin(ctx: SkillContext): boolean {
 }
 
 /** 口令本身就帶動作（「把私訊切成cli bridge」= on）；/dm 則看第一個參數 */
-function resolveAction(ctx: SkillContext): "on" | "off" | "status" | null {
+function resolveAction(ctx: SkillContext): "on" | "off" | "status" | "check" | null {
   const text = (ctx.message?.content ?? "").toLowerCase().trim();
   if (ON_TRIGGERS.some(t => text.startsWith(t))) return "on";
   if (OFF_TRIGGERS.some(t => text.startsWith(t))) return "off";
   const arg = ctx.args.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
   if (arg === "" || arg === "status" || arg === "狀態") return "status";
+  if (arg === "check" || arg === "自檢" || arg === "檢查") return "check";
   if (arg === "on" || arg === "開" || arg === "開啟") return "on";
   if (arg === "off" || arg === "關" || arg === "關閉") return "off";
   return null;
@@ -64,7 +66,12 @@ export const skill: Skill = {
 
     const action = resolveAction(ctx);
     if (!action) {
-      return { text: "用法：`/dm on`（開）、`/dm off`（關）、`/dm status`（狀態）", isError: true, validation: true };
+      return { text: "用法：`/dm on`（開）、`/dm off`（關）、`/dm status`（狀態）、`/dm check`（自檢）", isError: true, validation: true };
+    }
+
+    if (action === "check") {
+      const r = await runDmSelfCheck(ctx.message?.client);
+      return { text: r.lines.join("\n"), isError: !r.ok };
     }
 
     if (action === "status") {

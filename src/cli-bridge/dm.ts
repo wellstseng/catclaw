@@ -16,9 +16,10 @@
  * cli-bridges.json 後，重啟會照常由 initBridgesFromConfig 重建。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, resolve as resolvePath } from "node:path";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import type { Client, Message } from "discord.js";
 import { log } from "../logger.js";
 import { config, resolveCatclawDir } from "../core/config.js";
@@ -154,6 +155,71 @@ function dmTemplate(dmCfg: DmBridgeConfig, token: string): CliBridgeConfig {
     channels: {},
     botToken: token === mainBotToken() ? undefined : token,
   };
+}
+
+// ── 自檢（/dm check）──────────────────────────────────────────────────────────
+
+/**
+ * 逐項檢查這台機器收私訊所需的條件，每項一行 ✅/❌。
+ * @param mainClient 主 bot 的 Discord client（skill 從 ctx.message.client 給）；收 DM 的是主 bot 時用來看在線狀態
+ */
+export async function runDmSelfCheck(mainClient?: Client): Promise<{ ok: boolean; lines: string[] }> {
+  const lines: string[] = [];
+  let ok = true;
+  const pass = (msg: string) => lines.push(`✅ ${msg}`);
+  const fail = (msg: string) => { ok = false; lines.push(`❌ ${msg}`); };
+
+  lines.push(`主機 \`${hostname()}\`　程式 \`${gitShortHead()}\``);
+
+  const p = getDmConfigPath();
+  if (!existsSync(p)) { fail(`設定檔不存在：\`${p}\`（\`/dm on\` 會建）`); return { ok, lines }; }
+  const dmCfg = loadDmConfig();
+  if (!dmCfg) { fail(`設定檔讀不了或缺必要欄位：\`${p}\`（看 log）`); return { ok, lines }; }
+  (dmCfg.enabled ? pass : fail)(`設定檔 \`${p}\` enabled=${dmCfg.enabled}`);
+
+  // 收私訊的 bot
+  const state = await ensureDmListener().catch(err => { fail(`收私訊的 bot 登入失敗：${err instanceof Error ? err.message : String(err)}`); return null; });
+  if (state === "no-token") fail("沒有任何 bot token（catclaw.json / cli-bridges.json / cli-bridge-dm.json）");
+  else if (state === "main-bot") {
+    const ready = mainClient?.isReady() ?? false;
+    (ready ? pass : fail)(`收私訊的 bot：主 bot${ready ? `（${mainClient?.user?.tag} 在線）` : "（主 bot client 未就緒）"}`);
+  }
+  else if (state === "via-bridge") pass("收私訊的 bot：獨立 bot（由既有頻道 bridge 的連線分派）");
+  else if (state === "listening") pass("收私訊的 bot：獨立 bot（只收私訊的監聽 client 已上線）");
+  else if (state === "disabled") lines.push("（停用中，略過 bot 檢查）");
+
+  // owner
+  const ownerId = resolveOwnerId(dmCfg);
+  (ownerId ? pass : fail)(ownerId ? `owner：${ownerId}` : "owner 未知（cli-bridge-dm.json ownerId / catclaw.json admin.allowedUserIds 都沒有）");
+
+  // 目錄
+  (existsSync(dmCfg.ownerWorkingDir) ? pass : fail)(`owner 工作目錄 \`${dmCfg.ownerWorkingDir}\`${existsSync(dmCfg.ownerWorkingDir) ? "" : " 不存在"}`);
+  try {
+    mkdirSync(dmCfg.teamWorkspaceRoot, { recursive: true });
+    accessSync(dmCfg.teamWorkspaceRoot, fsConstants.W_OK);
+    pass(`同事工作目錄根 \`${dmCfg.teamWorkspaceRoot}\` 可寫`);
+  } catch (err) {
+    fail(`同事工作目錄根 \`${dmCfg.teamWorkspaceRoot}\` 建不了或不可寫：${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 名單與隔離
+  const teamCount = Object.keys(dmCfg.users).filter(id => id !== ownerId).length;
+  (teamCount > 0 ? pass : (m: string) => lines.push(`⚠ ${m}`))(`同事名單 ${teamCount} 人${teamCount === 0 ? "（目前只有 owner 能用）" : ""}`);
+  const badDeny = dmCfg.team.denyPaths.filter(d => !/^(\/|[A-Za-z]:[\\/])/.test(d));
+  (badDeny.length === 0 ? pass : fail)(`denyPaths ${JSON.stringify(dmCfg.team.denyPaths)}${badDeny.length ? `，非絕對路徑不會被擋：${badDeny.join(", ")}` : ""}`);
+
+  // claude CLI
+  const bin = loadCliBridgeConfigs()[0]?.claudeBin ?? "claude";
+  const v = spawnSync(bin, ["--version"], { encoding: "utf-8", timeout: 15_000, shell: process.platform === "win32" });
+  (v.status === 0 ? pass : fail)(`claude CLI \`${bin}\`：${v.status === 0 ? v.stdout.trim() : `執行失敗（${v.error?.message ?? v.stderr?.trim() ?? `exit ${v.status}`}）`}`);
+
+  lines.push("", ok ? "**自檢通過**，名單內的人現在可以私訊測試。" : "**自檢未通過**，先修上面 ❌ 的項目。");
+  return { ok, lines };
+}
+
+function gitShortHead(): string {
+  const r = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: process.cwd(), encoding: "utf-8", timeout: 5_000 });
+  return r.status === 0 ? r.stdout.trim() : "unknown";
 }
 
 // ── 本機開關（/dm skill 用）────────────────────────────────────────────────────
