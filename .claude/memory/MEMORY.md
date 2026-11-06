@@ -36,8 +36,9 @@
 |------|---------|------|
 | 版控 | 1 | `memory/shared/版控/catclaw-兩台機器輪流開發-上git前先fetch看遠端是否領先-架構可能已被另一台改掉.md` |
 | 工作流 | 2 | `memory/shared/工作流/` |
+| 驗證與實證 | 1 | `memory/shared/驗證與實證/catclaw-線上程式直接跑-repo-的-dist-且模組用到才載入-測試編譯要輸出到別的資料夾-build-進-dist-等於半熱更新.md` |
+| (memory 根) | 11 | `memory/(memory 根)/` |
 | failures | 1 | `memory/failures/` |
-| personal | 1 | `memory/personal/` |
 
 | 尚未歸類（shared/ 平鋪） | 說明 |
 |------|------|

@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: auto-capture
 - Created-at: 2026-10-05
+- Source: commit:4884c8c 2026-10-05（原對話已逾保留期）
 
 ## 知識
 

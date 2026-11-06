@@ -42,7 +42,13 @@
         "github webhook",
         "catclaw agent github"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "ai-github-mcp-server-1",
+        "ai-github-actions-llm-2",
+        "ai-github-autonomous-agents-3",
+        "code-review-pre-review-web"
+      ]
     },
     {
       "name": "catclaw-models-config",
@@ -72,7 +78,14 @@
         "circuit breaker",
         "agent loop"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-opt-context-management-1",
+        "catclaw-opt-tool-design-4",
+        "catclaw-opt-observability-5",
+        "catclaw-opt-planning-frameworks-6",
+        "catclaw-opt-planning-impl-7"
+      ]
     },
     {
       "name": "catclaw-opt-context-management-1",
@@ -86,7 +99,13 @@
         "token管理",
         "context window"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-opt-agent-loop-2",
+        "catclaw-opt-memory-arch-3",
+        "catclaw-opt-planning-frameworks-6",
+        "catclaw-opt-tool-design-4"
+      ]
     },
     {
       "name": "catclaw-opt-memory-arch-3",
@@ -100,7 +119,11 @@
         "atom memory",
         "LanceDB"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-opt-context-management-1",
+        "catclaw-opt-observability-5"
+      ]
     },
     {
       "name": "catclaw-opt-observability-5",
@@ -115,7 +138,11 @@
         "LLM-as-judge",
         "red teaming"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-opt-agent-loop-2",
+        "catclaw-opt-memory-arch-3"
+      ]
     },
     {
       "name": "catclaw-opt-planning-frameworks-6",
@@ -129,7 +156,12 @@
         "LLM-Modulo",
         "agent planning"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-opt-agent-loop-2",
+        "catclaw-opt-context-management-1",
+        "catclaw-opt-planning-impl-7"
+      ]
     },
     {
       "name": "catclaw-opt-planning-impl-7",
@@ -141,7 +173,11 @@
         "catclaw優化",
         "規劃實作"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-opt-planning-frameworks-6",
+        "catclaw-opt-agent-loop-2"
+      ]
     },
     {
       "name": "catclaw-opt-tool-design-4",
@@ -154,7 +190,11 @@
         "工具設計",
         "tool description"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-opt-agent-loop-2",
+        "catclaw-opt-context-management-1"
+      ]
     },
     {
       "name": "catclaw-optimization-priorities",
@@ -165,7 +205,10 @@
         "agent架構",
         "優化方向"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-平台已實證能力與核心機制退役參考"
+      ]
     },
     {
       "name": "cron-claude-acp-timeout-no-discord-reply",
@@ -178,7 +221,11 @@
         "Discord沒回覆",
         "一次性排程"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "ext-20260608-0918-排程-id-格式為-請在-discor",
+        "catclaw-cron-機制120s-timeout熱重載與靜默失敗"
+      ]
     },
     {
       "name": "catclaw-workspace-上-git-的排除規則",
@@ -191,7 +238,10 @@
         "tool-outputs 排除",
         "catclaw git staging"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-git-sync-status"
+      ]
     },
     {
       "name": "catclaw-guest-角色工具限制與-repo-patrol-前置條件",
@@ -234,7 +284,10 @@
         "mcp_catclaw-discord_discord",
         "agent-safety-alignment.md"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "catclaw-optimization-priorities"
+      ]
     },
     {
       "name": "catclaw-subagent-並行上限與長文件輸出踩坑",
@@ -264,7 +317,10 @@
         "fs.watch 熱重載",
         "lastError lastResult"
       ],
-      "scope": "global"
+      "scope": "global",
+      "related": [
+        "cron-claude-acp-timeout-no-discord-reply"
+      ]
     },
     {
       "name": "catclaw-cli-bridge權限一律走stdio-control-request-bottoken只影響discord工具不再降級",
@@ -277,17 +333,10 @@
         "control-request.ts",
         "main-bot"
       ],
-      "scope": "shared"
-    },
-    {
-      "name": "將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri",
-      "path": "memory/personal/wellstseng/將-catclaw-目前使用一般-router-的頻道-全部改為-cli-bri.md",
-      "triggers": [
-        "catclaw",
-        "一般router",
-        "cli-bridge"
-      ],
-      "scope": "personal:wellstseng"
+      "scope": "shared",
+      "related": [
+        "claude-p-permission-prompt-tool-stdio協定-control-request帶request-id與requesttool-name-回覆behavior與updatedinput"
+      ]
     },
     {
       "name": "catclaw-cli-bridge頻道文字訊息直通cli-文字skill與router-session指令無效-rebuild會銷毀舊bot-client",
@@ -332,6 +381,216 @@
         "fetch",
         "架構變更",
         "control_request"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "architecture",
+      "path": "memory/architecture.md",
+      "triggers": [
+        "架構",
+        "資料流",
+        "目錄結構",
+        "session 策略",
+        "config",
+        "環境變數",
+        "restart",
+        "cron",
+        "安全",
+        "PM2",
+        "hot-reload",
+        "catclaw.json",
+        "CATCLAW_WORKSPACE",
+        "pi-ai",
+        "OAuth",
+        "provider",
+        "credentials"
+      ],
+      "scope": "shared",
+      "related": [
+        "pitfalls-migrate-skill",
+        "pitfalls-provider"
+      ]
+    },
+    {
+      "name": "autonomous-experiment-v1",
+      "path": "memory/autonomous-experiment-v1.md",
+      "triggers": [
+        "自主開發",
+        "autonomous",
+        "harness agent",
+        "PM subagent",
+        "實驗指南",
+        "AI協作指南"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "catclaw-v2-plan",
+      "path": "memory/catclaw-v2-plan.md",
+      "triggers": [
+        "V2",
+        "catclaw v2",
+        "context engineering",
+        "inbound history",
+        "CE",
+        "compaction",
+        "token追蹤",
+        "turn audit",
+        "session snapshot",
+        "rollback",
+        "/stop"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "feedback-discord-report",
+      "path": "memory/feedback-discord-report.md",
+      "triggers": [
+        "完成",
+        "回報",
+        "Discord",
+        "主動"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "feedback-language",
+      "path": "memory/feedback-language.md",
+      "triggers": [
+        "日文",
+        "Japanese",
+        "語言",
+        "中文",
+        "回應語言"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "feedback-merge-confirm",
+      "path": "memory/feedback-merge-confirm.md",
+      "triggers": [
+        "merge",
+        "git merge",
+        "合併",
+        "上 GIT",
+        "push main"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "feedback_implementation_discipline",
+      "path": "memory/feedback_implementation_discipline.md",
+      "triggers": [
+        "大型實作",
+        "架構",
+        "多階段",
+        "multi-phase",
+        "refactor",
+        "抽象層",
+        "plan",
+        "provider",
+        "開工",
+        "改檔",
+        "我來",
+        "我直接",
+        "我先動"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "modules",
+      "path": "memory/modules.md",
+      "triggers": [
+        "模組",
+        "config.ts",
+        "discord.ts",
+        "session.ts",
+        "acp.ts",
+        "reply.ts",
+        "logger",
+        "cron.ts",
+        "pm2",
+        "index.ts",
+        "函式",
+        "介面",
+        "BridgeConfig",
+        "getChannelAccess",
+        "enqueue",
+        "AcpEvent",
+        "providers",
+        "claude-api",
+        "auth-profile",
+        "skills",
+        "configure",
+        "message-trace",
+        "trace",
+        "追蹤"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "pitfalls-migrate-skill",
+      "path": "memory/pitfalls-migrate-skill.md",
+      "triggers": [
+        "migrate",
+        "countMd",
+        "statSync",
+        "require",
+        "ESM",
+        "/migrate status",
+        "atom count",
+        "0 個 atom"
+      ],
+      "scope": "shared",
+      "related": [
+        "pitfalls-cli",
+        "architecture"
+      ]
+    },
+    {
+      "name": "reference-issue-tracking-channel",
+      "path": "memory/reference-issue-tracking-channel.md",
+      "triggers": [
+        "議題追蹤",
+        "CatClaw議題追蹤",
+        "judy bridge",
+        "階段議題",
+        "議題頻道",
+        "1498730217278148659"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "tool-quality-check",
+      "path": "memory/tool-quality-check.md",
+      "triggers": [
+        "quality-check",
+        "自檢",
+        "品質檢查",
+        "幻覺偵測",
+        "hallucination",
+        "套娃",
+        "externalization recursion",
+        "trace 異常",
+        "agent loop 異常",
+        "pnpm quality-check"
+      ],
+      "scope": "shared"
+    },
+    {
+      "name": "catclaw-線上程式直接跑-repo-的-dist-且模組用到才載入-測試編譯要輸出到別的資料夾-build-進-dist-等於半熱更新",
+      "path": "memory/shared/驗證與實證/catclaw-線上程式直接跑-repo-的-dist-且模組用到才載入-測試編譯要輸出到別的資料夾-build-進-dist-等於半熱更新.md",
+      "triggers": [
+        "dist",
+        "build",
+        "tsc",
+        "smoke test",
+        "測試編譯",
+        "重啟",
+        "熱更新",
+        "outDir",
+        "冒煙"
       ],
       "scope": "shared"
     }

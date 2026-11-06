@@ -1,0 +1,5 @@
+# AtomicMemory eol/merge rules（python ~/.claude/tools/normalize-eol.py --write-gitattributes 寫入；重跑會整段換新）
+.claude/memory/** text eol=lf
+.claude/memory/MEMORY.md merge=atomindex
+.claude/memory/_ATOM_INDEX.md merge=atomindex
+.claude/memory/_atom_index.json merge=atomindex
