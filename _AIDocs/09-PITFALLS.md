@@ -1,4 +1,4 @@
-# 09 — 陷阱速查（27 項）
+# 09 — 陷阱速查（28 項）
 
 > 開發與維護時容易踩到的坑，全部從實際除錯經驗總結。
 
@@ -298,3 +298,13 @@ const ch = await client.channels.fetch(channelId);
 **設計理念**：三層防護冗餘（prompt 教育 + tool 訊息強制 + catclaw 端強制 break），不靠 LLM 自律。
 
 **Wake-agent 不需修**：subagent 還在 running 期間，agent-loop 內部 listener (event-bus subagent:completed/failed) 接住結果並注入 pendingBgResults 給下一輪 LLM 看到。`spawn-subagent.ts:728` / `platform.ts:343` 的 wake-agent 路徑只在 parent stream 退場後才走。設計正確。
+
+## 28. Playwright 瀏覽器下載卡住 build（cdn 轉址到 Google 儲存站）
+
+**現象**：公司網路上 `pnpm build`／`pnpm install` 停在 `mcp/playwright postinstall` 的 `Downloading Chrome for Testing ...`，長時間不動。
+
+**原因**：
+1. `cdn.playwright.dev/builds/cft/...` 會 307 轉址到 `storage.googleapis.com`，檔案其實從 Google 儲存站下載；只測 cdn.playwright.dev 的 443 埠會誤判「網路通」。
+2. playwright 自己的 30 秒逾時（`PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT`）是連上之後的閒置逾時。它的連線 agent（`happyEyeballs.js`）要等 TCP 連上才把 socket 交給 request，連線本身沒設逾時——目的地被黑洞時要等作業系統放棄（Linux 約 2 分鐘），再乘上 5 次重試。
+
+**解法**：`mcp/playwright/scripts/install-browser.mjs` 用 `playwright install --dry-run chromium` 取真實下載網址，直接 HTTP 試抓並跟著轉址：10 秒內沒收到資料、或照測得速度整組超過 3 分鐘就跳過；真正下載限時 5 分鐘，超時中止並清掉暫存 zip。一律 exit 0，只警告附補救方式。用不到 playwright MCP 的機器設 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 直接略過。
