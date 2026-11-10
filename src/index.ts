@@ -18,6 +18,7 @@ import { config, watchConfig, resolveCatclawDir, resolveWorkspaceDirSafe } from 
 import { setLogLevel } from "./logger.js";
 import { log } from "./logger.js";
 import { createBot } from "./discord.js";
+import { loginWithRetry } from "./discord-login.js";
 import { startCron, stopCron } from "./cron.js";
 import { setupSlashCommands, registerSlashCommands } from "./slash.js";
 import { initHistory } from "./history.js";
@@ -320,7 +321,12 @@ process.on("unhandledRejection", (reason) => {
 
 // 登入 Discord（沒 token 就 skip 整個 bot 上線；catclaw 主體仍跑，dashboard 可用）
 if (config.discord.token) {
-  await bot.login(config.discord.token);
+  try {
+    // 連不上會在裡面退避重試到成功；會 throw 的只剩設定類錯誤（token 無效、intent 沒開）
+    await loginWithRetry(bot, config.discord.token);
+  } catch (err) {
+    log.error(`[bridge] Discord 登入失敗且重試無用（請檢查 discord.token／Developer Portal 的 intent 設定），bot 不會上線、dashboard 仍可用：${err instanceof Error ? err.message : String(err)}`);
+  }
 } else {
   log.warn("[bridge] discord.token 未設定，skip Discord bot 上線（local-only 模式）— dashboard / memory / agent-loop 仍可用");
 }
