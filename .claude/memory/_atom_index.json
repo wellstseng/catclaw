@@ -479,26 +479,6 @@
       "scope": "shared"
     },
     {
-      "name": "feedback_implementation_discipline",
-      "path": "memory/feedback_implementation_discipline.md",
-      "triggers": [
-        "大型實作",
-        "架構",
-        "多階段",
-        "multi-phase",
-        "refactor",
-        "抽象層",
-        "plan",
-        "provider",
-        "開工",
-        "改檔",
-        "我來",
-        "我直接",
-        "我先動"
-      ],
-      "scope": "shared"
-    },
-    {
       "name": "modules",
       "path": "memory/modules.md",
       "triggers": [

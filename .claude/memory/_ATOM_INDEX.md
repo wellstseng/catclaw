@@ -34,7 +34,6 @@
 | feedback-discord-report | memory/feedback-discord-report.md | 完成, 回報, Discord, 主動 | shared |
 | feedback-language | memory/feedback-language.md | 日文, Japanese, 語言, 中文, 回應語言 | shared |
 | feedback-merge-confirm | memory/feedback-merge-confirm.md | merge, git merge, 合併, 上 GIT, push main | shared |
-| feedback_implementation_discipline | memory/feedback_implementation_discipline.md | 大型實作, 架構, 多階段, multi-phase, refactor, 抽象層, plan, provider, 開工, 改檔, 我來, 我直接, 我先動 | shared |
 | modules | memory/modules.md | 模組, config.ts, discord.ts, session.ts, acp.ts, reply.ts, logger, cron.ts, pm2, index.ts, 函式, 介面, BridgeConfig, getChannelAccess, enqueue, AcpEvent, providers, claude-api, auth-profile, skills, configure, message-trace, trace, 追蹤 | shared |
 | pitfalls-migrate-skill | memory/pitfalls-migrate-skill.md | migrate, countMd, statSync, require, ESM, /migrate status, atom count, 0 個 atom | shared |
 | reference-issue-tracking-channel | memory/reference-issue-tracking-channel.md | 議題追蹤, CatClaw議題追蹤, judy bridge, 階段議題, 議題頻道, 1498730217278148659 | shared |
