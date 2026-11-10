@@ -19,8 +19,8 @@ export interface ProviderSpawnSpec {
 
 /** Provider 提供給 process.ts 的 IO 介面（process.ts 注入給 provider 用） */
 export interface ProcessIO {
-  /** 寫一行 JSON 到 CLI stdin（包含換行） */
-  writeStdinLine(line: string): void;
+  /** 寫一行 JSON 到 CLI stdin（包含換行）。quiet=true 不寫 debug log（定時心跳用，免得每分鐘洗版） */
+  writeStdinLine(line: string, opts?: { quiet?: boolean }): void;
   /** 發訊號給 child process（Claude interrupt 用 SIGINT） */
   signal(sig: NodeJS.Signals): void;
 }

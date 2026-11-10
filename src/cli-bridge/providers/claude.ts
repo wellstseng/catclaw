@@ -283,7 +283,7 @@ export class ClaudeProvider implements CliProvider {
 
   sendKeepAlive(io: ProcessIO): boolean | null {
     try {
-      io.writeStdinLine(JSON.stringify({ type: "keep_alive" }));
+      io.writeStdinLine(JSON.stringify({ type: "keep_alive" }), { quiet: true });
       return true;
     } catch {
       return false;

@@ -35,7 +35,7 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
 
   /** 注入給 provider 用的 IO 介面 */
   private readonly io: ProcessIO = {
-    writeStdinLine: (line: string) => {
+    writeStdinLine: (line: string, opts?: { quiet?: boolean }) => {
       const stdin = this.proc?.stdin;
       if (!stdin?.writable) {
         throw new Error(`[cli-bridge:${this.config.label}] stdin 不可寫入（process 未啟動或已關閉）`);
@@ -47,6 +47,7 @@ export class CliProcess extends EventEmitter<CliProcessEvents> {
       } catch (err) {
         throw new Error(`[cli-bridge:${this.config.label}] stdin 寫入失敗（child 可能已死）：${(err as Error).message}`);
       }
+      if (opts?.quiet) return;
       log.debug(`[cli-bridge:${this.config.label}] stdin: ${line.slice(0, 100)}`);
     },
     signal: (sig: NodeJS.Signals) => {
