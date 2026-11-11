@@ -33,6 +33,9 @@ button.danger { background: var(--danger); color: #fff; }
 button.ghost { background: transparent; color: var(--fg2); padding: 6px 8px; }
 .ghost-link { color: var(--fg2); padding: 6px 8px; text-decoration: none; border-radius: 6px; }
 .ghost-link:hover { background: var(--bg4); }
+.btn-gitlab { display: block; text-align: center; text-decoration: none; background: #fc6d26; color: #fff; border-radius: 6px; padding: 7px 14px; }
+.btn-gitlab:hover { filter: brightness(1.1); }
+.or { text-align: center; color: var(--fg3); font-size: 12px; }
 button:disabled { opacity: .5; cursor: default; }
 input, select, textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
 input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -165,6 +168,8 @@ details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 1
     <input name="password" type="password" placeholder="密碼" autocomplete="current-password" required>
     <div class="error" id="login-err"></div>
     <button class="primary">登入</button>
+    <div class="or hidden" id="gitlab-or">或</div>
+    <a class="btn-gitlab hidden" id="gitlab-login" href="/api/webchat/oauth/gitlab/start">🦊 用 GitLab 登入</a>
   </form>
   <form class="auth-card hidden" id="setup-form">
     <h1>🐾 建立管理員</h1>
@@ -189,6 +194,7 @@ details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 1
       <div class="me"><div class="n" id="me-name"></div><div class="r" id="me-role"></div></div>
       <a class="ghost-link hidden" id="dashboard-link" href="/dashboard" target="_blank" rel="noopener" title="後台（另開分頁）">🛠</a>
       <button class="ghost" id="admin-btn" title="帳號管理">👥</button>
+      <a class="ghost-link hidden" id="gitlab-link" href="/api/webchat/oauth/gitlab/start?mode=link" title="綁定 GitLab（之後可用 GitLab 登入這個帳號）">🦊</a>
       <button class="ghost" id="pw-btn" title="改密碼">🔑</button>
       <button class="ghost" id="logout-btn" title="登出">⎋</button>
     </div>
@@ -289,12 +295,33 @@ let options = { models: [], thinkingLevels: [], canChangeModel: false, skills: [
 const THINK_NAMES = { "": "思考：預設", off: "思考：關閉", minimal: "思考：極少", low: "思考：低", medium: "思考：中", high: "思考：高", xhigh: "思考：極高" };
 
 // ── 登入流程 ──────────────────────────────────────────────────────────────
+let gitlabEnabled = false;
+
+/** GitLab 登入轉回來時，網址 # 會帶 login-error 或 notice；讀完就清掉 */
+function takeHashMessage() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  const msg = { error: h.get("login-error"), notice: h.get("notice") };
+  if (msg.error || msg.notice) history.replaceState(null, "", location.pathname);
+  return msg;
+}
+
 async function boot() {
+  const msg = takeHashMessage();
   const st = await api("/state");
-  if (st.viewer) { viewer = st.viewer; showApp(); return; }
+  gitlabEnabled = !!st.gitlab;
+  if (st.viewer) {
+    viewer = st.viewer;
+    showApp();
+    if (msg.notice) toast(msg.notice);
+    if (msg.error) toast(msg.error);
+    return;
+  }
   $("auth").classList.remove("hidden");
   $("login-form").classList.toggle("hidden", st.needsSetup);
   $("setup-form").classList.toggle("hidden", !st.needsSetup);
+  $("gitlab-login").classList.toggle("hidden", !gitlabEnabled);
+  $("gitlab-or").classList.toggle("hidden", !gitlabEnabled);
+  if (msg.error) $("login-err").textContent = msg.error;
 }
 
 $("login-form").onsubmit = async (e) => {
@@ -312,7 +339,8 @@ $("setup-form").onsubmit = async (e) => {
 function showApp() {
   $("app").classList.remove("hidden");
   $("me-name").textContent = viewer.displayName + " (" + viewer.username + ")";
-  $("me-role").textContent = ROLE_NAMES[viewer.role] || viewer.role;
+  $("me-role").textContent = (ROLE_NAMES[viewer.role] || viewer.role) + (viewer.gitlab ? " · GitLab " + viewer.gitlab : "");
+  $("gitlab-link").classList.toggle("hidden", !gitlabEnabled || !!viewer.gitlab);
   $("admin-btn").classList.toggle("hidden", !viewer.isAdmin);
   $("dashboard-link").classList.toggle("hidden", !viewer.isAdmin);
   loadOptions().catch(err => toast("選單載入失敗：" + err.message));
@@ -816,16 +844,43 @@ $("admin-btn").onclick = async () => {
     const d = await api("/admin/users");
     const roleOpts = d.roles.map(r => `<option value="${r}" ${r === "member" ? "selected" : ""}>${ROLE_NAMES[r] || r}</option>`).join("");
     const acctOpts = d.accounts.filter(a => !a.accountId.startsWith("_")).map(a => `<option value="${esc(a.accountId)}">${esc(a.displayName)}（${esc(a.accountId)}）</option>`).join("");
-    body.innerHTML = `<table><tr><th>帳號</th><th>顯示名稱</th><th>角色</th><th></th></tr>${d.users.map(u => `
-      <tr><td>${esc(u.username)}</td><td>${esc(u.displayName)}</td><td>${esc(ROLE_NAMES[u.role] || u.role)}</td>
+    body.innerHTML = `<table><tr><th>帳號</th><th>顯示名稱</th><th>角色</th><th>登入方式</th><th></th></tr>${d.users.map(u => `
+      <tr style="${u.disabled ? "opacity:.5" : ""}"><td>${esc(u.username)}${u.disabled ? "（已停用）" : ""}</td><td>${esc(u.displayName)}</td><td>${esc(ROLE_NAMES[u.role] || u.role)}</td>
+      <td>${[u.hasPassword ? "密碼" : "", u.gitlab ? "GitLab " + esc(u.gitlab) : ""].filter(Boolean).join("、")}</td>
       <td style="white-space:nowrap"><button class="ghost" data-reset="${esc(u.username)}">重設密碼</button>
-      ${u.username === viewer.username ? "" : `<button class="ghost" data-del="${esc(u.username)}">刪除</button>`}</td></tr>`).join("")}</table>
+      ${u.username === viewer.username ? ""
+        : u.disabled ? `<button class="ghost" data-enable="${esc(u.username)}">啟用</button>`
+        : `<button class="ghost" data-del="${esc(u.username)}" data-gitlab="${u.gitlab ? 1 : ""}">${u.gitlab ? "停用" : "刪除"}</button>`}</td></tr>`).join("")}</table>
       <h2>新增帳號</h2>
       <form><div class="row"><input name="username" placeholder="帳號（小寫英數）" required><input name="displayName" placeholder="顯示名稱"></div>
       <div class="row"><input name="password" type="password" placeholder="初始密碼（至少 8 字）" required autocomplete="new-password"><select name="role">${roleOpts}</select></div>
       <div class="row"><select name="linkAccountId"><option value="">建立新的 catclaw 帳號</option>${acctOpts}</select></div>
       <p class="hint" style="color:var(--fg3);font-size:13px">綁定既有帳號時沿用該帳號的角色與記憶，上面選的角色不套用。</p>
-      <div class="error"></div><div class="row"><button class="primary">新增</button></div></form>`;
+      <div class="error"></div><div class="row"><button class="primary">新增</button></div></form>
+      <h2>GitLab 登入</h2>
+      <form id="gitlab-form">
+      <p class="hint" style="color:var(--fg3);font-size:13px">在 GitLab「Applications」新增應用程式：Redirect URI 填下面的回呼網址，Scopes 勾 openid、profile、email，建好後把 Application ID 與 Secret 填進來。任何能登入這個 GitLab 的人第一次登入會自動建成「成員」。</p>
+      <div class="row"><input name="url" placeholder="GitLab 網址，例如 https://gitlab.uj.com.tw"></div>
+      <div class="row"><input name="redirectUri" placeholder="回呼網址"></div>
+      <div class="row"><input name="clientId" placeholder="Application ID" autocomplete="off"><input name="clientSecret" type="password" placeholder="Secret" autocomplete="new-password"></div>
+      <div class="error"></div><div class="row"><button class="primary">儲存</button><span class="gl-status" style="align-self:center;color:var(--fg3);font-size:13px"></span></div></form>`;
+    const glForm = body.querySelector("#gitlab-form");
+    const gl = await api("/admin/gitlab");
+    glForm.url.value = gl.url || "https://gitlab.uj.com.tw";
+    glForm.redirectUri.value = gl.redirectUri || (location.origin + "/api/webchat/oauth/gitlab/callback");
+    glForm.clientId.value = gl.clientId;
+    glForm.clientSecret.placeholder = gl.hasSecret ? "Secret（已設定，留空不變）" : "Secret";
+    glForm.querySelector(".gl-status").textContent = gl.enabled ? "✅ 已啟用" : "尚未啟用";
+    glForm.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api("/admin/gitlab", Object.fromEntries(new FormData(e.target)));
+        gitlabEnabled = r.enabled;
+        $("gitlab-link").classList.toggle("hidden", !gitlabEnabled || !!viewer.gitlab);   // 側欄 🦊 綁定按鈕跟著出現
+        toast(r.enabled ? "GitLab 登入已啟用，可按左下 🦊 綁定自己的 GitLab" : "GitLab 登入未啟用（欄位沒填齊）");
+        refresh();
+      } catch (err) { glForm.querySelector(".error").textContent = err.message; }
+    };
     body.querySelector("form").onsubmit = async (e) => {
       e.preventDefault();
       try { await api("/admin/users", Object.fromEntries(new FormData(e.target))); refresh(); }
@@ -837,8 +892,14 @@ $("admin-btn").onclick = async () => {
       try { await api("/admin/reset-password", { username: b.dataset.reset, password: pw }); toast("已重設"); } catch (err) { alert(err.message); }
     });
     body.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
-      if (!confirm("刪除網頁帳號 " + b.dataset.del + "？（catclaw 帳號與記憶保留）")) return;
+      const ask = b.dataset.gitlab
+        ? "停用 " + b.dataset.del + "？停用後不能登入（GitLab 帳號刪了下次登入會自動建回來，所以用停用）"
+        : "刪除網頁帳號 " + b.dataset.del + "？（catclaw 帳號與記憶保留）";
+      if (!confirm(ask)) return;
       try { await api("/admin/delete-user", { username: b.dataset.del }); refresh(); } catch (err) { alert(err.message); }
+    });
+    body.querySelectorAll("[data-enable]").forEach(b => b.onclick = async () => {
+      try { await api("/admin/enable-user", { username: b.dataset.enable }); refresh(); } catch (err) { alert(err.message); }
     });
   }
   refresh().catch(err => body.textContent = err.message);

@@ -22,6 +22,17 @@
 - 密碼 scrypt＋salt；登入 cookie `catclaw_web`（HttpOnly、SameSite=Strict、30 天），伺服器只存 token 的 sha256；同一 IP 10 分鐘內失敗 10 次就擋。
 - 所有非 GET 請求要帶 `X-Webchat: 1` header（跨站表單送不出，擋 CSRF）。
 
+## GitLab 登入
+
+- 管理員在 👥 帳號管理的「GitLab 登入」填 GitLab 網址、回呼網址、Application ID、Secret（存 `webchat/gitlab.json`，權限 600；Secret 讀回只回 `hasSecret`，留空存檔不變；Application ID 清空就關閉）。填齊立即生效、不用重啟；登入頁才出現「🦊 用 GitLab 登入」。
+- GitLab 端：Applications 新增，Redirect URI 填 `http://<主機>:<埠>/api/webchat/oauth/gitlab/callback`（要跟設定的回呼網址一字不差），Scopes 勾 `openid`、`profile`、`email`。
+- 流程：`/api/webchat/oauth/gitlab/start` 產生一次性 state（10 分鐘）與 PKCE → GitLab `/oauth/authorize` → `/oauth/gitlab/callback` 用 code＋secret＋verifier 換 token、讀 `/oauth/userinfo`（sub、nickname、name）。
+- 找 `gitlab.sub` 對應的網頁帳號就登入；沒有就自動建 `web-<帳號名>`（member），帳號名取 GitLab nickname 小寫、撞名加 `-gitlab`。不限群組，能登入這個 GitLab 的人都能進。
+- 既有帳號綁定：已登入的人按側欄 🦊（`start?mode=link`），綁定後用 GitLab 登入就是同一個帳號。綁誰在 start 時記進 state——登入 cookie 是 SameSite=Strict，從 GitLab 轉回來的回呼請求不會帶 cookie。
+- GitLab 帳號沒有密碼（不能密碼登入、不能自己改密碼）；管理員可以重設密碼給它，綁定保留。
+- 管理員對 GitLab 帳號按「停用」（不能真的刪，否則下次登入會自動建回來）：登入失效、GitLab 與密碼登入都擋，可再「啟用」。密碼帳號仍是真的刪除。
+- 錯誤（逾時／state 用過、拒絕授權、換 token 失敗、停用）轉回 `/chat#login-error=…` 顯示在登入頁。
+
 ## 一則訊息怎麼跑
 
 1. 先比對 skill trigger（跟 Discord 同順序）：命中就直接執行，結果以「系統」訊息顯示；回覆進行中打 `/stop` 也走這裡。`SkillContext.platform = "web"`，`/context`、`/compact`、`/session` 會找 `web:ch:<對話 id>` 的 session。
@@ -61,7 +72,8 @@
 
 | 檔案 | 內容 |
 |------|------|
-| `users.json` | 帳號名 → accountId、salt、hash |
+| `users.json` | 帳號名 → accountId、salt／hash（密碼帳號）、gitlab {sub, username}、disabled |
+| `gitlab.json` | GitLab 登入設定（url、clientId、clientSecret、redirectUri） |
 | `logins.json` | 登入 token 的 sha256 → 帳號名、到期時間 |
 | `conversations.json` | 對話列表（id、owner、標題、時間、選的模型與思考等級） |
 | `transcripts/<id>.jsonl` | 畫面紀錄（使用者訊息、AI 回覆的文字／思考／工具卡片／核准卡／進度卡、系統訊息），不受 CE 壓縮影響；背景工作晚完成時會改寫該行 |

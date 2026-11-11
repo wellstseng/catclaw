@@ -24,7 +24,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, renameSync, chmodSync } from "node:fs";
 import { join, dirname, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from "node:crypto";
@@ -36,7 +36,21 @@ import type { AgentLoopEvent } from "../core/agent-loop.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
-interface WebUser { accountId: string; salt: string; hash: string; createdAt: string }
+/**
+ * 網頁帳號。密碼登入有 salt／hash；GitLab 登入的帳號可以沒有密碼（只認 gitlab.sub）。
+ * disabled：GitLab 帳號不能真的刪（下次登入會被自動建回來），管理員改成停用。
+ */
+interface WebUser {
+  accountId: string;
+  createdAt: string;
+  salt?: string;
+  hash?: string;
+  gitlab?: { sub: string; username: string };
+  disabled?: boolean;
+}
+
+/** GitLab 登入設定（管理員在頁面填，存 webchat/gitlab.json） */
+interface GitlabConfig { url: string; clientId: string; clientSecret: string; redirectUri: string }
 interface LoginRecord { username: string; expiresAt: number }
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh"] as const;
 type ThinkingLevel = typeof THINKING_LEVELS[number];
@@ -188,6 +202,7 @@ function hashPassword(password: string, salt: string): string {
 }
 
 function passwordMatches(user: WebUser, password: string): boolean {
+  if (!user.hash || !user.salt) return false;   // 只用 GitLab 登入、沒設密碼的帳號
   const expected = Buffer.from(user.hash, "hex");
   const actual = Buffer.from(hashPassword(password, user.salt), "hex");
   return expected.length === actual.length && timingSafeEqual(expected, actual);
@@ -219,7 +234,7 @@ function readCookieToken(req: IncomingMessage): string | null {
   return null;
 }
 
-interface Viewer { username: string; accountId: string; displayName: string; role: Role }
+interface Viewer { username: string; accountId: string; displayName: string; role: Role; gitlab: string | null }
 
 async function currentViewer(req: IncomingMessage): Promise<Viewer | null> {
   const token = readCookieToken(req);
@@ -227,11 +242,11 @@ async function currentViewer(req: IncomingMessage): Promise<Viewer | null> {
   const rec = loadLogins()[sha256(token)];
   if (!rec || rec.expiresAt < Date.now()) return null;
   const user = loadUsers()[rec.username];
-  if (!user) return null;
+  if (!user || user.disabled) return null;
   const { getAccountRegistry } = await import("../core/platform.js");
   const acct = getAccountRegistry().get(user.accountId);
   if (!acct || acct.disabled) return null;
-  return { username: rec.username, accountId: user.accountId, displayName: acct.displayName, role: acct.role };
+  return { username: rec.username, accountId: user.accountId, displayName: acct.displayName, role: acct.role, gitlab: user.gitlab?.username ?? null };
 }
 
 /** 登入失敗次數（每個 IP，10 分鐘內 10 次就擋） */
@@ -283,6 +298,134 @@ async function createWebUser(opts: { username: string; password: string; display
   saveUsers(users);
   log.info(`[webchat] 建立網頁帳號 ${opts.username} → ${accountId}`);
   return null;
+}
+
+// ── GitLab 登入（OAuth＋PKCE） ──────────────────────────────────────────────
+//
+// 流程：/oauth/gitlab/start 產生一次性 state 與 PKCE → 轉到 GitLab 授權頁 → GitLab 帶 code 轉回
+// /oauth/gitlab/callback → 換 token、讀 userinfo → 找 gitlab.sub 對應的帳號登入，沒有就建一般成員。
+// 綁定模式：已登入的人按「綁定 GitLab」，start 當下就把帳號名記進 state；回呼時 cookie 是 SameSite=Strict、
+// 從 GitLab 轉回來的請求不會帶，所以不能在回呼時才看是誰。
+
+const OAUTH_STATE_TTL_MS = 10 * 60_000;
+const GITLAB_DEFAULT_ROLE: Role = "member";
+
+interface OAuthState { verifier: string; mode: "login" | "link"; username?: string; expiresAt: number }
+const oauthStates = new Map<string, OAuthState>();
+
+function loadGitlabConfig(): GitlabConfig | null {
+  const cfg = readJson<Partial<GitlabConfig>>("gitlab.json", {});
+  if (!cfg.url || !cfg.clientId || !cfg.clientSecret || !cfg.redirectUri) return null;
+  return { url: cfg.url.replace(/\/+$/, ""), clientId: cfg.clientId, clientSecret: cfg.clientSecret, redirectUri: cfg.redirectUri };
+}
+
+const base64url = (buf: Buffer) => buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+/** 回到聊天頁並在網址 # 帶訊息（登入頁會顯示） */
+function redirectToChat(res: ServerResponse, message?: { error?: string; notice?: string }): void {
+  const hash = message?.error ? `#login-error=${encodeURIComponent(message.error)}`
+    : message?.notice ? `#notice=${encodeURIComponent(message.notice)}` : "";
+  res.writeHead(302, { Location: `/chat${hash}` });
+  res.end();
+}
+
+function startGitlabLogin(res: ServerResponse, cfg: GitlabConfig, mode: "login" | "link", username?: string): void {
+  const now = Date.now();
+  for (const [k, v] of oauthStates) if (v.expiresAt < now) oauthStates.delete(k);
+  const state = base64url(randomBytes(24));
+  const verifier = base64url(randomBytes(32));
+  oauthStates.set(state, { verifier, mode, username, expiresAt: now + OAUTH_STATE_TTL_MS });
+  const query = new URLSearchParams({
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirectUri,
+    response_type: "code",
+    scope: "openid profile email",
+    state,
+    code_challenge: base64url(createHash("sha256").update(verifier).digest()),
+    code_challenge_method: "S256",
+  });
+  res.writeHead(302, { Location: `${cfg.url}/oauth/authorize?${query}` });
+  res.end();
+}
+
+interface GitlabProfile { sub: string; username: string; name: string }
+
+/** 用 code 換 token，再讀 userinfo */
+async function fetchGitlabProfile(cfg: GitlabConfig, code: string, verifier: string): Promise<GitlabProfile> {
+  const tokenRes = await fetch(`${cfg.url}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams({
+      client_id: cfg.clientId, client_secret: cfg.clientSecret, code,
+      grant_type: "authorization_code", redirect_uri: cfg.redirectUri, code_verifier: verifier,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const token = await tokenRes.json().catch(() => ({})) as { access_token?: string; error?: string; error_description?: string };
+  if (!tokenRes.ok || !token.access_token) throw new Error(`GitLab 換 token 失敗（${tokenRes.status} ${token.error_description ?? token.error ?? ""}）`);
+
+  const infoRes = await fetch(`${cfg.url}/oauth/userinfo`, {
+    headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const info = await infoRes.json().catch(() => ({})) as { sub?: string | number; nickname?: string; preferred_username?: string; name?: string };
+  const username = info.nickname ?? info.preferred_username ?? "";
+  if (!infoRes.ok || info.sub == null || !username) throw new Error(`GitLab 讀使用者資料失敗（${infoRes.status}）`);
+  return { sub: String(info.sub), username, name: info.name || username };
+}
+
+/** GitLab 帳號名 → 可用的網頁帳號名（小寫、換掉不合法字元、撞名加 -gitlab／數字） */
+function pickUsername(gitlabUsername: string, users: Record<string, WebUser>, accountTaken: (id: string) => boolean): string {
+  let base = gitlabUsername.toLowerCase().replace(/[^a-z0-9_.-]/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 24);
+  if (base.length < 2) base = `gl-${base || "user"}`;
+  const free = (name: string) => !users[name] && !accountTaken(`web-${name}`);
+  if (free(base)) return base;
+  for (let i = 0; i < 100; i++) {
+    const candidate = i === 0 ? `${base}-gitlab` : `${base}-gitlab${i + 1}`;
+    if (free(candidate)) return candidate;
+  }
+  throw new Error(`找不到可用的帳號名（${gitlabUsername}）`);
+}
+
+/** 回呼：換 token、找或建帳號、設好登入 cookie；回傳要在聊天頁顯示的錯誤或提示 */
+async function finishGitlabLogin(res: ServerResponse, cfg: GitlabConfig, code: string, stateKey: string): Promise<{ error?: string; notice?: string }> {
+  const state = oauthStates.get(stateKey);
+  oauthStates.delete(stateKey);   // 一次性
+  if (!state || state.expiresAt < Date.now()) return { error: "登入逾時或連結已用過，請重新按「用 GitLab 登入」" };
+
+  const profile = await fetchGitlabProfile(cfg, code, state.verifier);
+  const users = loadUsers();
+  const owner = Object.entries(users).find(([, u]) => u.gitlab?.sub === profile.sub);
+
+  if (state.mode === "link") {
+    const target = state.username ? users[state.username] : undefined;
+    if (!target) return { error: "要綁定的帳號不存在" };
+    if (owner && owner[0] !== state.username) return { error: `這個 GitLab 帳號已綁定到 ${owner[0]}` };
+    target.gitlab = { sub: profile.sub, username: profile.username };
+    saveUsers(users);
+    log.info(`[webchat] ${state.username} 綁定 GitLab ${profile.username}`);
+    return { notice: `已綁定 GitLab：${profile.username}` };
+  }
+
+  if (owner) {
+    const [username, user] = owner;
+    if (user.disabled) return { error: "這個帳號已被管理員停用" };
+    issueLogin(res, username);
+    return {};
+  }
+
+  // 第一次用 GitLab 登入：建一般成員
+  const { getAccountRegistry } = await import("../core/platform.js");
+  const registry = getAccountRegistry();
+  const username = pickUsername(profile.username, users, id => registry.get(id) !== null);
+  const accountId = `web-${username}`;
+  registry.create({ accountId, displayName: profile.name, role: GITLAB_DEFAULT_ROLE });
+  registry.linkIdentity(accountId, "web", username);
+  users[username] = { accountId, createdAt: nowIso(), gitlab: { sub: profile.sub, username: profile.username } };
+  saveUsers(users);
+  log.info(`[webchat] GitLab ${profile.username} 首次登入，建立 ${username}（${GITLAB_DEFAULT_ROLE}）`);
+  issueLogin(res, username);
+  return {};
 }
 
 // ── 即時事件：每個對話的訂閱者與進行中回合 ───────────────────────────────────
@@ -887,7 +1030,7 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
     if (api === "/state" && method === "GET") {
       const viewer = await currentViewer(req);
       const needsSetup = ensureSetupCode() !== null;
-      json(res, 200, { needsSetup, viewer: viewer ? { ...viewer, isAdmin: ADMIN_ROLES.has(viewer.role) } : null });
+      json(res, 200, { needsSetup, gitlab: loadGitlabConfig() !== null, viewer: viewer ? { ...viewer, isAdmin: ADMIN_ROLES.has(viewer.role) } : null });
       return;
     }
 
@@ -918,8 +1061,37 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         json(res, 401, { error: "帳號或密碼錯誤" });
         return;
       }
+      if (user.disabled) { json(res, 403, { error: "這個帳號已被管理員停用" }); return; }
       issueLogin(res, username);
       json(res, 200, { ok: true });
+      return;
+    }
+
+    if (api === "/oauth/gitlab/start" && method === "GET") {
+      const cfg = loadGitlabConfig();
+      if (!cfg) { redirectToChat(res, { error: "GitLab 登入尚未設定" }); return; }
+      const mode = new URL(req.url ?? "", "http://x").searchParams.get("mode") === "link" ? "link" : "login";
+      if (mode === "link") {
+        const me = await currentViewer(req);
+        if (!me) { redirectToChat(res, { error: "請先登入再綁定 GitLab" }); return; }
+        startGitlabLogin(res, cfg, "link", me.username);
+        return;
+      }
+      startGitlabLogin(res, cfg, "login");
+      return;
+    }
+
+    if (api === "/oauth/gitlab/callback" && method === "GET") {
+      const cfg = loadGitlabConfig();
+      const params = new URL(req.url ?? "", "http://x").searchParams;
+      if (!cfg) { redirectToChat(res, { error: "GitLab 登入尚未設定" }); return; }
+      if (params.get("error")) { redirectToChat(res, { error: `GitLab 拒絕授權：${params.get("error_description") ?? params.get("error")}` }); return; }
+      try {
+        redirectToChat(res, await finishGitlabLogin(res, cfg, params.get("code") ?? "", params.get("state") ?? ""));
+      } catch (err) {
+        log.warn(`[webchat] GitLab 登入失敗：${err instanceof Error ? err.message : String(err)}`);
+        redirectToChat(res, { error: err instanceof Error ? err.message : String(err) });
+      }
       return;
     }
 
@@ -940,9 +1112,10 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
       const body = await readBody(req);
       const users = loadUsers();
       const user = users[viewer.username];
+      if (user && !user.hash) { json(res, 400, { error: "這個帳號用 GitLab 登入、沒有密碼；需要密碼請找管理員重設" }); return; }
       if (!user || !passwordMatches(user, str(body.oldPassword))) { json(res, 403, { error: "舊密碼不正確" }); return; }
       if (str(body.newPassword).length < 8) { json(res, 400, { error: "新密碼至少 8 個字" }); return; }
-      users[viewer.username] = { ...makeUser(user.accountId, str(body.newPassword)), createdAt: user.createdAt };
+      users[viewer.username] = { ...user, ...makeUser(user.accountId, str(body.newPassword)), createdAt: user.createdAt };
       saveUsers(users);
       json(res, 200, { ok: true });
       return;
@@ -1126,7 +1299,10 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         json(res, 200, {
           users: Object.entries(users).map(([username, u]) => {
             const acct = registry.get(u.accountId);
-            return { username, accountId: u.accountId, displayName: acct?.displayName ?? "?", role: acct?.role ?? "?", disabled: acct?.disabled ?? false, createdAt: u.createdAt };
+            return {
+              username, accountId: u.accountId, displayName: acct?.displayName ?? "?", role: acct?.role ?? "?",
+              disabled: u.disabled ?? false, gitlab: u.gitlab?.username ?? null, hasPassword: !!u.hash, createdAt: u.createdAt,
+            };
           }),
           accounts: Object.entries(registry.getIndex()).map(([accountId, a]) => ({ accountId, displayName: a.displayName, role: a.role })),
           roles: ROLES,
@@ -1154,7 +1330,8 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         const user = users[str(body.username)];
         if (!user) { json(res, 404, { error: "找不到帳號" }); return; }
         if (str(body.password).length < 8) { json(res, 400, { error: "密碼至少 8 個字" }); return; }
-        users[str(body.username)] = { ...makeUser(user.accountId, str(body.password)), createdAt: user.createdAt };
+        // 保留 GitLab 綁定與停用狀態，只換密碼
+        users[str(body.username)] = { ...user, ...makeUser(user.accountId, str(body.password)), createdAt: user.createdAt };
         saveUsers(users);
         json(res, 200, { ok: true });
         return;
@@ -1166,13 +1343,53 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         if (username === viewer.username) { json(res, 400, { error: "不能刪除自己" }); return; }
         const users = loadUsers();
         if (!users[username]) { json(res, 404, { error: "找不到帳號" }); return; }
-        delete users[username];
+        // GitLab 帳號刪了下次登入會自動建回來，所以改成停用
+        const disableOnly = !!users[username]!.gitlab;
+        if (disableOnly) users[username]!.disabled = true;
+        else delete users[username];
         saveUsers(users);
         const logins = loadLogins();
         for (const [k, v] of Object.entries(logins)) if (v.username === username) delete logins[k];
         saveLogins(logins);
-        log.info(`[webchat] ${viewer.username} 刪除網頁帳號 ${username}（catclaw 帳號保留）`);
+        log.info(`[webchat] ${viewer.username} ${disableOnly ? "停用" : "刪除"}網頁帳號 ${username}（catclaw 帳號保留）`);
+        json(res, 200, { ok: true, disabled: disableOnly });
+        return;
+      }
+
+      if (api === "/admin/enable-user" && method === "POST") {
+        const body = await readBody(req);
+        const users = loadUsers();
+        const user = users[str(body.username)];
+        if (!user) { json(res, 404, { error: "找不到帳號" }); return; }
+        delete user.disabled;
+        saveUsers(users);
         json(res, 200, { ok: true });
+        return;
+      }
+
+      if (api === "/admin/gitlab" && method === "GET") {
+        const cfg = readJson<Partial<GitlabConfig>>("gitlab.json", {});
+        json(res, 200, { url: cfg.url ?? "", clientId: cfg.clientId ?? "", hasSecret: !!cfg.clientSecret, redirectUri: cfg.redirectUri ?? "", enabled: loadGitlabConfig() !== null });
+        return;
+      }
+
+      if (api === "/admin/gitlab" && method === "POST") {
+        const body = await readBody(req);
+        const old = readJson<Partial<GitlabConfig>>("gitlab.json", {});
+        const url = str(body.url).trim().replace(/\/+$/, "");
+        const redirectUri = str(body.redirectUri).trim();
+        if (url && !/^https?:\/\/[^/\s]+/.test(url)) { json(res, 400, { error: "GitLab 網址格式不正確" }); return; }
+        if (redirectUri && !/^https?:\/\/[^/\s]+\/api\/webchat\/oauth\/gitlab\/callback$/.test(redirectUri)) { json(res, 400, { error: "回呼網址格式不正確" }); return; }
+        const next: Partial<GitlabConfig> = {
+          url, clientId: str(body.clientId).trim(), redirectUri,
+          // Secret 留空代表不變；要清掉 GitLab 登入就把 Application ID 清空
+          clientSecret: str(body.clientSecret).trim() || old.clientSecret || "",
+        };
+        if (!next.clientId) next.clientSecret = "";
+        writeJson("gitlab.json", next);
+        try { chmodSync(join(dataDir(), "gitlab.json"), 0o600); } catch (err) { log.warn(`[webchat] gitlab.json 設權限失敗：${err instanceof Error ? err.message : String(err)}`); }
+        log.info(`[webchat] ${viewer.username} 更新 GitLab 登入設定（${loadGitlabConfig() ? "已啟用" : "未啟用"}）`);
+        json(res, 200, { ok: true, enabled: loadGitlabConfig() !== null });
         return;
       }
     }
