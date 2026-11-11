@@ -371,8 +371,8 @@ export function dmSourceFromBridge(bridge: CliBridge): DmSource | null {
 }
 
 /**
- * 主 bot 收到 DM 時（discord.ts）取 DmSource；收 DM 的 bot 不是主 bot 時回 null，
- * 讓私訊照舊進 agent-loop。
+ * 主 bot 收到 DM 時（discord.ts）取 DmSource；收 DM 的 bot 不是主 bot（或 DM bridge 停用）時回 null，
+ * 讓私訊照舊進 agent-loop。回非 null 時 discord.ts 不論名單內外都不再交給 agent-loop。
  */
 export function dmSourceFromMainBot(client: Client): DmSource | null {
   const dmCfg = loadDmConfig();
