@@ -104,6 +104,17 @@ export class ProviderRegistry {
     return Array.from(this.providers.values());
   }
 
+  /** 列出短名（models 表的 alias）與它對應到的已註冊 provider id；對不到已註冊 provider 的略過 */
+  listAliases(): Array<{ alias: string; id: string }> {
+    const out: Array<{ alias: string; id: string }> = [];
+    for (const entry of Object.values(this.aliases ?? {})) {
+      if (!entry.alias) continue;
+      const id = this.resolveId(entry.alias);
+      if (this.providers.has(id)) out.push({ alias: entry.alias, id });
+    }
+    return out;
+  }
+
   // ── 生命週期 ─────────────────────────────────────────────────────────────────
 
   async initAll(): Promise<void> {

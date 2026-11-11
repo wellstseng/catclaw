@@ -20,6 +20,7 @@ import type {
   LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent,
   ProviderUsage, ContentBlock, ToolDefinition, ToolCall,
 } from "./base.js";
+import { completedStream } from "./base.js";
 import { resolveWorkspaceDir } from "../core/config.js";
 
 // ── CLI 後端定義 ─────────────────────────────────────────────────────────────
@@ -292,15 +293,12 @@ export class CliProvider implements LLMProvider {
 
     log.debug(`[cli:${this.id}] 完成 stopReason=${finalStopReason} text=${cleanText.length}字 toolCalls=${toolCalls.length} ~tokens=${usage.totalTokens}`);
 
-    async function* makeIterable(): AsyncIterable<ProviderEvent> { yield* events; }
-
-    return {
-      events: makeIterable(),
+    return completedStream(events, {
       stopReason: finalStopReason,
       toolCalls,
       text: cleanText,
       usage,
-    };
+    });
   }
 
   // ── stream-json 解析（Claude / Gemini）─────────────────────────────────────

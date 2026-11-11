@@ -27,6 +27,8 @@ export interface SkillContext {
   /** 當前 boot agent ID */
   agentId?: string;
   config: BridgeConfig;
+  /** 訊息來源平台（session key 前綴）；沒給就是 discord */
+  platform?: string;
 }
 
 // ── Skill Result ─────────────────────────────────────────────────────────────

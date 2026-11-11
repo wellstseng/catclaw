@@ -140,6 +140,7 @@ export const tool: Tool = {
       for await (const evt of result.events as AsyncIterable<{ type: string; text?: string }>) {
         if (evt.type === "text_delta" && evt.text) text += evt.text;
       }
+      const { usage } = await result.final;
 
       const out: Record<string, unknown> = {
         text,
@@ -147,8 +148,8 @@ export const tool: Tool = {
         mimeType,
         path: realPath,
         usage: {
-          inputTokens:  result.usage.input,
-          outputTokens: result.usage.output,
+          inputTokens:  usage.input,
+          outputTokens: usage.output,
         },
       };
 

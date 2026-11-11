@@ -13,6 +13,7 @@ import { log } from "../logger.js";
 import type {
   LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent, ToolCall,
 } from "./base.js";
+import { completedStream } from "./base.js";
 import type { ProviderEntry } from "../core/config.js";
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
@@ -154,15 +155,10 @@ export class OpenAICompatProvider implements LLMProvider {
     const inputTokens = usageInput > 0 ? usageInput : Math.round(finalText.length / 4);
     const outputTokens = usageOutput > 0 ? usageOutput : Math.round(finalText.length / 4);
 
-    async function* makeIterable(): AsyncIterable<ProviderEvent> {
-      yield* events;
-    }
-
     log.debug(`[openai-compat:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 inputTokens=${inputTokens} outputTokens=${outputTokens}`);
 
     const estimated = usageInput <= 0;
-    return {
-      events: makeIterable(),
+    return completedStream(events, {
       stopReason: finalStopReason,
       toolCalls,
       text: finalText,
@@ -171,7 +167,7 @@ export class OpenAICompatProvider implements LLMProvider {
         model: this.modelId, providerType: "openai-compat",
         ...(estimated && { estimated: true }),
       },
-    };
+    });
   }
 }
 

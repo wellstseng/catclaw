@@ -140,7 +140,7 @@ Generator pattern — 呼叫端 `for await (const event of agentLoop(...))` 消�
 | `inboundContext` | string? | 頻道脈絡（注入 messages 層） |
 | `thinking` | `"minimal" \| "low" \| "medium" \| "high" \| "xhigh"` | Extended thinking 等級 |
 | `modePreset` | ModePreset? | 模式 preset（影響 CE/budget/prompt） |
-| `execApproval` | object? | run_command DM 確認 |
+| `execApproval` | object? | run_command／write_file／edit_file 執行前確認；有 `requestApproval` 就用呼叫端自己的介面（網頁核准卡），否則送 Discord DM |
 | `sessionMemory` | object? | 對話筆記（read/extract） |
 | `memoryRecall` | object? | 記憶 Recall（子 agent/cron 用） |
 | `platform` | string? | 平台識別碼（預設 "discord"） |
@@ -183,6 +183,11 @@ Generator pattern — 呼叫端 `for await (const event of agentLoop(...))` 消�
 
 ## 關鍵流程
 
+### LLM 呼叫與串流
+
+`callWithRetry(() => provider.stream(...))` 只包到「第一個內容事件到達」；之後逐一消費 `streamResult.events`，文字一到就 yield `text_delta`，結束後 `await streamResult.final` 取 stopReason／usage／toolCalls。
+串流途中失敗：中止 → break 走 post-loop；其他錯誤 → 當 provider 錯誤附在回覆後並結束回合（已吐出的文字保留，不重試）。
+
 ### Tool 執行
 
 ```
@@ -190,7 +195,7 @@ LLM 回覆含 tool_use
   → permission gate 檢查
   → safety guard 檢查
   → pre-tool-use hook
-  → exec approval（run_command DM 確認，可選）
+  → exec approval（可選；`sendApprovalRequest`：呼叫端 requestApproval 或 Discord DM）
   → tool.execute(params, ctx)
   → 智慧截斷 tool result
   → post-tool-use hook

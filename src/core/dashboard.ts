@@ -5920,22 +5920,69 @@ export class DashboardServer {
     return false;
   }
 
+  /**
+   * 入口分流：`/` 轉聊天頁；`/chat`、`/api/webchat/*` 交給網頁版（自己的帳號登入）；
+   * 其餘都是後台，過 canUseDashboard 才交給 handleDashboard。
+   */
+  private async route(req: IncomingMessage, res: ServerResponse, handleDashboard: (req: IncomingMessage, res: ServerResponse) => void): Promise<void> {
+    const rawUrl = req.url ?? "/";
+    const urlObj = new URL(rawUrl, "http://localhost");
+    const path = urlObj.pathname;
+    const method = req.method ?? "GET";
+    try {
+      if (path === "/" || path === "/index.html") {
+        // 帶 ?token= 的是舊的後台書籤，轉到 /dashboard 沿用
+        const token = urlObj.searchParams.get("token");
+        res.writeHead(302, { Location: token ? `/dashboard?token=${encodeURIComponent(token)}` : "/chat" });
+        res.end();
+        return;
+      }
+      const webchat = await import("../web/webchat.js");
+      if (path === "/chat" || path === "/chat/" || path.startsWith("/api/webchat/")) {
+        await webchat.handleWebChat(req, res, path, method);
+        return;
+      }
+      if (await this.canUseDashboard(req, rawUrl, webchat)) {
+        handleDashboard(req, res);
+        return;
+      }
+      if (method === "GET" && !path.startsWith("/api/")) {
+        res.writeHead(302, { Location: "/chat" });   // 後台頁面：先去聊天頁登入
+        res.end();
+        return;
+      }
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized：請用網頁版管理員帳號登入，或帶 ?token=xxx / Authorization: Bearer xxx" }));
+    } catch (err) {
+      log.error(`[dashboard] ${method} ${path} 失敗：${err instanceof Error ? err.message : String(err)}`);
+      if (!res.headersSent) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); }
+    }
+  }
+
+  /**
+   * 後台誰能進：帶對 dashboard token、本機（catclaw 自己的 MCP 會打 /api/restart）、
+   * 網頁版 platform-owner／admin 登入；還沒建任何網頁帳號時維持原本規則（沒設 token 就全開）。
+   */
+  private async canUseDashboard(req: IncomingMessage, rawUrl: string, webchat: typeof import("../web/webchat.js")): Promise<boolean> {
+    if (this.token && this.checkAuth(req, rawUrl)) return true;
+    const ip = req.socket.remoteAddress ?? "";
+    if (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1") return true;
+    if (!webchat.hasWebUsers()) return !this.token;
+    return webchat.isWebAdminRequest(req);
+  }
+
   start(): void {
     const authToken = this.token;
-    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    // 後台本體：route() 已確認過權限才會進來
+    // smell-ok: 這是原本 createServer 的整包路由本體（約 3000 行），只是取名交給 route()；拆分是另一件重構
+    const handleRequest = (req: IncomingMessage, res: ServerResponse) => {
       const rawUrl = req.url ?? "/";
       const urlObj = new URL(rawUrl, "http://localhost");
       const url = urlObj.pathname;
       const urlParams = urlObj.searchParams;
       const method = req.method ?? "GET";
 
-      if (!this.checkAuth(req, rawUrl)) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Unauthorized. Provide ?token=xxx or Authorization: Bearer xxx" }));
-        return;
-      }
-
-      if (url === "/" || url === "/index.html" || url.match(/^\/(\?token=[^&]+)?$/)) {
+      if (url === "/dashboard" || url === "/dashboard/") {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(HTML);
         return;
@@ -8989,6 +9036,10 @@ export class DashboardServer {
       }
 
       res.writeHead(404); res.end("Not found");
+    };
+
+    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      void this.route(req, res, handleRequest);
     });
 
     server.listen(this.port, "0.0.0.0", () => {

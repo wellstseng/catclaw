@@ -19,7 +19,7 @@ import { join as pathJoin } from "node:path";
 import { homedir } from "node:os";
 import { log } from "../logger.js";
 import { makeToolResultMessage } from "../providers/base.js";
-import type { LLMProvider, Message, ProviderEvent, ImageBlock, ContentBlock } from "../providers/base.js";
+import type { LLMProvider, Message, StreamFinal, ImageBlock, ContentBlock } from "../providers/base.js";
 import type { Session, SessionManager } from "./session.js";
 import type { PermissionGate } from "../accounts/permission-gate.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -425,6 +425,32 @@ async function callWithRetry<T>(
   throw new Error("unreachable");
 }
 
+// ── 執行核准請求 ─────────────────────────────────────────────────────────────
+
+export interface ApprovalRequest {
+  approvalId: string;
+  command: string;
+  channelId: string;
+  timeoutMs: number;
+  decision: Promise<boolean>;
+}
+
+/** 送出執行核准請求：呼叫端有自己的介面（網頁核准卡）就用它，否則走 Discord DM */
+async function sendApprovalRequest(ea: NonNullable<AgentLoopOpts["execApproval"]>, req: ApprovalRequest): Promise<void> {
+  if (ea.requestApproval) {
+    await ea.requestApproval(req);
+    return;
+  }
+  await sendApprovalDm({
+    dmUserId: ea.dmUserId,
+    command: req.command,
+    channelId: req.channelId,
+    approvalId: req.approvalId,
+    timeoutMs: req.timeoutMs,
+    sendTextFallback: ea.sendDm,
+  });
+}
+
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
 export interface AgentLoopOpts {
@@ -537,6 +563,12 @@ export interface AgentLoopOpts {
      * 例：["/tmp/", "echo ", "cat "]
      */
     allowedPatterns?: string[];
+    /**
+     * 呼叫端自己的核准介面（例如網頁對話裡的核准卡）。有給就用它送出請求，不走 Discord DM；
+     * 使用者決定後由呼叫端呼叫 exec-approval 的 resolveApproval(approvalId, approved)。
+     * decision 在核准／拒絕／逾時後 resolve（逾時為 false），呼叫端可用來更新畫面。
+     */
+    requestApproval?: (req: ApprovalRequest) => Promise<void>;
   };
 
   /**
@@ -2103,33 +2135,52 @@ export async function* agentLoop(
       let iterText = "";
       let providerError: string | null = null;  // 捕捉 provider 端 stream 錯誤（pi-ai 會 emit type=error）
       let ttftMs: number | undefined;            // time-to-first-token（首個 text/thinking delta）
-      for await (const event of streamResult.events as AsyncIterable<ProviderEvent>) {
-        if (ttftMs === undefined && (event.type === "text_delta" || event.type === "thinking_delta")) {
-          ttftMs = Date.now() - llmCallStartMs;
+      // provider 邊收邊吐：文字一到就 yield 出去；stopReason／usage／toolCalls 等串流結束才從 final 取得
+      let final: StreamFinal;
+      try {
+        for await (const event of streamResult.events) {
+          if (ttftMs === undefined && (event.type === "text_delta" || event.type === "thinking_delta")) {
+            ttftMs = Date.now() - llmCallStartMs;
+          }
+          if (event.type === "text_delta") {
+            iterText += event.text;
+            tracker.appendText(event.text);
+            yield { type: "text_delta", text: event.text };
+          } else if (event.type === "thinking_delta") {
+            yield { type: "thinking", thinking: event.thinking };
+          } else if (event.type === "error") {
+            // pi-ai 在 streamAnthropic 內部 catch 任何錯誤後 emit `{type: "error"}` 而不 throw，
+            // 之前 agent-loop 沒處理這個事件 → 錯誤被吞掉，呈現為「outputEmpty + estimated=true」
+            // 假裝是 Anthropic 空回應 quirk。實際可能是真的 API error（429 / 413 / 5xx / network）。
+            providerError = event.message;
+            log.warn(`[agent-loop] [loop=${loopCount}] provider stream error: ${event.message}`);
+          }
         }
-        if (event.type === "text_delta") {
-          iterText += event.text;
-          tracker.appendText(event.text);
-          yield { type: "text_delta", text: event.text };
-        } else if (event.type === "thinking_delta") {
-          yield { type: "thinking", thinking: event.thinking };
-        } else if (event.type === "error") {
-          // pi-ai 在 streamAnthropic 內部 catch 任何錯誤後 emit `{type: "error"}` 而不 throw，
-          // 之前 agent-loop 沒處理這個事件 → 錯誤被吞掉，呈現為「outputEmpty + estimated=true」
-          // 假裝是 Anthropic 空回應 quirk。實際可能是真的 API error（429 / 413 / 5xx / network）。
-          providerError = event.message;
-          log.warn(`[agent-loop] [loop=${loopCount}] provider stream error: ${event.message}`);
+        final = await streamResult.final;
+      } catch (err) {
+        // 串流已吐出內容後才失敗（網路中斷、idle 看門狗、中止）：已顯示的文字收不回，不重試，
+        // 中止 → 照舊 break 走 post-loop；其他 → 當成 provider 錯誤通知使用者
+        if (controller.signal.aborted) {
+          log.debug(`[agent-loop] [loop=${loopCount}] 串流途中中止（abort signal），break 走 post-loop`);
+          break;
         }
+        providerError = err instanceof Error ? err.message : String(err);
+        log.warn(`[agent-loop] [loop=${loopCount}] provider 串流途中失敗：${providerError}`);
+        const est = Math.round(iterText.length / 4);
+        final = {
+          stopReason: "end_turn", toolCalls: [], text: iterText,
+          usage: { input: 0, output: est, totalTokens: est, providerType: provider.id, estimated: true },
+        };
       }
 
-      totalInputTokens += streamResult.usage.input;
-      totalOutputTokens += streamResult.usage.output;
-      totalCacheRead += streamResult.usage.cacheRead ?? 0;
-      totalCacheWrite += streamResult.usage.cacheWrite ?? 0;
-      lastCallPromptTokens = streamResult.usage.input + (streamResult.usage.cacheRead ?? 0) + (streamResult.usage.cacheWrite ?? 0);
-      lastModel = streamResult.usage.model;
-      lastProviderType = streamResult.usage.providerType;
-      if (streamResult.usage.estimated) lastEstimated = true;
+      totalInputTokens += final.usage.input;
+      totalOutputTokens += final.usage.output;
+      totalCacheRead += final.usage.cacheRead ?? 0;
+      totalCacheWrite += final.usage.cacheWrite ?? 0;
+      lastCallPromptTokens = final.usage.input + (final.usage.cacheRead ?? 0) + (final.usage.cacheWrite ?? 0);
+      lastModel = final.usage.model;
+      lastProviderType = final.usage.providerType;
+      if (final.usage.estimated) lastEstimated = true;
 
       // PostLlmCall hook（observer）
       {
@@ -2138,24 +2189,24 @@ export async function* agentLoop(
         if (hookReg && hookReg.count("PostLlmCall", opts.agentId) > 0) {
           await hookReg.runPostLlmCall({
             event: "PostLlmCall", sessionKey, accountId, channelId, agentId: opts.agentId,
-            model: streamResult.usage.model ?? "", provider: streamResult.usage.providerType ?? provider.id,
-            inputTokens: streamResult.usage.input, outputTokens: streamResult.usage.output,
+            model: final.usage.model ?? "", provider: final.usage.providerType ?? provider.id,
+            inputTokens: final.usage.input, outputTokens: final.usage.output,
             durationMs: Date.now() - llmCallStartMs,
-            finishReason: streamResult.stopReason,
+            finishReason: final.stopReason,
           });
         }
       }
 
       // Trace: LLM call 結束
       trace?.recordLLMCallEnd({
-        model: streamResult.usage.model ?? "",
-        provider: streamResult.usage.providerType ?? provider.id,
-        inputTokens: streamResult.usage.input,
-        outputTokens: streamResult.usage.output,
-        cacheRead: streamResult.usage.cacheRead ?? 0,
-        cacheWrite: streamResult.usage.cacheWrite ?? 0,
-        estimated: streamResult.usage.estimated ?? false,
-        stopReason: streamResult.stopReason,
+        model: final.usage.model ?? "",
+        provider: final.usage.providerType ?? provider.id,
+        inputTokens: final.usage.input,
+        outputTokens: final.usage.output,
+        cacheRead: final.usage.cacheRead ?? 0,
+        cacheWrite: final.usage.cacheWrite ?? 0,
+        estimated: final.usage.estimated ?? false,
+        stopReason: final.stopReason,
         ttftMs,
       });
 
@@ -2171,10 +2222,10 @@ export async function* agentLoop(
         break;
       }
 
-      if (streamResult.stopReason === "end_turn") {
+      if (final.stopReason === "end_turn") {
         // 本 iter 是否空回應：output=0 + estimated=true 代表 provider 沒收到任何 event
         // （Claude API events 陣列為空 → fallback 預設 end_turn + estimated usage，見 claude-api.ts:336）
-        const outputEmpty = streamResult.usage.output === 0 && (streamResult.usage.estimated ?? false);
+        const outputEmpty = final.usage.output === 0 && (final.usage.estimated ?? false);
         if (outputEmpty) {
           // Debug dump：空回應時印出關鍵 state，方便排查 root cause
           const lastMsg = messages[messages.length - 1];
@@ -2238,8 +2289,8 @@ export async function* agentLoop(
       // - 若本 iter LLM 有 tool call → 視為「合法工作中被截斷」→ 允許續接
       // - 若本 iter 0 tool call → 視為「LLM 進 inline 寫長文反模式」→ 立刻 break + bail notice
       //   引導 LLM 改用 write_file 落檔，不要硬撞 8192 上限反覆續接燒 token
-      if (streamResult.stopReason === "max_tokens") {
-        const hadToolCallThisIter = streamResult.toolCalls.length > 0;
+      if (final.stopReason === "max_tokens") {
+        const hadToolCallThisIter = final.toolCalls.length > 0;
         if (!hadToolCallThisIter) {
           // 反模式：LLM 在 inline reply 寫長文（沒呼叫任何 tool）撞 max_tokens
           // 不續接，break + 自動把寫到的內容存到 _staging/auto-save-*.md 避免丟失
@@ -2257,7 +2308,7 @@ export async function* agentLoop(
               const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
               const safeKey = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_").slice(-30);
               autoSavedPath = join(stagingDir, `auto-save-${ts}-${safeKey}.md`);
-              const header = `# Auto-saved output (max_tokens + 0 tool call)\n\n- 來源 trace: ${trace?.traceId ?? "n/a"}\n- session: ${sessionKey}\n- 時間: ${new Date().toISOString()}\n- output tokens: ${streamResult.usage.output}\n\n---\n\n`;
+              const header = `# Auto-saved output (max_tokens + 0 tool call)\n\n- 來源 trace: ${trace?.traceId ?? "n/a"}\n- session: ${sessionKey}\n- 時間: ${new Date().toISOString()}\n- output tokens: ${final.usage.output}\n\n---\n\n`;
               writeFileSync(autoSavedPath, header + partialText, "utf-8");
               log.info(`[agent-loop] max_tokens 自動存檔 → ${autoSavedPath} (${partialText.length} chars)`);
             }
@@ -2276,14 +2327,14 @@ export async function* agentLoop(
         // 將截斷的 assistant 回覆加入 messages，再送 user "繼續" 讓 LLM 接著寫
         const partialText = tracker.getFullResponse();
         if (partialText) {
-          messages.push({ role: "assistant", content: partialText, tokens: streamResult.usage.output > 0 ? streamResult.usage.output : undefined });
+          messages.push({ role: "assistant", content: partialText, tokens: final.usage.output > 0 ? final.usage.output : undefined });
         }
         messages.push({ role: "user", content: "繼續" });
         continue;  // 回到 while loop 頂部，再次呼叫 LLM
       }
 
-      if (streamResult.stopReason !== "tool_use") break;
-      if (streamResult.toolCalls.length === 0) {
+      if (final.stopReason !== "tool_use") break;
+      if (final.toolCalls.length === 0) {
         // 空 tool_use iteration：模型宣告要用工具但沒給 toolCalls（Claude API 偶見 quirk）
         // 不直接 break，給模型再一次機會，但累計到 MAX_EMPTY_TOOL_USE 就強制中止避免死循環。
         emptyToolUseCount++;
@@ -2319,7 +2370,7 @@ export async function* agentLoop(
       }
 
       // ── 5c. Tool 執行 ──────────────────────────────────────────────────────
-      log.debug(`[agent-loop] [loop=${loopCount}] 執行 ${streamResult.toolCalls.length} 個 tool: ${streamResult.toolCalls.map(t => t.name).join(", ")}`);
+      log.debug(`[agent-loop] [loop=${loopCount}] 執行 ${final.toolCalls.length} 個 tool: ${final.toolCalls.map(t => t.name).join(", ")}`);
       const toolResults: Array<{ tool_use_id: string; content: string | Array<{ type: string; [key: string]: unknown }>; is_error: boolean }> = [];
 
       // 先把 assistant 的 text + tool_use 加入 messages（B: 標記 token 數）
@@ -2329,7 +2380,7 @@ export async function* agentLoop(
       if (iterText.trim().length > 0) {
         assistantContent.push({ type: "text", text: iterText });
       }
-      for (const tc of streamResult.toolCalls) {
+      for (const tc of final.toolCalls) {
         assistantContent.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.params as object });
         // LRU eviction：標記 tool 在這 iter 被使用
         toolLastUsedIter.set(tc.name, loopCount);
@@ -2337,12 +2388,12 @@ export async function* agentLoop(
       messages.push({
         role: "assistant",
         content: assistantContent,
-        tokens: streamResult.usage.output > 0 ? streamResult.usage.output : undefined,
+        tokens: final.usage.output > 0 ? final.usage.output : undefined,
       });
 
       // spawn_subagent 並行：同一輪多個 spawn_subagent → Promise.all（其他 tool 維持串行）
-      const spawnCalls = streamResult.toolCalls.filter(tc => tc.name === "spawn_subagent");
-      const otherCalls = streamResult.toolCalls.filter(tc => tc.name !== "spawn_subagent");
+      const spawnCalls = final.toolCalls.filter(tc => tc.name === "spawn_subagent");
+      const otherCalls = final.toolCalls.filter(tc => tc.name !== "spawn_subagent");
 
       if (spawnCalls.length > 1) {
         // 並行執行（不在 callback 裡 yield，收集後統一 yield）
@@ -2430,7 +2481,7 @@ export async function* agentLoop(
       }
 
       // ── Batch Partition：concurrencySafe tool 並行，其餘串行 ──────────────
-      const serialCalls = spawnCalls.length > 1 ? otherCalls : streamResult.toolCalls;
+      const serialCalls = spawnCalls.length > 1 ? otherCalls : final.toolCalls;
       const concurrentCalls = serialCalls.filter(tc => toolRegistry.get(tc.name)?.concurrencySafe === true);
       const sequentialCalls = serialCalls.filter(tc => toolRegistry.get(tc.name)?.concurrencySafe !== true);
 
@@ -2548,14 +2599,7 @@ export async function* agentLoop(
             const timeoutMs = opts.execApproval.timeoutMs ?? 60_000;
             const [approvalId, approvalPromise] = createApproval(displayCmd, channelId, timeoutMs);
             try {
-              await sendApprovalDm({
-                dmUserId: opts.execApproval.dmUserId,
-                command: displayCmd,
-                channelId,
-                approvalId,
-                timeoutMs,
-                sendTextFallback: opts.execApproval.sendDm,
-              });
+              await sendApprovalRequest(opts.execApproval, { approvalId, command: displayCmd, channelId, timeoutMs, decision: approvalPromise });
               log.info(`[agent-loop] guard-approval 等待確認 approvalId=${approvalId}`);
             } catch (err) {
               log.warn(`[agent-loop] guard-approval 送 DM 失敗，硬擋：${err instanceof Error ? err.message : String(err)}`);
@@ -2610,14 +2654,7 @@ export async function* agentLoop(
           } else {
             const [approvalId, approvalPromise] = createApproval(displayCmd, channelId, timeoutMs);
             try {
-              await sendApprovalDm({
-                dmUserId: opts.execApproval.dmUserId,
-                command: displayCmd,
-                channelId,
-                approvalId,
-                timeoutMs,
-                sendTextFallback: opts.execApproval.sendDm,
-              });
+              await sendApprovalRequest(opts.execApproval, { approvalId, command: displayCmd, channelId, timeoutMs, decision: approvalPromise });
               log.info(`[agent-loop] exec-approval 等待確認 approvalId=${approvalId} command="${displayCmd.slice(0, 80)}"`);
             } catch (err) {
               log.warn(`[agent-loop] exec-approval 送 DM 失敗，自動拒絕：${err instanceof Error ? err.message : String(err)}`);
@@ -2755,7 +2792,7 @@ export async function* agentLoop(
       //   這會觸發 Anthropic 空回應 quirk（下輪 LLM 收到 5 個新 tool 突然加入，直接 end_turn），
       //   trace 82aa1fec 實測：一次活化 ≥3 個 → 連 4 輪 empty。
       //   改成每輪最多活化 3 個，剩下的留在 loadedDeferredNames 裡，LLM 再 tool_search 會拿到剩下的。
-      for (const call of streamResult.toolCalls) {
+      for (const call of final.toolCalls) {
         if (call.name !== "tool_search") continue;
         const rec = tracker.toolCalls.find(tc => tc.name === "tool_search");
         if (!rec || rec.error) continue;
@@ -2798,7 +2835,7 @@ export async function* agentLoop(
             stuckLoopBlockCount++;
           }
         }
-        for (const tc of streamResult.toolCalls) {
+        for (const tc of final.toolCalls) {
           if (tc.name === "subagents") {
             const action = (tc.params as Record<string, unknown>)?.["action"];
             if (action === "wait" || action === "list" || action === "status") {
@@ -2890,7 +2927,7 @@ export async function* agentLoop(
       // ── 0-progress 偵測（C）：連續 N iter「0 tool + 短文本」→ 中止 turn ──────
       //   trace a1cfb101 的 loops 11-21 連續 11 個 LLM call、0 tool、output 都 18 token —
       //   模型卡在乾打草稿，沒實質進展。早一點停止比讓它跑完 cap 省 token。
-      const iterHasTools = streamResult.toolCalls.length > 0;
+      const iterHasTools = final.toolCalls.length > 0;
       const iterHasText = iterText.trim().length >= ZERO_PROGRESS_TEXT_THRESHOLD;
       if (!iterHasTools && !iterHasText) {
         zeroProgressIters++;

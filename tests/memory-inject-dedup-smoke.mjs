@@ -59,7 +59,7 @@ const captureProvider = {
       yield { type: "text_delta", text };
       yield { type: "done", stopReason: "end_turn", text };
     }
-    return { events: events(), stopReason: "end_turn", toolCalls: [], text, usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, estimated: false } };
+    return { events: events(), final: Promise.resolve({ stopReason: "end_turn", toolCalls: [], text, usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, estimated: false } }) };
   },
 };
 

@@ -135,13 +135,73 @@ export interface ProviderUsage {
 
 // ── StreamResult ──────────────────────────────────────────────────────────────
 
-export interface StreamResult {
-  events: AsyncIterable<ProviderEvent>;
+/** 串流結束後才知道的值 */
+export interface StreamFinal {
   stopReason: "end_turn" | "tool_use" | "max_tokens";
   toolCalls: ToolCall[];
   text: string;
   /** 實際 token 用量（無法取得時為估算值，input/output 由字元數 ÷4 估算） */
   usage: ProviderUsage;
+}
+
+/**
+ * provider.stream() 的回傳值。
+ * - stream() 在收到第一個內容事件（文字／思考／工具呼叫／done）後就回來；在那之前的失敗會讓 stream() 直接 throw，
+ *   呼叫端可以安全重試（使用者還沒看到任何東西）。
+ * - events 邊收邊吐；串流中途失敗時，吐完已收到的事件後迭代會丟出錯誤。
+ * - final 在串流結束後 resolve，中途失敗則 reject。provider 在背景收事件，不必先消費 events 也會 resolve。
+ */
+export interface StreamResult {
+  events: AsyncIterable<ProviderEvent>;
+  final: Promise<StreamFinal>;
+}
+
+/** 把已經整段收完的結果包成 StreamResult（非即時串流的 provider 用） */
+export function completedStream(events: ProviderEvent[], final: StreamFinal): StreamResult {
+  async function* replay(): AsyncIterable<ProviderEvent> { yield* events; }
+  return { events: replay(), final: Promise.resolve(final) };
+}
+
+/**
+ * 單一消費者的事件通道：生產端 push／end／fail，消費端用 for await 逐一取出。
+ * 生產端不等消費端，沒取走的事件留在 buffer。
+ */
+export function createEventChannel<T>(): {
+  push: (item: T) => void;
+  end: () => void;
+  fail: (err: unknown) => void;
+  iterable: AsyncIterable<T>;
+} {
+  const buffer: T[] = [];
+  let head = 0;
+  let finished = false;
+  let failed = false;
+  let failure: unknown;
+  let wake: (() => void) | null = null;
+  const notify = (): void => {
+    const w = wake;
+    wake = null;
+    w?.();
+  };
+  async function* iterate(): AsyncIterable<T> {
+    while (true) {
+      if (head < buffer.length) {
+        const item = buffer[head];
+        buffer[head++] = undefined as T;  // 放掉引用，長串流不累積記憶體
+        yield item;
+        continue;
+      }
+      if (failed) throw failure;
+      if (finished) return;
+      await new Promise<void>(resolve => { wake = resolve; });
+    }
+  }
+  return {
+    push: (item) => { buffer.push(item); notify(); },
+    end: () => { finished = true; notify(); },
+    fail: (err) => { failed = true; failure = err; notify(); },
+    iterable: iterate(),
+  };
 }
 
 // ── LLMProvider 介面 ──────────────────────────────────────────────────────────

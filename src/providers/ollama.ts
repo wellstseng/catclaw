@@ -19,6 +19,7 @@ import { log } from "../logger.js";
 import type {
   LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent, ToolCall,
 } from "./base.js";
+import { completedStream } from "./base.js";
 import type { ProviderEntry } from "../core/config.js";
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
@@ -235,17 +236,12 @@ export class OllamaProvider implements LLMProvider {
       });
     }
 
-    async function* makeIterable(): AsyncIterable<ProviderEvent> {
-      yield* events;
-    }
-
     const inputTokens = promptEvalCount > 0 ? promptEvalCount : Math.round(finalText.length / 4);
     const outputTokens = evalCount > 0 ? evalCount : Math.round(finalText.length / 4);
     log.debug(`[ollama:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 tools=${toolCalls.length} inputTokens=${inputTokens} outputTokens=${outputTokens}`);
 
     const estimated = promptEvalCount <= 0;
-    return {
-      events: makeIterable(),
+    return completedStream(events, {
       stopReason: finalStopReason,
       toolCalls,
       text: finalText,
@@ -254,7 +250,7 @@ export class OllamaProvider implements LLMProvider {
         model: this.modelId, providerType: "ollama",
         ...(estimated && { estimated: true }),
       },
-    };
+    });
   }
 }
 

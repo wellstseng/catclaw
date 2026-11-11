@@ -287,7 +287,7 @@ const mockProvider = {
       yield { type: "text_delta", text: responseText };
       yield { type: "done", stopReason: "end_turn", text: responseText };
     }
-    return { events: events(), stopReason: "end_turn", toolCalls: [], text: responseText };
+    return { events: events(), final: Promise.resolve({ stopReason: "end_turn", toolCalls: [], text: responseText }) };
   },
 };
 
@@ -308,9 +308,7 @@ const mockToolProvider = {
       }
       return {
         events: events(),
-        stopReason: "tool_use",
-        toolCalls: [{ id: "tc-001", name: "public_tool", params: {} }],
-        text: "",
+        final: Promise.resolve({ stopReason: "tool_use", toolCalls: [{ id: "tc-001", name: "public_tool", params: {} }], text: "" }),
       };
     } else {
       // 第二輪：end_turn
@@ -318,7 +316,7 @@ const mockToolProvider = {
         yield { type: "text_delta", text: "Done after tool!" };
         yield { type: "done", stopReason: "end_turn", text: "Done after tool!" };
       }
-      return { events: events(), stopReason: "end_turn", toolCalls: [], text: "Done after tool!" };
+      return { events: events(), final: Promise.resolve({ stopReason: "end_turn", toolCalls: [], text: "Done after tool!" }) };
     }
   },
 };
@@ -420,9 +418,7 @@ test("agentLoop tool blocked by permission gate（member 存取 elevated）", as
       }
       return {
         events: events(),
-        stopReason: "tool_use",
-        toolCalls: [{ id: "tc-e1", name: "elevated_tool", params: {} }],
-        text: "",
+        final: Promise.resolve({ stopReason: "tool_use", toolCalls: [{ id: "tc-e1", name: "elevated_tool", params: {} }], text: "" }),
       };
     },
   };
@@ -455,9 +451,7 @@ test("agentLoop safety guard 阻擋危險 run_command", async () => {
       }
       return {
         events: events(),
-        stopReason: "tool_use",
-        toolCalls: [{ id: "tc-d1", name: "run_command", params: { command: "rm -rf /" } }],
-        text: "",
+        final: Promise.resolve({ stopReason: "tool_use", toolCalls: [{ id: "tc-d1", name: "run_command", params: { command: "rm -rf /" } }], text: "" }),
       };
     },
   };

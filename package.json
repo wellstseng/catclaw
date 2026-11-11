@@ -5,11 +5,11 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && node -e \"require('fs').cpSync('src/skills/builtin-prompt','dist/skills/builtin-prompt',{recursive:true})\" && pnpm -r install && pnpm --filter @catclaw/computer-use-mcp run build && pnpm --filter @catclaw/playwright-mcp run build",
+    "build": "tsc && node -e \"const fs=require('fs');fs.cpSync('src/skills/builtin-prompt','dist/skills/builtin-prompt',{recursive:true});fs.cpSync('src/web/public','dist/web/public',{recursive:true})\" && pnpm -r install && pnpm --filter @catclaw/computer-use-mcp run build && pnpm --filter @catclaw/playwright-mcp run build",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "pm2:start": "pm2 start dist/index.js --name catclaw",
-    "pm2:restart": "tsc && node -e \"require('fs').cpSync('src/skills/builtin-prompt','dist/skills/builtin-prompt',{recursive:true})\" && pm2 restart catclaw",
+    "pm2:restart": "tsc && node -e \"const fs=require('fs');fs.cpSync('src/skills/builtin-prompt','dist/skills/builtin-prompt',{recursive:true});fs.cpSync('src/web/public','dist/web/public',{recursive:true})\" && pm2 restart catclaw",
     "pm2:stop": "pm2 stop catclaw",
     "pm2:logs": "pm2 logs catclaw",
     "pm2:status": "pm2 status",

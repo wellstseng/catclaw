@@ -18,7 +18,7 @@ export const skill: Skill = {
   async execute(ctx: SkillContext): Promise<SkillResult> {
     const sm = getSessionManager();
     const isDm = ctx.message?.channel.isDMBased() ?? false;
-    const key = makeSessionKey(ctx.channelId, ctx.authorId, isDm);
+    const key = makeSessionKey(ctx.channelId, ctx.authorId, isDm, ctx.platform);
     const session = sm.get(key);
 
     if (!session || session.messages.length === 0) {

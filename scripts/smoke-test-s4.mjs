@@ -193,8 +193,9 @@ test("ClaudeApiProvider E2E（需 ANTHROPIC_TOKEN）", async () => {
     [{ role: "user", content: "Say exactly: PONG" }],
     { maxTokens: 50, systemPrompt: "Reply with one word only." }
   );
-  assert(result.stopReason === "end_turn", `expected end_turn, got ${result.stopReason}`);
   const text = await collectStreamText(result);
+  const { stopReason } = await result.final;
+  assert(stopReason === "end_turn", `expected end_turn, got ${stopReason}`);
   assert(text.length > 0, "應有回應文字");
   console.log(`      → "${text.trim()}"`);
 });
@@ -207,9 +208,7 @@ test("collectStreamText 從 events 收集文字", async () => {
   }
   const fakeResult = {
     events: fakeEvents(),
-    stopReason: "end_turn",
-    toolCalls: [],
-    text: "hello world",
+    final: Promise.resolve({ stopReason: "end_turn", toolCalls: [], text: "hello world" }),
   };
   const text = await collectStreamText(fakeResult);
   assert(text === "hello world", `got: "${text}"`);

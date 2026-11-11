@@ -24,6 +24,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | Message Trace | `src/core/message-trace.ts` | 7 階段訊息全鏈路追蹤 + TraceStore 持久化 |
 | Message Pipeline | `src/core/message-pipeline.ts` | 統一訊息管線：Memory Recall / Intent / Assembler / Trace / Inbound / SessionMemory |
 | Dashboard | `src/core/dashboard.ts` | Web dashboard + REST API + trace 視覺化 + Web Chat（跨平台 session 共用） |
+| Web Chat（/chat） | `src/web/webchat.ts` | 網頁版聊天：帳號登入、對話列表、工具卡片、停止／插話、附件；跟 dashboard 同埠、自己的登入 |
 | Reply Handler | `src/core/reply-handler.ts` | Streaming 回覆：分段、code fence 平衡、typing indicator |
 | Session | `src/core/session.ts` | SessionManager：per-channel 串行佇列、磁碟持久化、TTL |
 | Event Bus | `src/core/event-bus.ts` | 強型別事件匯流排 |
@@ -74,6 +75,7 @@ Discord → 身份解析 → 權限閘門 → prompt-assembler → agent loop（
 | [modules/context-engine.md](modules/context-engine.md) | `src/core/context-engine.ts` | Context 壓縮策略 | 2026-04-05 |
 | [modules/prompt-assembler.md](modules/prompt-assembler.md) | `src/core/prompt-assembler.ts` | 模組化 system prompt 組裝 | 2026-04-05 |
 | [modules/dashboard.md](modules/dashboard.md) | `src/core/dashboard.ts` | Web dashboard + REST API | 2026-11-06 |
+| [modules/webchat.md](modules/webchat.md) | `src/web/webchat.ts` | 網頁版聊天（/chat）：登入、對話、串流事件、資料檔 | 2026-11-11 |
 | [modules/memory-engine.md](modules/memory-engine.md) | `src/memory/` | 四層記憶引擎 + episodic + session-memory + 效用帳 | 2026-11-06 |
 | [modules/tool-registry.md](modules/tool-registry.md) | `src/tools/` | Tool 註冊 + 30 builtin tools | 2026-04-15 |
 | [modules/message-trace.md](modules/message-trace.md) | `src/core/message-trace.ts` | 7 階段訊息追蹤 + TraceStore + ContextStore | 2026-04-06 |

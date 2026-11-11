@@ -448,13 +448,15 @@ export const tool: Tool = {
     const _rawTimeoutMs = typeof params["timeoutMs"] === "number" ? params["timeoutMs"] : (agentConfig?.timeoutMs ?? _cfgDefault);
     const NO_TIMEOUT_PROXY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days = 604800000ms（< INT32_MAX 2147483647 ms 不會被 setTimeout clip）
     const timeoutMs  = _rawTimeoutMs === 0 ? NO_TIMEOUT_PROXY_MS : Math.min(_rawTimeoutMs, NO_TIMEOUT_PROXY_MS);
-    const isAsync          = params["async"] === true;
-    const keepSession      = agentParam ? true : params["keepSession"] === true;  // agent 身份強制 keepSession
+    // 模型常把布林參數送成字串 "true"（實測 async 一律如此），只認 === true 會默默變成同步執行
+    const flag = (v: unknown): boolean => v === true || v === "true";
+    const isAsync          = flag(params["async"]);
+    const keepSession      = agentParam ? true : flag(params["keepSession"]);  // agent 身份強制 keepSession
     const mode             = (params["mode"] as "run" | "session") ?? "run";
-    const allowNestedSpawn = params["allowNestedSpawn"] === true;
+    const allowNestedSpawn = flag(params["allowNestedSpawn"]);
     const isolation        = params["isolation"] === "worktree" ? "worktree" as const : undefined;
     const inputFrom        = params["inputFrom"] ? String(params["inputFrom"]) : undefined;
-    const saveToMemory     = params["saveToMemory"] === true;
+    const saveToMemory     = flag(params["saveToMemory"]);
     const memoryTag        = params["memoryTag"] ? String(params["memoryTag"]) : undefined;
     const attachments = Array.isArray(params["attachments"]) ? params["attachments"] : [];
 

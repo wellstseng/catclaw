@@ -7,6 +7,11 @@
 
 內建 Web Dashboard：多分頁監控面板 + REST API + 內嵌 HTML/CSS/JS（單檔）。
 
+入口分流（`DashboardServer.route()`）：
+- `/`：轉址到 `/chat`；帶 `?token=` 的舊書籤轉到 `/dashboard?token=…`。
+- `/chat`、`/api/webchat/*`：交給網頁版聊天（`src/web/webchat.ts`，自己的帳號登入），見 [webchat.md](webchat.md)。
+- 其餘（後台頁 `/dashboard` 與所有後台 API）：`canUseDashboard()` 放行條件——帶對 dashboard token、本機 loopback（catclaw 自己的 MCP 會打 `/api/restart`）、網頁版 platform-owner／admin 的登入 cookie；還沒建任何網頁帳號時維持舊規則（沒設 token 就全開）。不放行時頁面轉 `/chat` 登入、API 回 401。
+
 ## 啟動
 
 ```typescript

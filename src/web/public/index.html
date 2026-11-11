@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CatClaw 聊天</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+<!-- Markdown／消毒／程式碼上色：CDN 載不到時退回純文字顯示 -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github-dark.min.css">
+<style>
+:root {
+  --bg: #1e1f22; --bg2: #2b2d31; --bg3: #313338; --bg4: #383a40;
+  --fg: #e6e6e6; --fg2: #b5bac1; --fg3: #80848e;
+  --accent: #d97757; --accent2: #c4623f; --danger: #e5484d; --ok: #3ba55c; --warn: #e5a50a;
+  --border: #3f4147; --code: #1a1b1e;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f2f3f5; --bg2: #ffffff; --bg3: #ffffff; --bg4: #ebedef;
+    --fg: #1f2328; --fg2: #4e5058; --fg3: #80848e; --border: #dcdfe3; --code: #0d1117;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 -apple-system, "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+button { font: inherit; cursor: pointer; border: 0; border-radius: 6px; padding: 7px 14px; background: var(--bg4); color: var(--fg); }
+button:hover { filter: brightness(1.12); }
+button.primary { background: var(--accent); color: #fff; }
+button.danger { background: var(--danger); color: #fff; }
+button.ghost { background: transparent; color: var(--fg2); padding: 6px 8px; }
+.ghost-link { color: var(--fg2); padding: 6px 8px; text-decoration: none; border-radius: 6px; }
+.ghost-link:hover { background: var(--bg4); }
+button:disabled { opacity: .5; cursor: default; }
+input, select, textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.hidden { display: none !important; }
+
+/* ── 登入 ── */
+#auth { display: flex; align-items: center; justify-content: center; height: 100%; padding: 16px; }
+.auth-card { background: var(--bg2); padding: 28px; border-radius: 12px; width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px; }
+.auth-card h1 { margin: 0 0 4px; font-size: 22px; }
+.auth-card .hint { color: var(--fg3); font-size: 13px; margin: 0; }
+.error { color: var(--danger); font-size: 13px; min-height: 1em; }
+
+/* ── 主畫面 ── */
+#app { display: flex; height: 100%; }
+#sidebar { width: 268px; background: var(--bg2); display: flex; flex-direction: column; border-right: 1px solid var(--border); flex-shrink: 0; }
+.side-head { padding: 14px; display: flex; align-items: center; gap: 8px; }
+.brand { font-weight: 700; font-size: 17px; flex: 1; }
+#new-conv { width: calc(100% - 28px); margin: 0 14px 10px; }
+#conv-list { flex: 1; overflow-y: auto; padding: 0 8px; }
+.conv { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 6px; color: var(--fg2); cursor: pointer; }
+.conv:hover { background: var(--bg4); }
+.conv.active { background: var(--bg4); color: var(--fg); }
+.conv .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.side-foot { border-top: 1px solid var(--border); padding: 10px 14px; display: flex; align-items: center; gap: 6px; }
+.me { flex: 1; overflow: hidden; }
+.me .n { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.me .r { color: var(--fg3); font-size: 12px; }
+
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg3); position: relative; }
+.main-head { height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+#menu-btn { display: none; }
+#conv-title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#messages { flex: 1; overflow-y: auto; padding: 20px 0; }
+.col { max-width: 860px; margin: 0 auto; padding: 0 20px; }
+.empty { color: var(--fg3); text-align: center; margin-top: 18vh; }
+.empty h2 { color: var(--fg); font-weight: 600; }
+
+.msg { margin: 0 0 22px; }
+.msg .who { font-size: 13px; color: var(--fg3); margin-bottom: 4px; }
+.msg.user .body { background: var(--bg4); border-radius: 10px; padding: 10px 14px; white-space: pre-wrap; word-break: break-word; }
+.msg.notice .body { border: 1px dashed var(--border); border-radius: 10px; padding: 10px 14px; color: var(--fg2); }
+.msg.assistant .err { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); padding: 8px 12px; border-radius: 8px; margin-top: 8px; white-space: pre-wrap; }
+.files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.files img { max-width: 240px; max-height: 180px; border-radius: 8px; cursor: zoom-in; display: block; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; color: var(--fg); text-decoration: none; }
+
+.md { word-break: break-word; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md pre { background: var(--code); color: #e6edf3; padding: 12px 14px; border-radius: 8px; overflow-x: auto; position: relative; font-size: 13px; }
+.md code { font-family: "Cascadia Code", Consolas, "SF Mono", monospace; font-size: .9em; }
+.md :not(pre) > code { background: var(--bg4); padding: 1px 5px; border-radius: 4px; }
+.md table { border-collapse: collapse; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 10px; }
+.md a { color: var(--accent); }
+.md blockquote { border-left: 3px solid var(--border); margin: 0; padding-left: 12px; color: var(--fg2); }
+.copy { position: absolute; top: 6px; right: 6px; font-size: 12px; padding: 2px 8px; opacity: .7; }
+
+details.tool, details.thinking { border: 1px solid var(--border); border-radius: 8px; margin: 8px 0; background: var(--bg2); }
+details.tool > summary, details.thinking > summary { padding: 7px 12px; cursor: pointer; font-size: 13px; color: var(--fg2); list-style: none; display: flex; gap: 8px; align-items: center; }
+details > summary::-webkit-details-marker { display: none; }
+details.tool .st { margin-left: auto; font-size: 12px; }
+.st.run { color: var(--warn); } .st.ok { color: var(--ok); } .st.bad { color: var(--danger); }
+details .inner { padding: 0 12px 10px; }
+details .lbl { font-size: 12px; color: var(--fg3); margin: 6px 0 2px; }
+details pre { margin: 0; background: var(--code); color: #d0d7de; padding: 8px 10px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 360px; overflow: auto; }
+details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 13px; }
+.typing { display: inline-block; color: var(--fg3); }
+.typing::after { content: "▍"; animation: pulse 1s infinite; }
+
+#status { position: absolute; left: 50%; transform: translateX(-50%); bottom: 120px; background: var(--bg2); border: 1px solid var(--border); padding: 5px 14px; border-radius: 20px; font-size: 13px; color: var(--fg2); pointer-events: none; transition: opacity .3s; }
+
+.composer-wrap { padding: 0 0 16px; }
+.composer { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 8px; }
+.composer.drag { outline: 2px dashed var(--accent); }
+#pending { display: flex; flex-wrap: wrap; gap: 6px; }
+#pending:not(:empty) { margin-bottom: 6px; }
+#pending .chip button { padding: 0 4px; background: none; color: var(--fg3); }
+#pending img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; }
+.comp-row { display: flex; align-items: flex-end; gap: 6px; }
+#input { flex: 1; border: 0; background: transparent; resize: none; max-height: 40vh; padding: 6px 4px; }
+#input:focus { outline: none; }
+.comp-hint { color: var(--fg3); font-size: 12px; text-align: center; margin-top: 6px; }
+.comp-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+.comp-tools select { padding: 3px 6px; font-size: 13px; max-width: 46%; background: var(--bg2); }
+#settings-note { color: var(--warn); font-size: 12px; }
+.composer { position: relative; }
+#slash { position: absolute; left: 8px; right: 8px; bottom: 100%; margin-bottom: 6px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; max-height: 280px; overflow-y: auto; box-shadow: 0 6px 24px rgba(0,0,0,.35); z-index: 20; }
+.sl-item { padding: 7px 12px; cursor: pointer; display: flex; gap: 10px; font-size: 14px; }
+.sl-item b { white-space: nowrap; }
+.sl-item span { color: var(--fg3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-item.sel, .sl-item:hover { background: var(--bg4); }
+
+/* ── 核准卡 ── */
+.card { border: 1px solid var(--border); border-radius: 8px; margin: 8px 0; background: var(--bg2); padding: 8px 12px; }
+.card.approval.pending { border-color: var(--warn); }
+.card-head { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--fg2); }
+.card-head .st { margin-left: auto; font-size: 12px; }
+.card pre { margin: 6px 0; background: var(--code); color: #d0d7de; padding: 8px 10px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+.card .acts { display: flex; gap: 8px; align-items: center; }
+.card .acts .countdown { color: var(--fg3); font-size: 12px; margin-left: auto; }
+
+/* ── 對話框 ── */
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+.modal { background: var(--bg2); border-radius: 12px; padding: 20px; width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto; }
+.modal h2 { margin: 0 0 12px; font-size: 18px; }
+.modal .row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.modal .row > * { flex: 1; min-width: 140px; }
+.modal table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 14px; }
+.modal td, .modal th { text-align: left; padding: 6px; border-bottom: 1px solid var(--border); }
+.lightbox img { max-width: 95vw; max-height: 92vh; border-radius: 8px; }
+
+@media (max-width: 760px) {
+  #sidebar { position: fixed; z-index: 40; height: 100%; left: -280px; transition: left .2s; }
+  #sidebar.open { left: 0; box-shadow: 0 0 40px rgba(0,0,0,.5); }
+  #menu-btn { display: inline-block; }
+  .col { padding: 0 12px; }
+}
+</style>
+</head>
+<body>
+
+<!-- 登入／首次設定 -->
+<div id="auth" class="hidden">
+  <form class="auth-card" id="login-form">
+    <h1>🐾 CatClaw</h1>
+    <p class="hint">登入以開始對話</p>
+    <input name="username" placeholder="帳號" autocomplete="username" required>
+    <input name="password" type="password" placeholder="密碼" autocomplete="current-password" required>
+    <div class="error" id="login-err"></div>
+    <button class="primary">登入</button>
+  </form>
+  <form class="auth-card hidden" id="setup-form">
+    <h1>🐾 建立管理員</h1>
+    <p class="hint">還沒有任何網頁帳號。設定碼在伺服器的 <code>~/.catclaw/webchat/setup-code.txt</code>（catclaw log 也有印）。</p>
+    <input name="code" placeholder="設定碼" required autocomplete="off">
+    <input name="username" placeholder="帳號（小寫英數）" required autocomplete="username">
+    <input name="displayName" placeholder="顯示名稱">
+    <input name="password" type="password" placeholder="密碼（至少 8 字）" required autocomplete="new-password">
+    <input name="linkAccountId" placeholder="綁定既有 catclaw 帳號 ID（選填，共用記憶與身分）" autocomplete="off">
+    <div class="error" id="setup-err"></div>
+    <button class="primary">建立並登入</button>
+  </form>
+</div>
+
+<!-- 主畫面 -->
+<div id="app" class="hidden">
+  <aside id="sidebar">
+    <div class="side-head"><span class="brand">🐾 CatClaw</span></div>
+    <button id="new-conv" class="primary">＋ 新對話</button>
+    <div id="conv-list"></div>
+    <div class="side-foot">
+      <div class="me"><div class="n" id="me-name"></div><div class="r" id="me-role"></div></div>
+      <a class="ghost-link hidden" id="dashboard-link" href="/dashboard" target="_blank" rel="noopener" title="後台（另開分頁）">🛠</a>
+      <button class="ghost" id="admin-btn" title="帳號管理">👥</button>
+      <button class="ghost" id="pw-btn" title="改密碼">🔑</button>
+      <button class="ghost" id="logout-btn" title="登出">⎋</button>
+    </div>
+  </aside>
+  <main id="main">
+    <div class="main-head">
+      <button class="ghost" id="menu-btn">☰</button>
+      <div id="conv-title"></div>
+      <button class="ghost" id="rename-btn" title="改名">✎</button>
+      <button class="ghost" id="delete-btn" title="刪除對話">🗑</button>
+    </div>
+    <div id="messages"><div class="col" id="msg-col"></div></div>
+    <div id="status" style="opacity:0"></div>
+    <div class="composer-wrap"><div class="col">
+      <div class="composer" id="composer">
+        <div id="slash" class="hidden"></div>
+        <div class="comp-tools">
+          <select id="model-sel" title="這個對話用的模型"><option value="">模型：預設</option></select>
+          <select id="think-sel" title="這個對話的思考等級"></select>
+          <span id="settings-note"></span>
+        </div>
+        <div id="pending"></div>
+        <div class="comp-row">
+          <button class="ghost" id="attach-btn" title="附加檔案">📎</button>
+          <input type="file" id="file-input" multiple class="hidden">
+          <textarea id="input" rows="1" placeholder="傳訊息給 CatClaw…（Enter 送出、Shift+Enter 換行，可貼上圖片）"></textarea>
+          <button class="danger hidden" id="stop-btn">■ 停止</button>
+          <button class="primary" id="send-btn">送出</button>
+        </div>
+      </div>
+      <div class="comp-hint">回覆進行中仍可送訊息，AI 會在下一步看到（插話）。輸入 / 可選斜線指令（與 Discord 相同）。</div>
+    </div></div>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+"use strict";
+// ── 工具 ──────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ROLE_NAMES = { "platform-owner": "擁有者", admin: "管理員", developer: "開發者", member: "成員", guest: "訪客" };
+
+async function api(path, body, method) {
+  const opts = { method: method || (body === undefined ? "GET" : "POST"), headers: { "X-Webchat": "1" } };
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const r = await fetch("/api/webchat" + path, opts);
+  let data = {};
+  try { data = await r.json(); } catch { /* 空回應 */ }
+  if (r.status === 401 && path !== "/login" && path !== "/state") { location.reload(); throw new Error("請重新登入"); }
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+
+const hasMd = typeof marked !== "undefined" && typeof DOMPurify !== "undefined";
+if (hasMd) marked.setOptions({ gfm: true, breaks: true });
+
+/** Markdown → 安全 HTML；套件沒載到就純文字 */
+function renderMd(text) {
+  const div = document.createElement("div");
+  div.className = "md";
+  if (!hasMd) { div.style.whiteSpace = "pre-wrap"; div.textContent = text; return div; }
+  div.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+  div.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
+  div.querySelectorAll("pre").forEach(pre => {
+    const code = pre.querySelector("code");
+    if (code && typeof hljs !== "undefined") { try { hljs.highlightElement(code); } catch { /* 不認得的語言 */ } }
+    const btn = document.createElement("button");
+    btn.className = "copy"; btn.textContent = "複製";
+    btn.onclick = () => { navigator.clipboard.writeText((code || pre).innerText); btn.textContent = "已複製"; setTimeout(() => btn.textContent = "複製", 1200); };
+    pre.appendChild(btn);
+  });
+  return div;
+}
+
+function toast(text) {
+  const el = $("status");
+  el.textContent = text; el.style.opacity = 1;
+  clearTimeout(toast._t); toast._t = setTimeout(() => el.style.opacity = 0, 3000);
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// ── 狀態 ──────────────────────────────────────────────────────────────────
+let viewer = null;
+let conversations = [];
+let currentId = null;
+let stream = null;          // 目前對話的 EventSource
+let running = false;        // 目前對話是否有回合在跑
+let live = null;            // 串流中的 assistant：{ el, blocks: [...] }
+let pendingFiles = [];      // 待送附件 { name, mime, data, previewUrl }
+const seen = new Set();     // 已畫過的 entry id
+let options = { models: [], thinkingLevels: [], canChangeModel: false, skills: [] };   // 選單與斜線指令清單
+const THINK_NAMES = { "": "思考：預設", off: "思考：關閉", minimal: "思考：極少", low: "思考：低", medium: "思考：中", high: "思考：高", xhigh: "思考：極高" };
+
+// ── 登入流程 ──────────────────────────────────────────────────────────────
+async function boot() {
+  const st = await api("/state");
+  if (st.viewer) { viewer = st.viewer; showApp(); return; }
+  $("auth").classList.remove("hidden");
+  $("login-form").classList.toggle("hidden", st.needsSetup);
+  $("setup-form").classList.toggle("hidden", !st.needsSetup);
+}
+
+$("login-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try { await api("/login", { username: f.get("username"), password: f.get("password") }); location.reload(); }
+  catch (err) { $("login-err").textContent = err.message; }
+};
+$("setup-form").onsubmit = async (e) => {
+  e.preventDefault();
+  try { await api("/setup", Object.fromEntries(new FormData(e.target))); location.reload(); }
+  catch (err) { $("setup-err").textContent = err.message; }
+};
+
+function showApp() {
+  $("app").classList.remove("hidden");
+  $("me-name").textContent = viewer.displayName + " (" + viewer.username + ")";
+  $("me-role").textContent = ROLE_NAMES[viewer.role] || viewer.role;
+  $("admin-btn").classList.toggle("hidden", !viewer.isAdmin);
+  $("dashboard-link").classList.toggle("hidden", !viewer.isAdmin);
+  loadOptions().catch(err => toast("選單載入失敗：" + err.message));
+  const ev = new EventSource("/api/webchat/events");
+  ev.onmessage = (m) => { if (JSON.parse(m.data).type === "conversations") loadConversations(); };
+  loadConversations().then(() => {
+    const fromHash = new URLSearchParams(location.hash.slice(1)).get("c");
+    const target = conversations.find(c => c.id === fromHash) || conversations[0];
+    if (target) openConversation(target.id); else renderEmpty();
+  });
+}
+
+// ── 對話列表 ──────────────────────────────────────────────────────────────
+async function loadConversations() {
+  conversations = await api("/conversations");
+  const list = $("conv-list");
+  list.innerHTML = "";
+  for (const c of conversations) {
+    const el = document.createElement("div");
+    el.className = "conv" + (c.id === currentId ? " active" : "");
+    el.innerHTML = '<span class="t"></span>' + (c.running ? '<span class="dot" title="回覆中"></span>' : "");
+    el.querySelector(".t").textContent = c.title;
+    el.title = c.title + "\n" + fmtTime(c.updatedAt);
+    el.onclick = () => { openConversation(c.id); $("sidebar").classList.remove("open"); };
+    list.appendChild(el);
+  }
+  const cur = conversations.find(c => c.id === currentId);
+  if (cur) $("conv-title").textContent = cur.title;
+}
+
+$("new-conv").onclick = async () => {
+  const c = await api("/conversations", {});
+  await loadConversations();
+  openConversation(c.id);
+  $("sidebar").classList.remove("open");
+  $("input").focus();
+};
+$("menu-btn").onclick = () => $("sidebar").classList.toggle("open");
+
+$("rename-btn").onclick = async () => {
+  if (!currentId) return;
+  const cur = conversations.find(c => c.id === currentId);
+  const title = prompt("對話名稱", cur ? cur.title : "");
+  if (!title) return;
+  try { await api("/conversations/" + currentId + "/rename", { title }); } catch (err) { alert(err.message); }
+};
+$("delete-btn").onclick = async () => {
+  if (!currentId || !confirm("刪除這個對話？紀錄、附件與 AI 端的 session 都會刪掉，無法復原。")) return;
+  try {
+    await api("/conversations/" + currentId + "/delete", {});
+    currentId = null;
+    await loadConversations();
+    if (conversations[0]) openConversation(conversations[0].id); else renderEmpty();
+  } catch (err) { alert(err.message); }
+};
+
+function renderEmpty() {
+  if (stream) { stream.close(); stream = null; }
+  currentId = null;
+  $("conv-title").textContent = "";
+  $("msg-col").innerHTML = '<div class="empty"><h2>有什麼可以幫忙的？</h2><p>直接輸入訊息就會開新對話。</p></div>';
+  setRunning(false);
+}
+
+// ── 打開對話：訂閱串流，第一個事件 sync 帶完整紀錄 ─────────────────────────
+function openConversation(id) {
+  if (stream) stream.close();
+  currentId = id;
+  history.replaceState(null, "", "#c=" + id);
+  seen.clear(); live = null;
+  $("msg-col").innerHTML = "";
+  setRunning(false);
+  document.querySelectorAll(".conv").forEach((el, i) => el.classList.toggle("active", conversations[i] && conversations[i].id === id));
+  const cur = conversations.find(c => c.id === id);
+  $("conv-title").textContent = cur ? cur.title : "";
+  stream = new EventSource("/api/webchat/conversations/" + id + "/stream");
+  stream.onmessage = (m) => handleEvent(JSON.parse(m.data));
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case "sync":
+      // 重連也會再送 sync：整個重畫
+      seen.clear(); live = null; $("msg-col").innerHTML = "";
+      ev.entries.forEach(addEntry);
+      if (!ev.entries.length) $("msg-col").innerHTML = '<div class="empty"><h2>新對話</h2><p>輸入訊息開始。</p></div>';
+      setRunning(false);
+      if (ev.live.length) { startLive(); ev.live.forEach(e => (e.type === "approval" || e.type === "job") ? upsertCard(e.block) : applyLive(e)); }
+      scrollBottom(true);
+      break;
+    case "entry": addEntry(ev.entry); scrollBottom(); break;
+    case "turn_start": startLive(); break;
+    case "turn_end":
+      if (live) { live.el.remove(); live = null; }
+      addEntry(ev.entry);
+      setRunning(false);
+      scrollBottom();
+      break;
+    case "status": toast(ev.text); break;
+    case "settings": applySettings(ev.settings); break;
+    case "approval": case "job": upsertCard(ev.block); break;
+    default: applyLive(ev);
+  }
+}
+
+// ── 畫紀錄 ────────────────────────────────────────────────────────────────
+function addEntry(entry) {
+  if (seen.has(entry.id)) return;
+  if (entry.kind === "assistant" && !entry.blocks.length && !entry.error) return;
+  seen.add(entry.id);
+  const empty = $("msg-col").querySelector(".empty");
+  if (empty) empty.remove();
+  const el = document.createElement("div");
+  el.className = "msg " + entry.kind;
+  if (entry.kind === "user") {
+    el.innerHTML = '<div class="who"></div><div class="body"></div>';
+    el.querySelector(".who").textContent = entry.author + " · " + fmtTime(entry.at);
+    el.querySelector(".body").textContent = entry.text;
+    if (entry.files && entry.files.length) el.appendChild(renderFiles(entry.files));
+  } else if (entry.kind === "notice") {
+    el.innerHTML = '<div class="who">系統</div><div class="body"></div>';
+    el.querySelector(".body").appendChild(renderMd(entry.text));
+  } else {
+    el.innerHTML = '<div class="who">🐾 CatClaw · ' + esc(fmtTime(entry.at)) + "</div>";
+    entry.blocks.forEach(b => el.appendChild(renderBlock(b)));
+    if (entry.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = "⚠ " + entry.error; el.appendChild(e); }
+  }
+  if (live) $("msg-col").insertBefore(el, live.el); else $("msg-col").appendChild(el);
+}
+
+function renderFiles(files) {
+  const box = document.createElement("div");
+  box.className = "files";
+  for (const f of files) {
+    const url = "/api/webchat/conversations/" + currentId + "/files/" + f.id;
+    if (f.isImage) {
+      const img = document.createElement("img");
+      img.src = url; img.alt = f.name; img.onclick = () => lightbox(url);
+      box.appendChild(img);
+    } else {
+      const a = document.createElement("a");
+      a.className = "chip"; a.href = url; a.textContent = "📄 " + f.name + " (" + Math.ceil(f.size / 1024) + " KB)";
+      box.appendChild(a);
+    }
+  }
+  return box;
+}
+
+function renderBlock(b) {
+  if (b.type === "text") return renderMd(b.text);
+  if (b.type === "approval") return renderApproval(b);
+  if (b.type === "job") return renderJob(b);
+  if (b.type === "thinking") {
+    const d = document.createElement("details");
+    d.className = "thinking";
+    d.innerHTML = "<summary>💭 思考過程</summary><div class='inner'></div>";
+    d.querySelector(".inner").textContent = b.text;
+    return d;
+  }
+  // 工具卡片
+  const d = document.createElement("details");
+  d.className = "tool";
+  const status = b.blocked ? '<span class="st bad">被擋：' + esc(b.blocked) + "</span>"
+    : b.error ? '<span class="st bad">錯誤</span>'
+    : b.result !== undefined ? '<span class="st ok">完成</span>'
+    : '<span class="st run">執行中…</span>';
+  d.innerHTML = "<summary>🔧 <b>" + esc(b.name) + "</b>" + status + "</summary><div class='inner'></div>";
+  const inner = d.querySelector(".inner");
+  if (b.params) inner.insertAdjacentHTML("beforeend", "<div class='lbl'>參數</div><pre>" + esc(b.params) + "</pre>");
+  if (b.error) inner.insertAdjacentHTML("beforeend", "<div class='lbl'>錯誤</div><pre>" + esc(b.error) + "</pre>");
+  if (b.result) inner.insertAdjacentHTML("beforeend", "<div class='lbl'>結果</div><pre>" + esc(b.result) + "</pre>");
+  return d;
+}
+
+/** 執行核准卡：等待中顯示核准／拒絕按鈕與倒數 */
+function renderApproval(b) {
+  const d = document.createElement("div");
+  d.className = "card approval " + b.status;
+  d.dataset.cardId = b.id;
+  const st = { pending: '<span class="st run">等待你核准</span>', approved: '<span class="st ok">已核准</span>',
+    denied: '<span class="st bad">已拒絕</span>', expired: '<span class="st bad">逾時，自動拒絕</span>' }[b.status] || "";
+  d.innerHTML = '<div class="card-head">🔐 <b>執行核准</b>' + st + "</div><pre></pre>";
+  d.querySelector("pre").textContent = b.command;
+  if (b.status !== "pending") return d;
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  acts.innerHTML = '<button class="primary" data-ok>核准</button><button class="danger">拒絕</button><span class="countdown"></span>';
+  acts.querySelector(".countdown").dataset.expires = b.expiresAt;
+  const decide = async (approved) => {
+    acts.querySelectorAll("button").forEach(x => x.disabled = true);
+    try { await api("/conversations/" + currentId + "/approve", { approvalId: b.id, approved }); }
+    catch (err) { toast(err.message); acts.querySelectorAll("button").forEach(x => x.disabled = false); }
+  };
+  acts.querySelector("[data-ok]").onclick = () => decide(true);
+  acts.querySelector(".danger").onclick = () => decide(false);
+  d.appendChild(acts);
+  tickTimers();
+  return d;
+}
+
+/** 子 agent／背景工作卡：執行中顯示經過時間，結束後展開結果摘要 */
+function renderJob(b) {
+  const d = document.createElement("details");
+  d.className = "tool job";
+  d.dataset.cardId = b.id;
+  const icon = b.kind === "subagent" ? "🤖 子 agent" : "⚙ 背景工作";
+  const st = b.status === "running" ? '<span class="st run"></span>'
+    : b.status === "completed" ? '<span class="st ok">完成</span>' : '<span class="st bad">失敗</span>';
+  d.innerHTML = "<summary>" + icon + " <b></b>" + st + "</summary><div class='inner'></div>";
+  d.querySelector("summary b").textContent = b.label;
+  if (b.status === "running") d.querySelector(".st").dataset.since = b.startedAt;
+  if (b.summary) {
+    d.querySelector(".inner").insertAdjacentHTML("beforeend", "<div class='lbl'>結果</div><pre></pre>");
+    d.querySelector(".inner pre").textContent = b.summary;
+    d.open = b.status !== "running";
+  } else {
+    d.querySelector(".inner").innerHTML = "<div class='lbl'>" + (b.status === "running" ? "在背景執行，結束時會更新這張卡片" : "沒有輸出") + "</div>";
+  }
+  tickTimers();
+  return d;
+}
+
+/** 核准倒數與工作經過時間，每秒更新 */
+function tickTimers() {
+  const now = Date.now();
+  document.querySelectorAll("[data-expires]").forEach(el => {
+    const left = Math.max(0, Math.round((Date.parse(el.dataset.expires) - now) / 1000));
+    el.textContent = left > 0 ? left + " 秒後自動拒絕" : "即將逾時";
+  });
+  document.querySelectorAll("[data-since]").forEach(el => {
+    const sec = Math.max(0, Math.round((now - Date.parse(el.dataset.since)) / 1000));
+    el.textContent = "執行中 " + (sec >= 60 ? Math.floor(sec / 60) + " 分 " : "") + (sec % 60) + " 秒";
+  });
+}
+setInterval(tickTimers, 1000);
+
+/** 核准卡／工作卡的新增或更新：先找進行中回覆，再找畫面上較早的卡片 */
+function upsertCard(block) {
+  if (live) {
+    const i = live.blocks.findIndex(b => b.type === block.type && b.id === block.id);
+    if (i >= 0) { live.blocks[i] = block; scheduleLiveRender(); return; }
+  }
+  const old = $("msg-col").querySelector('[data-card-id="' + CSS.escape(block.id) + '"]');
+  if (old) { old.replaceWith(renderBlock(block)); return; }
+  if (!live) startLive();
+  live.blocks.push(block);
+  scheduleLiveRender();
+}
+
+// ── 串流中的回覆 ──────────────────────────────────────────────────────────
+function startLive() {
+  if (live) return;
+  setRunning(true);
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  el.innerHTML = '<div class="who">🐾 CatClaw</div><div class="blocks"></div><span class="typing"></span>';
+  $("msg-col").appendChild(el);
+  live = { el, blocks: [] };
+  scrollBottom();
+}
+
+function applyLive(ev) {
+  if (!live) startLive();
+  const blocks = live.blocks;
+  const last = blocks[blocks.length - 1];
+  if (ev.type === "text" || ev.type === "thinking") {
+    if (last && last.type === ev.type) last.text += ev.text; else blocks.push({ type: ev.type, text: ev.text });
+  } else if (ev.type === "tool_start") {
+    blocks.push({ type: "tool", id: ev.id, name: ev.name, params: ev.params });
+  } else if (ev.type === "tool_result") {
+    const t = blocks.find(b => b.type === "tool" && b.id === ev.id);
+    if (t) { t.result = ev.result; if (ev.error) t.error = ev.error; }
+  } else if (ev.type === "tool_blocked") {
+    blocks.push({ type: "tool", id: "", name: ev.name, params: "", blocked: ev.reason });
+  } else return;
+  scheduleLiveRender();
+}
+
+/** 串流文字一秒來很多次：合併到下一個畫格再重畫 */
+function scheduleLiveRender() {
+  if (scheduleLiveRender.pending) return;
+  scheduleLiveRender.pending = true;
+  requestAnimationFrame(() => {
+    scheduleLiveRender.pending = false;
+    if (!live) return;
+    const box = live.el.querySelector(".blocks");
+    const openTools = new Set([...box.querySelectorAll("details[open]")].map((d, i) => i));
+    box.innerHTML = "";
+    live.blocks.forEach(b => box.appendChild(renderBlock(b)));
+    [...box.querySelectorAll("details")].forEach((d, i) => { if (openTools.has(i)) d.open = true; });
+    scrollBottom();
+  });
+}
+
+function setRunning(on) {
+  running = on;
+  $("stop-btn").classList.toggle("hidden", !on);
+}
+
+function scrollBottom(force) {
+  const m = $("messages");
+  const nearBottom = m.scrollHeight - m.scrollTop - m.clientHeight < 160;
+  if (force || nearBottom) m.scrollTop = m.scrollHeight;
+}
+
+// ── 送出 ──────────────────────────────────────────────────────────────────
+async function send() {
+  const input = $("input");
+  const text = input.value.trim();
+  if (!text && !pendingFiles.length) return;
+  closeSlash();
+  await ensureConversation();
+  const files = pendingFiles.map(f => ({ name: f.name, mime: f.mime, data: f.data }));
+  $("send-btn").disabled = true;
+  try {
+    await api("/conversations/" + currentId + "/messages", { text, files });
+    input.value = ""; autoGrow();
+    clearPending();
+  } catch (err) { toast("送出失敗：" + err.message); }
+  finally { $("send-btn").disabled = false; input.focus(); }
+}
+
+async function ensureConversation() {
+  if (currentId) return;
+  const c = await api("/conversations", {});
+  await loadConversations();
+  openConversation(c.id);
+}
+
+$("send-btn").onclick = send;
+$("input").addEventListener("keydown", (e) => {
+  if (slashKey(e)) return;
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+});
+
+// ── 模型與思考等級選單 ────────────────────────────────────────────────────
+async function loadOptions() {
+  options = await api("/options");
+  const msel = $("model-sel");
+  msel.innerHTML = '<option value="">模型：預設</option>' + options.models.map(m => '<option value="' + esc(m.id) + '">' + esc(m.label) + "</option>").join("");
+  msel.disabled = !options.canChangeModel;
+  msel.title = options.canChangeModel ? "這個對話用的模型" : "你的角色不能換模型（同 /use 權限）";
+  $("think-sel").innerHTML = ["", "off", ...options.thinkingLevels].map(v => '<option value="' + v + '">' + (THINK_NAMES[v] || v) + "</option>").join("");
+}
+
+function applySettings(st) {
+  const msel = $("model-sel");
+  msel.options[0].textContent = "模型：預設（" + st.defaultModel + "）";
+  if (st.model && ![...msel.options].some(o => o.value === st.model)) msel.add(new Option(st.model, st.model));
+  msel.value = st.model;
+  $("think-sel").value = st.thinking;
+  const notes = [];
+  if (st.modelSource === "use") notes.push("模型由 /use 覆寫");
+  if (st.thinkingSource === "think") notes.push("思考由 /think 覆寫");
+  $("settings-note").textContent = notes.join("、");
+}
+
+async function changeSetting(field, value) {
+  try {
+    await ensureConversation();
+    applySettings(await api("/conversations/" + currentId + "/settings", { [field]: value }));
+    toast("已更新，下一則訊息生效");
+  } catch (err) { toast(err.message); }
+}
+$("model-sel").onchange = (e) => changeSetting("model", e.target.value);
+$("think-sel").onchange = (e) => changeSetting("thinking", e.target.value);
+
+// ── 斜線指令自動完成 ──────────────────────────────────────────────────────
+let slashItems = [];
+let slashIndex = 0;
+
+function updateSlash() {
+  const v = $("input").value;
+  const m = /^\/(\S*)$/.exec(v);
+  if (!m) { closeSlash(); return; }
+  // 開頭相符的排前面，名稱中間含有的排後面
+  const q = m[1].toLowerCase();
+  const prefix = options.skills.filter(sk => sk.trigger.toLowerCase().startsWith("/" + q));
+  const contains = options.skills.filter(sk => !prefix.includes(sk) && sk.name.toLowerCase().includes(q));
+  slashItems = [...prefix, ...contains];
+  if (!slashItems.length) { closeSlash(); return; }
+  slashIndex = Math.min(slashIndex, slashItems.length - 1);
+  const box = $("slash");
+  box.innerHTML = "";
+  slashItems.forEach((sk, i) => {
+    const el = document.createElement("div");
+    el.className = "sl-item" + (i === slashIndex ? " sel" : "");
+    el.innerHTML = "<b></b><span></span>";
+    el.querySelector("b").textContent = sk.trigger;
+    el.querySelector("span").textContent = sk.description;
+    el.title = sk.description;
+    el.onmousedown = (e) => { e.preventDefault(); pickSlash(i); };
+    box.appendChild(el);
+  });
+  box.classList.remove("hidden");
+  box.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+}
+function closeSlash() { $("slash").classList.add("hidden"); slashItems = []; slashIndex = 0; }
+function pickSlash(i) {
+  $("input").value = slashItems[i].trigger + " ";
+  closeSlash();
+  $("input").focus();
+  autoGrow();
+}
+/** 選單開著時接管上下、Tab、Enter、Esc；有處理回 true */
+function slashKey(e) {
+  if (!slashItems.length || $("slash").classList.contains("hidden") || e.isComposing) return false;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    slashIndex = (slashIndex + (e.key === "ArrowDown" ? 1 : -1) + slashItems.length) % slashItems.length;
+    updateSlash();
+  } else if (e.key === "Enter" && $("input").value.trim().toLowerCase() === slashItems[slashIndex].trigger.toLowerCase()) {
+    closeSlash();   // 已經打完整個指令：Enter 直接送出
+    return false;
+  } else if (e.key === "Tab" || e.key === "Enter") {
+    pickSlash(slashIndex);
+  } else if (e.key === "Escape") {
+    closeSlash();
+  } else return false;
+  e.preventDefault();
+  return true;
+}
+$("input").addEventListener("input", updateSlash);
+$("input").addEventListener("blur", () => setTimeout(closeSlash, 150));
+function autoGrow() { const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, window.innerHeight * 0.4) + "px"; }
+$("input").addEventListener("input", autoGrow);
+
+$("stop-btn").onclick = async () => {
+  if (!currentId) return;
+  try { const r = await api("/conversations/" + currentId + "/stop", {}); if (!r.stopped) toast("目前沒有可停止的回合"); }
+  catch (err) { toast(err.message); }
+};
+
+// ── 附件：按鈕、貼上、拖曳 ────────────────────────────────────────────────
+function addFiles(fileList) {
+  for (const file of fileList) {
+    if (file.size > 20 * 1024 * 1024) { toast(file.name + " 超過 20MB"); continue; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      pendingFiles.push({ name: file.name || "pasted.png", mime: file.type || "application/octet-stream", data: dataUrl.slice(dataUrl.indexOf(",") + 1), previewUrl: file.type.startsWith("image/") ? dataUrl : null });
+      renderPending();
+    };
+    reader.readAsDataURL(file);
+  }
+}
+function renderPending() {
+  const box = $("pending");
+  box.innerHTML = "";
+  pendingFiles.forEach((f, i) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = (f.previewUrl ? '<img alt="">' : "📄") + "<span></span><button title='移除'>✕</button>";
+    if (f.previewUrl) chip.querySelector("img").src = f.previewUrl;
+    chip.querySelector("span").textContent = f.name;
+    chip.querySelector("button").onclick = () => { pendingFiles.splice(i, 1); renderPending(); };
+    box.appendChild(chip);
+  });
+}
+function clearPending() { pendingFiles = []; renderPending(); }
+
+$("attach-btn").onclick = () => $("file-input").click();
+$("file-input").onchange = (e) => { addFiles(e.target.files); e.target.value = ""; };
+$("input").addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length) { e.preventDefault(); addFiles(files); }
+});
+const comp = $("composer");
+$("main").addEventListener("dragover", (e) => { e.preventDefault(); comp.classList.add("drag"); });
+$("main").addEventListener("dragleave", () => comp.classList.remove("drag"));
+$("main").addEventListener("drop", (e) => { e.preventDefault(); comp.classList.remove("drag"); addFiles(e.dataTransfer.files); });
+
+// ── 對話框：大圖、改密碼、帳號管理 ────────────────────────────────────────
+function modal(html) {
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  bg.innerHTML = html;
+  bg.onclick = (e) => { if (e.target === bg) bg.remove(); };
+  $("modal-root").appendChild(bg);
+  return bg;
+}
+function lightbox(url) { const m = modal('<div class="lightbox"><img alt=""></div>'); m.querySelector("img").src = url; m.onclick = () => m.remove(); }
+
+$("logout-btn").onclick = async () => { await api("/logout", {}); location.reload(); };
+
+$("pw-btn").onclick = () => {
+  const m = modal(`<form class="modal"><h2>改密碼</h2>
+    <div class="row"><input type="password" name="oldPassword" placeholder="舊密碼" required autocomplete="current-password"></div>
+    <div class="row"><input type="password" name="newPassword" placeholder="新密碼（至少 8 字）" required autocomplete="new-password"></div>
+    <div class="error"></div><div class="row"><button class="primary">更新</button></div></form>`);
+  m.querySelector("form").onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api("/password", Object.fromEntries(new FormData(e.target))); m.remove(); toast("密碼已更新"); }
+    catch (err) { m.querySelector(".error").textContent = err.message; }
+  };
+};
+
+$("admin-btn").onclick = async () => {
+  const m = modal('<div class="modal"><h2>帳號管理</h2><div class="body">載入中…</div></div>');
+  const body = m.querySelector(".body");
+  async function refresh() {
+    const d = await api("/admin/users");
+    const roleOpts = d.roles.map(r => `<option value="${r}" ${r === "member" ? "selected" : ""}>${ROLE_NAMES[r] || r}</option>`).join("");
+    const acctOpts = d.accounts.filter(a => !a.accountId.startsWith("_")).map(a => `<option value="${esc(a.accountId)}">${esc(a.displayName)}（${esc(a.accountId)}）</option>`).join("");
+    body.innerHTML = `<table><tr><th>帳號</th><th>顯示名稱</th><th>角色</th><th></th></tr>${d.users.map(u => `
+      <tr><td>${esc(u.username)}</td><td>${esc(u.displayName)}</td><td>${esc(ROLE_NAMES[u.role] || u.role)}</td>
+      <td style="white-space:nowrap"><button class="ghost" data-reset="${esc(u.username)}">重設密碼</button>
+      ${u.username === viewer.username ? "" : `<button class="ghost" data-del="${esc(u.username)}">刪除</button>`}</td></tr>`).join("")}</table>
+      <h2>新增帳號</h2>
+      <form><div class="row"><input name="username" placeholder="帳號（小寫英數）" required><input name="displayName" placeholder="顯示名稱"></div>
+      <div class="row"><input name="password" type="password" placeholder="初始密碼（至少 8 字）" required autocomplete="new-password"><select name="role">${roleOpts}</select></div>
+      <div class="row"><select name="linkAccountId"><option value="">建立新的 catclaw 帳號</option>${acctOpts}</select></div>
+      <p class="hint" style="color:var(--fg3);font-size:13px">綁定既有帳號時沿用該帳號的角色與記憶，上面選的角色不套用。</p>
+      <div class="error"></div><div class="row"><button class="primary">新增</button></div></form>`;
+    body.querySelector("form").onsubmit = async (e) => {
+      e.preventDefault();
+      try { await api("/admin/users", Object.fromEntries(new FormData(e.target))); refresh(); }
+      catch (err) { body.querySelector(".error").textContent = err.message; }
+    };
+    body.querySelectorAll("[data-reset]").forEach(b => b.onclick = async () => {
+      const pw = prompt("新密碼（至少 8 字）給 " + b.dataset.reset);
+      if (!pw) return;
+      try { await api("/admin/reset-password", { username: b.dataset.reset, password: pw }); toast("已重設"); } catch (err) { alert(err.message); }
+    });
+    body.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+      if (!confirm("刪除網頁帳號 " + b.dataset.del + "？（catclaw 帳號與記憶保留）")) return;
+      try { await api("/admin/delete-user", { username: b.dataset.del }); refresh(); } catch (err) { alert(err.message); }
+    });
+  }
+  refresh().catch(err => body.textContent = err.message);
+};
+
+boot().catch(err => { document.body.textContent = "載入失敗：" + err.message; });
+</script>
+</body>
+</html>

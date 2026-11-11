@@ -27,6 +27,7 @@ import { log } from "../logger.js";
 import type {
   LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent, ToolCall,
 } from "./base.js";
+import { completedStream } from "./base.js";
 import type { ProviderEntry } from "../core/config.js";
 import type { AuthProfileStore, CooldownReason } from "./auth-profile-store.js";
 
@@ -574,10 +575,6 @@ export class CodexOAuthProvider implements LLMProvider {
 
     if (toolCalls.length > 0) finalStopReason = "tool_use";
 
-    async function* makeIterable(): AsyncIterable<ProviderEvent> {
-      yield* events;
-    }
-
     const apiUsage = parsedUsage[0];
     const estimated = !apiUsage;
     const inputTokens = apiUsage?.input ?? 0;
@@ -585,13 +582,12 @@ export class CodexOAuthProvider implements LLMProvider {
     const totalTokens = apiUsage?.totalTokens ?? (inputTokens + outputTokens);
     log.debug(`[codex-oauth:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 input=${inputTokens} output=${outputTokens}${estimated ? "(est)" : ""}`);
 
-    return {
-      events: makeIterable(),
+    return completedStream(events, {
       stopReason: finalStopReason,
       toolCalls,
       text: finalText,
       usage: { input: inputTokens, output: outputTokens, totalTokens, model: this.modelId, providerType: "codex-oauth", estimated },
-    };
+    });
   }
 }
 

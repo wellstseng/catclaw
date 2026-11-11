@@ -6,7 +6,7 @@
 
 | 檔案 | 說明 |
 |------|------|
-| `src/providers/base.ts` | 型別定義：LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent。`ToolResultBlock.content` 支援 `string \| Array`（rich content） |
+| `src/providers/base.ts` | 型別定義：LLMProvider, Message, ProviderOpts, StreamResult／StreamFinal, ProviderEvent；`createEventChannel()`（邊收邊吐的事件通道）、`completedStream()`（整段收完的 provider 包成 StreamResult）。`ToolResultBlock.content` 支援 `string \| Array`（rich content） |
 | `src/providers/registry.ts` | ProviderRegistry：V1（ProviderEntry）+ V2（三層分離：agentDefaults + models.json + authStore） |
 | `src/providers/claude-api.ts` | ClaudeApiProvider（@mariozechner/pi-ai） |
 | `src/providers/auth-profile-store.ts` | AuthProfileStore：多憑證管理 + cooldown |
@@ -33,9 +33,18 @@ stream(messages, opts)
   ↓ toPiMessages(messages) — catclaw → pi-ai 格式
   ↓ toPiTools(tools) — JSON Schema → Type.Unsafe(schema)
   ↓ streamSimpleAnthropic(model, context, { apiKey, maxTokens, signal, temperature })
-  ↓ _convertEvent() — pi-ai events → catclaw ProviderEvent
-  → StreamResult { events, stopReason, toolCalls, text }
+  ↓ _convertEvent() — pi-ai events → catclaw ProviderEvent（一轉好就推進事件通道）
+  → StreamResult { events, final }（第一個內容事件到達就回傳）
 ```
+
+### StreamResult：邊收邊吐
+
+- `events`：事件一到就交出去，文字是逐字出現的。串流中途失敗時，吐完已收到的事件後迭代丟出錯誤。
+- `final`：Promise，串流結束後給 `{ stopReason, toolCalls, text, usage }`；中途失敗則 reject。provider 在背景收，不必先消費 events 也會 resolve。
+- `stream()` 等到**第一個內容事件**（text／thinking／tool_use／done）才回來。在那之前的失敗（連不上、429、pi-ai 只有 error 事件、idle 看門狗）直接 throw，所以 agent-loop 的 `callWithRetry` 與 `FailoverProvider` 仍能安全重試或切下一個 provider。
+- 已吐出內容後才失敗：不重試（使用者已看到文字，重試會重複），由 agent-loop 把錯誤附在回覆後面、結束本回合。
+- Stream idle 看門狗（60 秒無事件就中止）整段都在跑：內容前觸發 → throw 讓上層重試；內容後觸發 → events 迭代丟錯。
+- 目前只有 `claude-api` 是即時串流；ollama、openai-compat、codex-oauth、acp-cli 仍整段收完，用 `completedStream()` 包成同一個介面。
 
 ### OAuth vs API Key 自動偵測
 
@@ -289,8 +298,8 @@ const failover = buildFailoverProvider("failover", [claudeProvider, ollamaProvid
 ### stream() 行為
 
 1. 依序遍歷 chain，`breaker.isAvailable()` 為 false → 跳過
-2. 呼叫 `provider.stream(messages, opts)`
-3. 成功 → `breaker.recordSuccess()` → 回傳 StreamResult
+2. 呼叫 `provider.stream(messages, opts)`（即時串流的 provider 在第一個內容事件到達時就算成功）
+3. 成功 → `breaker.recordSuccess()` → 回傳 StreamResult（已開始吐內容後才失敗不會切 provider）
 4. 失敗 → `breaker.recordFailure()` → 嘗試下一個
 5. 4xx（非 429）→ 不計入 breaker，直接 throw（非 provider 故障）
 6. AbortError → 直接 throw（不算失敗）

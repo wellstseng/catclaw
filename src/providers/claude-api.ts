@@ -9,8 +9,9 @@
 import { join } from "node:path";
 import { log } from "../logger.js";
 import type {
-  LLMProvider, Message, ProviderOpts, StreamResult, ProviderEvent, ToolCall,
+  LLMProvider, Message, ProviderOpts, StreamResult, StreamFinal, ProviderEvent, ToolCall,
 } from "./base.js";
+import { createEventChannel } from "./base.js";
 import type { ProviderEntry } from "../core/config.js";
 import { resolveWorkspaceDirSafe } from "../core/config.js";
 import { AuthProfileStore, type CooldownReason } from "./auth-profile-store.js";
@@ -354,7 +355,9 @@ export class ClaudeApiProvider implements LLMProvider {
     // 偵測到 model name 帶 -4-/-5- 等大版本時直接不送，避免呼叫端踩雷。
     const skipTemperature = /-(4|5)-/.test(this.modelId);
 
-    // Stream idle watchdog：N 秒沒收到 event 就主動 abort，由 callWithRetry 接手 retry。
+    // Stream idle watchdog：N 秒沒收到 event 就主動 abort。
+    // 還沒吐出內容前觸發 → stream() throw，由 callWithRetry 接手 retry；
+    // 已吐出內容後觸發 → events 迭代丟錯（不能重試，否則使用者會看到重複文字）。
     // 解決「Anthropic API 收下 request 但 stream 從未 yield」造成整個 turn timeout 被吃光的情境。
     // 用 child AbortController 而非直接砍 opts.abortSignal — 不污染上層 turn-level signal。
     const STREAM_IDLE_MS = 60_000;
@@ -373,110 +376,129 @@ export class ClaudeApiProvider implements LLMProvider {
     let lastEventMs = Date.now();
     const watchdog = setInterval(() => {
       if (Date.now() - lastEventMs > STREAM_IDLE_MS) {
-        log.warn(`[claude:${this.id}] stream idle ${STREAM_IDLE_MS}ms 無事件，主動 abort 讓上層 retry`);
+        log.warn(`[claude:${this.id}] stream idle ${STREAM_IDLE_MS}ms 無事件，主動 abort`);
         idledOut = true;
         triggerChildAbort();
       }
     }, 5000);
 
-    try {
-      log.info(`[claude:${this.id}] thinking=${opts.thinking ?? "off"} → reasoning ${opts.thinking ? `已送入 Anthropic 請求（${opts.thinking}）` : "未送"}`);
-      const stream = streamSimple(model, context, {
-        apiKey: credential,
-        maxTokens: opts.maxTokens ?? getDefaultMaxTokens(this.modelId),
-        signal: childAc.signal,
-        ...(skipTemperature ? {} : { temperature: opts.temperature }),
-        cacheRetention: "long",
-        ...(opts.thinking ? { reasoning: opts.thinking } : {}),
-      });
+    // 邊收邊吐：channel 給呼叫端逐一取事件；started 在第一個內容事件到達（或串流結束）時 resolve
+    const channel = createEventChannel<ProviderEvent>();
+    let markStarted!: () => void;
+    let failBeforeStart!: (err: unknown) => void;
+    const started = new Promise<void>((resolve, reject) => { markStarted = resolve; failBeforeStart = reject; });
+    let contentStarted = false;
+    const CONTENT_EVENT_TYPES = new Set<ProviderEvent["type"]>(["text_delta", "thinking_delta", "tool_use", "done"]);
 
-      let rawEventCount = 0;
-      const rawEventTypes: string[] = [];
-      for await (const event of stream) {
-        lastEventMs = Date.now();
-        rawEventCount++;
-        rawEventTypes.push(event.type);
-        const pev = this._convertEvent(event, toolCalls);
-        if (pev) events.push(pev);
-      }
+    // smell-ok: 要沿用外層 this（provider 實例）與這次串流的區域狀態，用箭頭函式最直接
+    const pump = async (): Promise<StreamFinal> => {
+      try {
+        log.info(`[claude:${this.id}] thinking=${opts.thinking ?? "off"} → reasoning ${opts.thinking ? `已送入 Anthropic 請求（${opts.thinking}）` : "未送"}`);
+        const stream = streamSimple(model, context, {
+          apiKey: credential,
+          maxTokens: opts.maxTokens ?? getDefaultMaxTokens(this.modelId),
+          signal: childAc.signal,
+          ...(skipTemperature ? {} : { temperature: opts.temperature }),
+          cacheRetention: "long",
+          ...(opts.thinking ? { reasoning: opts.thinking } : {}),
+        });
 
-      // 最後一個事件帶最終文字和 stopReason
-      const lastEvent = events[events.length - 1];
-      if (lastEvent?.type === "done") {
-        finalText = lastEvent.text;
-        finalStopReason = lastEvent.stopReason;
-        finalUsage = lastEvent.usage;
-      }
-
-      // pi-ai 把 API 錯誤包成 event.type === "error" event 而不 throw（軟失敗）。
-      // 若 stream 結束時只有 error 事件、無 done → 視為 provider 不可用，要硬 throw 讓 failover 接手。
-      // 不然 agent-loop 只能顯示錯誤訊息給使用者，failover-provider 看不到 → 不會切下個 provider。
-      const errEvent = events.find(e => e.type === "error") as { type: "error"; message: string } | undefined;
-      const hasDone = events.some(e => e.type === "done");
-      if (errEvent && !hasDone) {
-        throw new Error(errEvent.message);
-      }
-
-      // Debug：若 events 陣列為空（導致 estimated fallback），log 實際收到的 raw events
-      if (events.length === 0) {
-        log.warn(`[claude:${this.id}] ⚠ 收到 0 個 converted events，raw=${rawEventCount} rawTypes=[${rawEventTypes.join(",")}] — 可能 stream 靜默失敗`);
-      }
-
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-
-      // Stream idle 觸發的 abort：包成 retriable 錯誤，callWithRetry 會走 network-retry path
-      if (idledOut) {
-        log.warn(`[claude:${this.id}] stream idle 觸發中止 → throw 讓上層 retry（不污染 turn timeout）`);
-        throw new Error(`[claude:${this.id}] stream idle timeout (${STREAM_IDLE_MS}ms 無事件)`);
-      }
-      // Parent abort（turn timeout / /stop / 插話）：不寫 cooldown、不污染 retry
-      if (opts.abortSignal?.aborted) {
-        throw err;
-      }
-
-      log.warn(`[claude:${this.id}] 呼叫失敗 profile=${activeProfileId ?? "token"}: ${msg}`);
-
-      // Cooldown 判斷
-      if (activeProfileId && this._store) {
-        const reason = classifyError(msg);
-        if (reason) this._store.setCooldown(activeProfileId, reason);
-      }
-
-      throw new Error(`[claude:${this.id}] ${msg}`);
-    } finally {
-      clearInterval(watchdog);
-      if (opts.abortSignal) opts.abortSignal.removeEventListener("abort", onParentAbort);
-    }
-
-    const est = Math.round(finalText.length / 4);
-    const resolvedUsage: import("./base.js").ProviderUsage = finalUsage
-      ? {
-          input: finalUsage.input, output: finalUsage.output, totalTokens: finalUsage.totalTokens,
-          cacheRead: finalUsage.cacheRead || undefined,
-          cacheWrite: finalUsage.cacheWrite || undefined,
-          model: this.modelId,
-          providerType: "claude",
+        let rawEventCount = 0;
+        const rawEventTypes: string[] = [];
+        for await (const event of stream) {
+          lastEventMs = Date.now();
+          rawEventCount++;
+          rawEventTypes.push(event.type);
+          const pev = this._convertEvent(event, toolCalls);
+          if (!pev) continue;
+          events.push(pev);
+          channel.push(pev);
+          if (!contentStarted && CONTENT_EVENT_TYPES.has(pev.type)) {
+            contentStarted = true;
+            markStarted();
+          }
         }
-      : { input: 0, output: est, totalTokens: est, model: this.modelId, providerType: "claude", estimated: true };
 
-    if (finalUsage) {
-      log.debug(`[claude:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 inputTokens=${finalUsage.input} outputTokens=${finalUsage.output} cacheRead=${finalUsage.cacheRead} cacheWrite=${finalUsage.cacheWrite} total=${finalUsage.totalTokens}`);
-    } else {
-      log.debug(`[claude:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 ~outputTokens=${resolvedUsage.output}`);
-    }
+        // 最後一個事件帶最終文字和 stopReason
+        const lastEvent = events[events.length - 1];
+        if (lastEvent?.type === "done") {
+          finalText = lastEvent.text;
+          finalStopReason = lastEvent.stopReason;
+          finalUsage = lastEvent.usage;
+        }
 
-    async function* makeIterable(): AsyncIterable<ProviderEvent> {
-      yield* events;
-    }
+        // pi-ai 把 API 錯誤包成 event.type === "error" event 而不 throw（軟失敗）。
+        // 若 stream 結束時只有 error 事件、無 done → 視為 provider 不可用，要硬 throw 讓 failover 接手。
+        // 不然 agent-loop 只能顯示錯誤訊息給使用者，failover-provider 看不到 → 不會切下個 provider。
+        const errEvent = events.find(e => e.type === "error") as { type: "error"; message: string } | undefined;
+        const hasDone = events.some(e => e.type === "done");
+        if (errEvent && !hasDone) {
+          throw new Error(errEvent.message);
+        }
 
-    return {
-      events: makeIterable(),
-      stopReason: finalStopReason,
-      toolCalls,
-      text: finalText,
-      usage: resolvedUsage,
+        // Debug：若 events 陣列為空（導致 estimated fallback），log 實際收到的 raw events
+        if (events.length === 0) {
+          log.warn(`[claude:${this.id}] ⚠ 收到 0 個 converted events，raw=${rawEventCount} rawTypes=[${rawEventTypes.join(",")}] — 可能 stream 靜默失敗`);
+        }
+
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+
+        // Stream idle 觸發的 abort：包成 retriable 錯誤（內容還沒吐出時 callWithRetry 會走 network-retry path）
+        if (idledOut) {
+          log.warn(`[claude:${this.id}] stream idle 觸發中止（${contentStarted ? "已吐出內容，交給呼叫端報錯" : "尚無內容，throw 讓上層 retry"}）`);
+          throw new Error(`[claude:${this.id}] stream idle timeout (${STREAM_IDLE_MS}ms 無事件)`);
+        }
+        // Parent abort（turn timeout / /stop / 插話）：不寫 cooldown、不污染 retry
+        if (opts.abortSignal?.aborted) {
+          throw err;
+        }
+
+        log.warn(`[claude:${this.id}] 呼叫失敗 profile=${activeProfileId ?? "token"}: ${msg}`);
+
+        // Cooldown 判斷
+        if (activeProfileId && this._store) {
+          const reason = classifyError(msg);
+          if (reason) this._store.setCooldown(activeProfileId, reason);
+        }
+
+        throw new Error(`[claude:${this.id}] ${msg}`);
+      } finally {
+        clearInterval(watchdog);
+        if (opts.abortSignal) opts.abortSignal.removeEventListener("abort", onParentAbort);
+      }
+
+      const est = Math.round(finalText.length / 4);
+      const resolvedUsage: import("./base.js").ProviderUsage = finalUsage
+        ? {
+            input: finalUsage.input, output: finalUsage.output, totalTokens: finalUsage.totalTokens,
+            cacheRead: finalUsage.cacheRead || undefined,
+            cacheWrite: finalUsage.cacheWrite || undefined,
+            model: this.modelId,
+            providerType: "claude",
+          }
+        : { input: 0, output: est, totalTokens: est, model: this.modelId, providerType: "claude", estimated: true };
+
+      if (finalUsage) {
+        log.debug(`[claude:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 inputTokens=${finalUsage.input} outputTokens=${finalUsage.output} cacheRead=${finalUsage.cacheRead} cacheWrite=${finalUsage.cacheWrite} total=${finalUsage.totalTokens}`);
+      } else {
+        log.debug(`[claude:${this.id}] 完成 stopReason=${finalStopReason} text=${finalText.length}字 ~outputTokens=${resolvedUsage.output}`);
+      }
+
+      return { stopReason: finalStopReason, toolCalls, text: finalText, usage: resolvedUsage };
     };
+
+    const final = pump().then(
+      (result) => { channel.end(); markStarted(); return result; },
+      (err: unknown) => { channel.fail(err); failBeforeStart(err); throw err; },
+    );
+    // 呼叫端可能在中途失敗後就不再 await final（例如已從 events 迭代拿到同一個錯誤），
+    // 這裡先掛一個處理器避免 unhandled rejection 讓程序崩潰；錯誤本身已在 pump 內 log 過。
+    final.catch(() => { /* 錯誤已由 events 迭代或 await final 傳給呼叫端 */ });
+
+    // 內容開始前失敗 → 這裡 throw，呼叫端（callWithRetry / failover）可安全重試
+    await started;
+    return { events: channel.iterable, final };
   }
 
   // ── pi-ai event → catclaw ProviderEvent ──────────────────────────────────────
