@@ -53,7 +53,10 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 #sidebar { width: 268px; background: var(--bg2); display: flex; flex-direction: column; border-right: 1px solid var(--border); flex-shrink: 0; }
 .side-head { padding: 14px; display: flex; align-items: center; gap: 8px; }
 .brand { font-weight: 700; font-size: 17px; flex: 1; }
-#new-conv { width: calc(100% - 28px); margin: 0 14px 10px; }
+.new-row { display: flex; gap: 6px; margin: 0 14px 10px; }
+#new-conv { flex: 1; }
+.conv .kind { font-size: 12px; color: var(--fg3); }
+#conv-meta { color: var(--fg3); font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #conv-list { flex: 1; overflow-y: auto; padding: 0 8px; }
 .conv { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 6px; color: var(--fg2); cursor: pointer; }
 .conv:hover { background: var(--bg4); }
@@ -138,6 +141,27 @@ details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 1
 .card pre { margin: 6px 0; background: var(--code); color: #d0d7de; padding: 8px 10px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
 .card .acts { display: flex; gap: 8px; align-items: center; }
 .card .acts .countdown { color: var(--fg3); font-size: 12px; margin-left: auto; }
+/* ── CLI 權限／提問卡 ── */
+.card.control.pending { border-color: var(--accent); }
+.card.control .q { margin: 8px 0; }
+.card.control .q-text { margin: 2px 0 6px; white-space: pre-wrap; }
+.card.control .opt { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; cursor: pointer; }
+.card.control .opt small { color: var(--fg3); display: block; }
+.card.control .opt input[type=text] { flex: 1; padding: 4px 8px; }
+.card.control .plan-body { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin: 6px 0; background: var(--bg3); }
+.card.control textarea { width: 100%; margin: 4px 0 6px; }
+.card.control .answer { color: var(--fg2); font-size: 13px; margin-top: 4px; white-space: pre-wrap; }
+#review-btn { position: relative; }
+#review-btn .badge { position: absolute; top: -2px; right: -4px; background: var(--danger); color: #fff; border-radius: 9px; font-size: 11px; line-height: 16px; min-width: 16px; padding: 0 4px; text-align: center; }
+.review-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.review-item .meta { font-size: 13px; color: var(--fg3); margin-bottom: 4px; }
+.review-item textarea { width: 100%; margin: 6px 0; }
+.review-item pre { margin: 6px 0; background: var(--code); color: #d0d7de; padding: 8px 10px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+.review-item .acts { display: flex; gap: 8px; align-items: center; }
+.review-item .countdown { color: var(--fg3); font-size: 12px; margin-left: auto; }
+.wd-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.wd-chips button { font-size: 12px; padding: 3px 8px; }
+.modal .lbl { font-size: 13px; color: var(--fg3); margin: 4px 0; }
 
 /* ── 對話框 ── */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
@@ -188,11 +212,15 @@ details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 1
 <div id="app" class="hidden">
   <aside id="sidebar">
     <div class="side-head"><span class="brand">🐾 CatClaw</span></div>
-    <button id="new-conv" class="primary">＋ 新對話</button>
+    <div class="new-row">
+      <button id="new-conv" class="primary">＋ 新對話</button>
+      <button id="new-cli" class="hidden" title="開一個專屬的 Claude Code CLI session（管理員限定）">⌨ CLI 對話</button>
+    </div>
     <div id="conv-list"></div>
     <div class="side-foot">
       <div class="me"><div class="n" id="me-name"></div><div class="r" id="me-role"></div></div>
       <a class="ghost-link hidden" id="dashboard-link" href="/dashboard" target="_blank" rel="noopener" title="後台（另開分頁）">🛠</a>
+      <button class="ghost hidden" id="review-btn" title="CLI 待審批（隔離模式的工具權限請求）">🛡<span class="badge hidden"></span></button>
       <button class="ghost" id="admin-btn" title="帳號管理">👥</button>
       <a class="ghost-link hidden" id="gitlab-link" href="/api/webchat/oauth/gitlab/start?mode=link" title="綁定 GitLab（之後可用 GitLab 登入這個帳號）">🦊</a>
       <button class="ghost" id="pw-btn" title="改密碼">🔑</button>
@@ -203,6 +231,7 @@ details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 1
     <div class="main-head">
       <button class="ghost" id="menu-btn">☰</button>
       <div id="conv-title"></div>
+      <span id="conv-meta"></span>
       <button class="ghost" id="rename-btn" title="改名">✎</button>
       <button class="ghost" id="delete-btn" title="刪除對話">🗑</button>
     </div>
@@ -225,7 +254,7 @@ details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 1
           <button class="primary" id="send-btn">送出</button>
         </div>
       </div>
-      <div class="comp-hint">回覆進行中仍可送訊息，AI 會在下一步看到（插話）。輸入 / 可選斜線指令（與 Discord 相同）。</div>
+      <div class="comp-hint" id="comp-hint"></div>
     </div></div>
   </main>
 </div>
@@ -237,6 +266,7 @@ details.thinking .inner { color: var(--fg3); white-space: pre-wrap; font-size: 1
 // ── 工具 ──────────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const CLI_ACCESS_NAMES = { none: "不能用", isolated: "隔離", full: "完整" };
 const ROLE_NAMES = { "platform-owner": "擁有者", admin: "管理員", developer: "開發者", member: "成員", guest: "訪客" };
 
 async function api(path, body, method) {
@@ -291,7 +321,11 @@ let running = false;        // 目前對話是否有回合在跑
 let live = null;            // 串流中的 assistant：{ el, blocks: [...] }
 let pendingFiles = [];      // 待送附件 { name, mime, data, previewUrl }
 const seen = new Set();     // 已畫過的 entry id
-let options = { models: [], thinkingLevels: [], canChangeModel: false, skills: [] };   // 選單與斜線指令清單
+let options = { models: [], thinkingLevels: [], canChangeModel: false, skills: [], cli: null };   // 選單與斜線指令清單
+let convSettings = null;    // 目前對話的設定（settings 事件）；CLI 對話有 .cli
+let selKind = "";           // 選單目前填的是哪種對話的選項（"agent"／"cli"）
+const AGENT_HINT = "回覆進行中仍可送訊息，AI 會在下一步看到（插話）。輸入 / 可選斜線指令（與 Discord 相同）。";
+const CLI_HINT = "CLI 對話：文字原樣送給 Claude Code CLI（不經 catclaw 指令）；回覆進行中送出會讓 CLI 排隊或插話。輸入 / 可選 CLI 指令。";
 const THINK_NAMES = { "": "思考：預設", off: "思考：關閉", minimal: "思考：極少", low: "思考：低", medium: "思考：中", high: "思考：高", xhigh: "思考：極高" };
 
 // ── 登入流程 ──────────────────────────────────────────────────────────────
@@ -343,9 +377,16 @@ function showApp() {
   $("gitlab-link").classList.toggle("hidden", !gitlabEnabled || !!viewer.gitlab);
   $("admin-btn").classList.toggle("hidden", !viewer.isAdmin);
   $("dashboard-link").classList.toggle("hidden", !viewer.isAdmin);
-  loadOptions().catch(err => toast("選單載入失敗：" + err.message));
+  loadOptions().then(() => $("new-cli").classList.toggle("hidden", !options.cli)).catch(err => toast("選單載入失敗：" + err.message));
+  setComposerKind(false);
   const ev = new EventSource("/api/webchat/events");
-  ev.onmessage = (m) => { if (JSON.parse(m.data).type === "conversations") loadConversations(); };
+  ev.onmessage = (m) => {
+    const t = JSON.parse(m.data).type;
+    if (t === "conversations") loadConversations();
+    if (t === "reviews") refreshReviews();
+  };
+  $("review-btn").classList.toggle("hidden", !viewer.canReview);
+  if (viewer.canReview) refreshReviews();
   loadConversations().then(() => {
     const fromHash = new URLSearchParams(location.hash.slice(1)).get("c");
     const target = conversations.find(c => c.id === fromHash) || conversations[0];
@@ -361,7 +402,7 @@ async function loadConversations() {
   for (const c of conversations) {
     const el = document.createElement("div");
     el.className = "conv" + (c.id === currentId ? " active" : "");
-    el.innerHTML = '<span class="t"></span>' + (c.running ? '<span class="dot" title="回覆中"></span>' : "");
+    el.innerHTML = (c.kind === "cli" ? '<span class="kind" title="CLI 對話">⌨</span>' : "") + '<span class="t"></span>' + (c.running ? '<span class="dot" title="回覆中"></span>' : "");
     el.querySelector(".t").textContent = c.title;
     el.title = c.title + "\n" + fmtTime(c.updatedAt);
     el.onclick = () => { openConversation(c.id); $("sidebar").classList.remove("open"); };
@@ -380,6 +421,48 @@ $("new-conv").onclick = async () => {
 };
 $("menu-btn").onclick = () => $("sidebar").classList.toggle("open");
 
+// ── 新 CLI 對話：選工作目錄、權限模式、模型 ──────────────────────────────
+$("new-cli").onclick = () => openCliDialog();
+function openCliDialog() {
+  const c = options.cli;
+  if (!c) return;
+  const isolated = c.access === "isolated";
+  const intro = isolated
+    ? "隔離模式：只能在你的個人工作區或管理員指定的目錄工作；執行指令、寫檔等權限請求會送管理員審批，CLI 的提問由你回答。"
+    : "這個對話會開一條專屬的 Claude Code CLI session，文字原樣送給 CLI（不經 catclaw 指令），CLI 的提問、計畫核准與權限請求在對話中作答。";
+  const dirField = c.canChooseAnyDir
+    ? '<div class="row"><input name="workingDir" placeholder="/path/to/project" required autocomplete="off"></div><div class="wd-chips"></div>'
+    : '<div class="row"><select name="workingDir">' + c.workingDirs.map(d => '<option value="' + esc(d) + '">' + esc(d) + "</option>").join("") + "</select></div>";
+  const permOpts = '<option value="ask">每次詢問權限（預設）</option>' + (c.canSkipPermissions ? '<option value="skip">跳過權限確認（dangerously-skip-permissions）</option>' : "");
+  const m = modal(`<form class="modal"><h2>⌨ 新 CLI 對話${isolated ? "（隔離模式）" : ""}</h2>
+    <p class="hint" style="color:var(--fg3);font-size:13px">${intro}</p>
+    <div class="lbl">工作目錄（伺服器上的絕對路徑）</div>
+    ${dirField}
+    <div class="row"><select name="perm">${permOpts}</select>
+    <select name="model"><option value="">模型：CLI 預設</option>${c.models.map(x => '<option value="' + esc(x) + '">' + esc(x) + "</option>").join("")}</select></div>
+    <div class="error"></div><div class="row"><button class="primary">開始</button></div></form>`);
+  const form = m.querySelector("form");
+  const chips = m.querySelector(".wd-chips");
+  for (const dir of chips ? c.workingDirs : []) {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = dir;
+    b.onclick = () => { form.workingDir.value = dir; };
+    chips.appendChild(b);
+  }
+  if (c.workingDirs[0]) form.workingDir.value = c.workingDirs[0];
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const conv = await api("/conversations", { kind: "cli", workingDir: form.workingDir.value.trim(), skipPermissions: form.perm.value === "skip", model: form.model.value });
+      m.remove();
+      await loadConversations();
+      openConversation(conv.id);
+      $("sidebar").classList.remove("open");
+      $("input").focus();
+    } catch (err) { form.querySelector(".error").textContent = err.message; }
+  };
+}
+
 $("rename-btn").onclick = async () => {
   if (!currentId) return;
   const cur = conversations.find(c => c.id === currentId);
@@ -388,7 +471,10 @@ $("rename-btn").onclick = async () => {
   try { await api("/conversations/" + currentId + "/rename", { title }); } catch (err) { alert(err.message); }
 };
 $("delete-btn").onclick = async () => {
-  if (!currentId || !confirm("刪除這個對話？紀錄、附件與 AI 端的 session 都會刪掉，無法復原。")) return;
+  const isCli = !!(convSettings && convSettings.cli);
+  const ask = isCli ? "刪除這個 CLI 對話？紀錄與附件會刪掉、CLI process 會關閉（~/.claude 裡的 CLI session 檔保留），無法復原。"
+    : "刪除這個對話？紀錄、附件與 AI 端的 session 都會刪掉，無法復原。";
+  if (!currentId || !confirm(ask)) return;
   try {
     await api("/conversations/" + currentId + "/delete", {});
     currentId = null;
@@ -403,6 +489,8 @@ function renderEmpty() {
   $("conv-title").textContent = "";
   $("msg-col").innerHTML = '<div class="empty"><h2>有什麼可以幫忙的？</h2><p>直接輸入訊息就會開新對話。</p></div>';
   setRunning(false);
+  convSettings = null;
+  setComposerKind(false);
 }
 
 // ── 打開對話：訂閱串流，第一個事件 sync 帶完整紀錄 ─────────────────────────
@@ -410,9 +498,11 @@ function openConversation(id) {
   if (stream) stream.close();
   currentId = id;
   history.replaceState(null, "", "#c=" + id);
-  seen.clear(); live = null;
+  seen.clear(); live = null; controlEls.clear();
   $("msg-col").innerHTML = "";
   setRunning(false);
+  convSettings = null;
+  $("conv-meta").textContent = "";
   document.querySelectorAll(".conv").forEach((el, i) => el.classList.toggle("active", conversations[i] && conversations[i].id === id));
   const cur = conversations.find(c => c.id === id);
   $("conv-title").textContent = cur ? cur.title : "";
@@ -420,15 +510,18 @@ function openConversation(id) {
   stream.onmessage = (m) => handleEvent(JSON.parse(m.data));
 }
 
+/** 整張卡片的事件（畫面依 id 取代） */
+const CARD_EVENTS = new Set(["approval", "job", "control"]);
+
 function handleEvent(ev) {
   switch (ev.type) {
     case "sync":
       // 重連也會再送 sync：整個重畫
-      seen.clear(); live = null; $("msg-col").innerHTML = "";
+      seen.clear(); live = null; controlEls.clear(); $("msg-col").innerHTML = "";
       ev.entries.forEach(addEntry);
       if (!ev.entries.length) $("msg-col").innerHTML = '<div class="empty"><h2>新對話</h2><p>輸入訊息開始。</p></div>';
       setRunning(false);
-      if (ev.live.length) { startLive(); ev.live.forEach(e => (e.type === "approval" || e.type === "job") ? upsertCard(e.block) : applyLive(e)); }
+      if (ev.live.length) { startLive(); ev.live.forEach(e => CARD_EVENTS.has(e.type) ? upsertCard(e.block) : applyLive(e)); }
       scrollBottom(true);
       break;
     case "entry": addEntry(ev.entry); scrollBottom(); break;
@@ -441,7 +534,7 @@ function handleEvent(ev) {
       break;
     case "status": toast(ev.text); break;
     case "settings": applySettings(ev.settings); break;
-    case "approval": case "job": upsertCard(ev.block); break;
+    case "approval": case "job": case "control": upsertCard(ev.block); break;
     default: applyLive(ev);
   }
 }
@@ -493,6 +586,7 @@ function renderBlock(b) {
   if (b.type === "text") return renderMd(b.text);
   if (b.type === "approval") return renderApproval(b);
   if (b.type === "job") return renderJob(b);
+  if (b.type === "control") return renderControl(b);
   if (b.type === "thinking") {
     const d = document.createElement("details");
     d.className = "thinking";
@@ -539,6 +633,123 @@ function renderApproval(b) {
   d.appendChild(acts);
   tickTimers();
   return d;
+}
+
+/**
+ * CLI 權限／提問卡。串流文字會一直重畫進行中的回覆，等作答的卡片沿用同一個元素，填到一半的答案不會被洗掉。
+ */
+const controlEls = new Map();   // 卡片 id → { status, el }
+function renderControl(b) {
+  const cached = controlEls.get(b.id);
+  if (cached && cached.status === b.status) return cached.el;
+  const el = buildControl(b);
+  controlEls.set(b.id, { status: b.status, el });
+  return el;
+}
+
+const CONTROL_TITLES = { question: "❓ <b>Claude 想問你</b>", plan: "📋 <b>計畫待核准</b>", permission: "🔐 <b>權限請求</b>" };
+const CONTROL_STATUS = { pending: '<span class="st run">等你回覆</span>', allowed: '<span class="st ok">已回覆</span>',
+  denied: '<span class="st bad">已拒絕</span>', expired: '<span class="st bad">逾時，自動拒絕</span>' };
+
+function buildControl(b) {
+  const d = document.createElement("div");
+  d.className = "card control " + b.status;
+  d.dataset.cardId = b.id;
+  d.innerHTML = '<div class="card-head">' + CONTROL_TITLES[b.kind] + (b.kind === "permission" ? "：<code></code>" : "") + (CONTROL_STATUS[b.status] || "") + "</div>";
+  if (b.kind === "permission") {
+    d.querySelector("code").textContent = b.tool;
+    const pre = document.createElement("pre"); pre.textContent = b.input || ""; d.appendChild(pre);
+  } else if (b.kind === "plan") {
+    const body = document.createElement("div"); body.className = "plan-body"; body.appendChild(renderMd(b.plan || "")); d.appendChild(body);
+  } else {
+    (b.questions || []).forEach((q, qi) => d.appendChild(renderQuestion(q, qi, b.status === "pending")));
+  }
+  if (b.status !== "pending") {
+    if (b.answer) { const a = document.createElement("div"); a.className = "answer"; a.textContent = (b.review ? "⏳ 已送管理員審批 → " : "→ ") + b.answer; d.appendChild(a); }
+    return d;
+  }
+  if (b.review) {
+    // 隔離模式：等管理員審批，自己不能按
+    d.querySelector(".st").textContent = "⏳ 已送管理員審批";
+    const wait = document.createElement("div"); wait.className = "acts";
+    wait.innerHTML = '<span class="countdown"></span>';
+    wait.querySelector(".countdown").dataset.expires = b.expiresAt;
+    d.appendChild(wait);
+    tickTimers();
+    return d;
+  }
+  d.appendChild(controlActions(b, d));
+  tickTimers();
+  return d;
+}
+
+/** 提問的一題：選項（單選 radio、多選 checkbox）＋「其他」自填 */
+function renderQuestion(q, qi, editable) {
+  const box = document.createElement("div");
+  box.className = "q";
+  box.innerHTML = "<b></b><div class='q-text'></div>";
+  box.querySelector("b").textContent = q.header;
+  box.querySelector(".q-text").textContent = q.question;
+  if (!editable) return box;
+  const type = q.multiSelect ? "checkbox" : "radio";
+  const name = "q" + qi + "-" + Math.random().toString(36).slice(2, 8);
+  for (const o of q.options) {
+    const lab = document.createElement("label");
+    lab.className = "opt";
+    lab.innerHTML = '<input type="' + type + '" name="' + name + '"><span><span></span><small></small></span>';
+    lab.querySelector("input").value = o.label;
+    lab.querySelector("span span").textContent = o.label;
+    lab.querySelector("small").textContent = o.description || "";
+    box.appendChild(lab);
+  }
+  const other = document.createElement("label");
+  other.className = "opt";
+  other.innerHTML = '<input type="' + type + '" name="' + name + '" value="__other__"><input type="text" placeholder="其他（自行輸入）">';
+  other.querySelector("input[type=text]").oninput = (e) => { if (e.target.value) other.querySelector("input").checked = true; };
+  box.appendChild(other);
+  return box;
+}
+
+/** 每題的答案（多選用「, 」接起來）；有題目沒答回 null 並提示 */
+function collectAnswers(b, card) {
+  const answers = {};
+  const boxes = card.querySelectorAll(".q");
+  for (let i = 0; i < (b.questions || []).length; i++) {
+    const q = b.questions[i];
+    const picked = [...boxes[i].querySelectorAll("input:checked")].map(x => x.value === "__other__" ? boxes[i].querySelector("input[type=text]").value.trim() : x.value).filter(Boolean);
+    if (!picked.length) { toast("請回答「" + q.header + "」"); return null; }
+    answers[q.question] = picked.join(", ");
+  }
+  return answers;
+}
+
+function controlActions(b, card) {
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  const send = async (payload) => {
+    acts.querySelectorAll("button").forEach(x => x.disabled = true);
+    try { await api("/conversations/" + currentId + "/answer", { requestId: b.id, ...payload }); }
+    catch (err) { toast(err.message); acts.querySelectorAll("button").forEach(x => x.disabled = false); }
+  };
+  if (b.kind === "question") {
+    acts.innerHTML = '<button class="primary" data-ok>送出答案</button><button data-no>略過</button>';
+    acts.querySelector("[data-ok]").onclick = () => { const answers = collectAnswers(b, card); if (answers) send({ allow: true, answers }); };
+    acts.querySelector("[data-no]").onclick = () => send({ allow: false });
+  } else if (b.kind === "plan") {
+    const note = document.createElement("textarea");
+    note.rows = 2; note.placeholder = "退回時的修改意見（選填）";
+    card.appendChild(note);
+    acts.innerHTML = '<button class="primary" data-ok>核准</button><button class="danger" data-no>退回</button>';
+    acts.querySelector("[data-ok]").onclick = () => send({ allow: true });
+    acts.querySelector("[data-no]").onclick = () => send({ allow: false, message: note.value.trim() });
+  } else {
+    acts.innerHTML = '<button class="primary" data-ok>允許</button><button class="danger" data-no>拒絕</button>';
+    acts.querySelector("[data-ok]").onclick = () => send({ allow: true });
+    acts.querySelector("[data-no]").onclick = () => send({ allow: false });
+  }
+  acts.insertAdjacentHTML("beforeend", '<span class="countdown"></span>');
+  acts.querySelector(".countdown").dataset.expires = b.expiresAt;
+  return acts;
 }
 
 /** 子 agent／背景工作卡：執行中顯示經過時間，結束後展開結果摘要 */
@@ -677,18 +888,64 @@ $("input").addEventListener("keydown", (e) => {
 });
 
 // ── 模型與思考等級選單 ────────────────────────────────────────────────────
+/** 模型依 provider 分組（optgroup），組內新的排前面（id 倒序：5-5 在 4-6 前、3-x 最後） */
+function modelOptionsHtml(models) {
+  const groups = new Map();
+  for (const m of models) {
+    const provider = m.id.includes("/") ? m.id.slice(0, m.id.indexOf("/")) : "其他";
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(m);
+  }
+  let html = "";
+  for (const [provider, list] of groups) {
+    list.sort((a, b) => b.id.localeCompare(a.id, "en", { numeric: true }));
+    html += '<optgroup label="' + esc(provider) + '">' + list.map(m => '<option value="' + esc(m.id) + '">' + esc(m.label.replace(provider + "/", "")) + "</option>").join("") + "</optgroup>";
+  }
+  return html;
+}
+
 async function loadOptions() {
   options = await api("/options");
-  const msel = $("model-sel");
-  msel.innerHTML = '<option value="">模型：預設</option>' + options.models.map(m => '<option value="' + esc(m.id) + '">' + esc(m.label) + "</option>").join("");
+  selKind = "";
+  fillSelectors(!!(convSettings && convSettings.cli));
+  if (convSettings) applySettings(convSettings);
+}
+
+/** 一般對話與 CLI 對話的選單、提示文字不同；種類變了才重填選項 */
+function fillSelectors(isCli) {
+  const kind = isCli ? "cli" : "agent";
+  if (selKind === kind) return;
+  selKind = kind;
+  const msel = $("model-sel"), tsel = $("think-sel");
+  if (isCli && options.cli) {
+    msel.innerHTML = '<option value="">模型：CLI 預設</option>' + options.cli.models.map(m => '<option value="' + esc(m) + '">' + esc(m) + "</option>").join("");
+    msel.disabled = false;
+    msel.title = "這個 CLI 對話用的模型（--model，換了會以 --resume 重開 CLI）";
+    tsel.innerHTML = ["", ...options.cli.effortLevels].map(v => '<option value="' + v + '">' + (v ? "Effort：" + v : "Effort：CLI 預設") + "</option>").join("");
+    tsel.title = "CLI 的 effort（--effort）";
+    return;
+  }
+  msel.innerHTML = '<option value="">模型：預設</option>' + modelOptionsHtml(options.models);
   msel.disabled = !options.canChangeModel;
   msel.title = options.canChangeModel ? "這個對話用的模型" : "你的角色不能換模型（同 /use 權限）";
-  $("think-sel").innerHTML = ["", "off", ...options.thinkingLevels].map(v => '<option value="' + v + '">' + (THINK_NAMES[v] || v) + "</option>").join("");
+  tsel.innerHTML = ["", "off", ...options.thinkingLevels].map(v => '<option value="' + v + '">' + (THINK_NAMES[v] || v) + "</option>").join("");
+  tsel.title = "這個對話的思考等級";
+}
+
+function setComposerKind(isCli) {
+  $("comp-hint").textContent = isCli ? CLI_HINT : AGENT_HINT;
+  $("input").placeholder = isCli ? "傳訊息給 Claude Code CLI…（Enter 送出、Shift+Enter 換行，可貼上圖片）" : "傳訊息給 CatClaw…（Enter 送出、Shift+Enter 換行，可貼上圖片）";
 }
 
 function applySettings(st) {
+  convSettings = st;
+  const isCli = !!st.cli;
+  fillSelectors(isCli);
+  setComposerKind(isCli);
+  $("conv-meta").textContent = isCli ? "⌨ " + (st.cli.mode === "isolated" ? "隔離 · " : "") + st.cli.workingDir + (st.cli.skipPermissions ? " · 跳過權限確認" : "") : "";
+  $("conv-meta").title = isCli ? "CLI 對話 · 工作目錄 " + st.cli.workingDir + (st.cli.sessionId ? "\nsession " + st.cli.sessionId : "") : "";
   const msel = $("model-sel");
-  msel.options[0].textContent = "模型：預設（" + st.defaultModel + "）";
+  if (!isCli) msel.options[0].textContent = "模型：預設（" + st.defaultModel + "）";
   if (st.model && ![...msel.options].some(o => o.value === st.model)) msel.add(new Option(st.model, st.model));
   msel.value = st.model;
   $("think-sel").value = st.thinking;
@@ -702,7 +959,7 @@ async function changeSetting(field, value) {
   try {
     await ensureConversation();
     applySettings(await api("/conversations/" + currentId + "/settings", { [field]: value }));
-    toast("已更新，下一則訊息生效");
+    toast(convSettings && convSettings.cli ? "已更新，下一則訊息以 --resume 重開 CLI 生效" : "已更新，下一則訊息生效");
   } catch (err) { toast(err.message); }
 }
 $("model-sel").onchange = (e) => changeSetting("model", e.target.value);
@@ -718,8 +975,9 @@ function updateSlash() {
   if (!m) { closeSlash(); return; }
   // 開頭相符的排前面，名稱中間含有的排後面
   const q = m[1].toLowerCase();
-  const prefix = options.skills.filter(sk => sk.trigger.toLowerCase().startsWith("/" + q));
-  const contains = options.skills.filter(sk => !prefix.includes(sk) && sk.name.toLowerCase().includes(q));
+  const source = slashSource();
+  const prefix = source.filter(sk => sk.trigger.toLowerCase().startsWith("/" + q));
+  const contains = source.filter(sk => !prefix.includes(sk) && sk.name.toLowerCase().includes(q));
   slashItems = [...prefix, ...contains];
   if (!slashItems.length) { closeSlash(); return; }
   slashIndex = Math.min(slashIndex, slashItems.length - 1);
@@ -737,6 +995,11 @@ function updateSlash() {
   });
   box.classList.remove("hidden");
   box.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+}
+/** 斜線清單來源：一般對話是 catclaw skill；CLI 對話是 CLI 回報的指令（不列 catclaw skill，打了也會原樣送 CLI） */
+function slashSource() {
+  if (!(convSettings && convSettings.cli)) return options.skills;
+  return convSettings.cli.commands.map(c => ({ name: c, trigger: "/" + c, description: "Claude Code CLI 指令" }));
 }
 function closeSlash() { $("slash").classList.add("hidden"); slashItems = []; slashIndex = 0; }
 function pickSlash(i) {
@@ -825,6 +1088,53 @@ function lightbox(url) { const m = modal('<div class="lightbox"><img alt=""></di
 
 $("logout-btn").onclick = async () => { await api("/logout", {}); location.reload(); };
 
+// ── CLI 待審批（隔離模式的工具權限請求；只有完整 CLI 權限的管理員看得到）────────
+let reviews = [];
+let reviewModal = null;
+async function refreshReviews() {
+  try { reviews = (await api("/reviews")).reviews; } catch (err) { toast("待審批載入失敗：" + err.message); return; }
+  const badge = $("review-btn").querySelector(".badge");
+  badge.textContent = reviews.length;
+  badge.classList.toggle("hidden", !reviews.length);
+  if (reviewModal && reviewModal.isConnected) renderReviews();
+}
+$("review-btn").onclick = () => {
+  reviewModal = modal('<div class="modal"><h2>🛡 CLI 待審批</h2><div class="body"></div></div>');
+  renderReviews();
+};
+function renderReviews() {
+  const body = reviewModal.querySelector(".body");
+  if (!reviews.length) { body.innerHTML = '<p style="color:var(--fg3)">目前沒有待審批的請求。</p>'; return; }
+  body.innerHTML = "";
+  for (const r of reviews) body.appendChild(renderReviewItem(r));
+  tickTimers();
+}
+function renderReviewItem(r) {
+  const el = document.createElement("div");
+  el.className = "review-item";
+  el.dataset.reviewId = r.requestId;
+  el.innerHTML = '<div class="meta"></div><div class="card-head"><b></b></div><div class="content"></div><div class="acts"><button class="primary" data-ok></button><button class="danger" data-no></button><span class="countdown"></span></div>';
+  el.querySelector(".meta").textContent = r.requesterName + "（" + r.requester + "）· 對話「" + r.convTitle + "」· " + fmtTime(r.createdAt);
+  el.querySelector(".card-head b").textContent = r.kind === "plan" ? "📋 計畫待核准" : "🔐 " + r.tool;
+  const content = el.querySelector(".content");
+  if (r.kind === "plan") { const box = document.createElement("div"); box.className = "plan-body"; box.appendChild(renderMd(r.plan || "")); content.appendChild(box); }
+  else { const pre = document.createElement("pre"); pre.textContent = r.input || ""; content.appendChild(pre); }
+  const note = document.createElement("textarea");
+  note.rows = 2; note.placeholder = r.kind === "plan" ? "退回時的修改意見（選填）" : "拒絕理由（選填）";
+  content.appendChild(note);
+  el.querySelector("[data-ok]").textContent = r.kind === "plan" ? "核准" : "允許";
+  el.querySelector("[data-no]").textContent = r.kind === "plan" ? "退回" : "拒絕";
+  el.querySelector(".countdown").dataset.expires = r.expiresAt;
+  const decide = async (allow) => {
+    el.querySelectorAll("button").forEach(x => x.disabled = true);
+    try { await api("/reviews/decide", { requestId: r.requestId, allow, message: note.value.trim() }); }
+    catch (err) { toast(err.message); el.querySelectorAll("button").forEach(x => x.disabled = false); }
+  };
+  el.querySelector("[data-ok]").onclick = () => decide(true);
+  el.querySelector("[data-no]").onclick = () => decide(false);
+  return el;
+}
+
 $("pw-btn").onclick = () => {
   const m = modal(`<form class="modal"><h2>改密碼</h2>
     <div class="row"><input type="password" name="oldPassword" placeholder="舊密碼" required autocomplete="current-password"></div>
@@ -844,9 +1154,11 @@ $("admin-btn").onclick = async () => {
     const d = await api("/admin/users");
     const roleOpts = d.roles.map(r => `<option value="${r}" ${r === "member" ? "selected" : ""}>${ROLE_NAMES[r] || r}</option>`).join("");
     const acctOpts = d.accounts.filter(a => !a.accountId.startsWith("_")).map(a => `<option value="${esc(a.accountId)}">${esc(a.displayName)}（${esc(a.accountId)}）</option>`).join("");
-    body.innerHTML = `<table><tr><th>帳號</th><th>顯示名稱</th><th>角色</th><th>登入方式</th><th></th></tr>${d.users.map(u => `
+    body.innerHTML = `<table><tr><th>帳號</th><th>顯示名稱</th><th>角色</th><th>登入方式</th><th title="CLI 對話權限：none 不能開、isolated 隔離（工具權限送管理員審批）、full 完整">CLI</th><th></th></tr>${d.users.map(u => `
       <tr style="${u.disabled ? "opacity:.5" : ""}"><td>${esc(u.username)}${u.disabled ? "（已停用）" : ""}</td><td>${esc(u.displayName)}</td><td>${esc(ROLE_NAMES[u.role] || u.role)}</td>
       <td>${[u.hasPassword ? "密碼" : "", u.gitlab ? "GitLab " + esc(u.gitlab) : ""].filter(Boolean).join("、")}</td>
+      <td style="white-space:nowrap"><select data-cli="${esc(u.username)}">${["", "none", "isolated", "full"].map(v => `<option value="${v}" ${u.cliAccess === v ? "selected" : ""}>${v ? CLI_ACCESS_NAMES[v] : "預設（" + CLI_ACCESS_NAMES[u.cliEffective] + "）"}</option>`).join("")}</select>
+      <button class="ghost" data-dirs="${esc(u.username)}" title="隔離模式可用的額外工作目錄：${esc(u.cliDirs.join("、") || "（只有個人工作區）")}">📁${u.cliDirs.length || ""}</button></td>
       <td style="white-space:nowrap"><button class="ghost" data-reset="${esc(u.username)}">重設密碼</button>
       ${u.username === viewer.username ? ""
         : u.disabled ? `<button class="ghost" data-enable="${esc(u.username)}">啟用</button>`
@@ -886,6 +1198,18 @@ $("admin-btn").onclick = async () => {
       try { await api("/admin/users", Object.fromEntries(new FormData(e.target))); refresh(); }
       catch (err) { body.querySelector(".error").textContent = err.message; }
     };
+    body.querySelectorAll("[data-cli]").forEach(sel => sel.onchange = async () => {
+      try { await api("/admin/cli-access", { username: sel.dataset.cli, cliAccess: sel.value }); toast("已更新 CLI 權限，立即生效"); refresh(); }
+      catch (err) { alert(err.message); refresh(); }
+    });
+    body.querySelectorAll("[data-dirs]").forEach(b => b.onclick = async () => {
+      const u = d.users.find(x => x.username === b.dataset.dirs);
+      const text = prompt("隔離模式可用的額外工作目錄（伺服器上的絕對路徑，一行或逗號分隔一個；留空 = 只有個人工作區）給 " + u.username, u.cliDirs.join(", "));
+      if (text === null) return;
+      const cliDirs = text.split(/[\n,]/).map(x => x.trim()).filter(Boolean);
+      try { await api("/admin/cli-access", { username: u.username, cliAccess: u.cliAccess, cliDirs }); toast("已更新"); refresh(); }
+      catch (err) { alert(err.message); }
+    });
     body.querySelectorAll("[data-reset]").forEach(b => b.onclick = async () => {
       const pw = prompt("新密碼（至少 8 字）給 " + b.dataset.reset);
       if (!pw) return;

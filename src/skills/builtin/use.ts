@@ -41,10 +41,7 @@ export const skill: Skill = {
 
     if (!arg) {
       const providerRegistry = getProviderRegistry();
-      const all = providerRegistry.list().map(p => {
-        const model = p.modelId ? ` (${p.modelId})` : "";
-        return `\`${p.id}\`${model}`;
-      }).join("  ");
+      const all = providerRegistry.listCatalog().map(id => `\`${id}\``).join("  ");
       const status = current ? `\`${current}\` (覆寫中)` : "依 routing 設定（未覆寫）";
       return { text: `🔌 **Provider**：${status}\n可用：${all}\n用法：\`/use <id>\` 或 \`/use reset\`` };
     }
@@ -54,11 +51,11 @@ export const skill: Skill = {
       return { text: "🔌 Provider 覆寫已清除，回到 routing 預設。" };
     }
 
-    // 驗證 provider 存在（registry.get 自動解析 alias）
+    // 驗證 provider 存在（自動解析 alias；目錄裡有但還沒建的現在建）
     const providerRegistry = getProviderRegistry();
-    const p = providerRegistry.get(arg);
+    const p = await providerRegistry.ensure(arg);
     if (!p) {
-      const all = providerRegistry.list().map(p2 => `\`${p2.id}\``).join("  ");
+      const all = providerRegistry.listCatalog().map(id => `\`${id}\``).join("  ");
       return { text: `❌ Provider \`${arg}\` 不存在。\n可用：${all}`, isError: true };
     }
 

@@ -1,6 +1,6 @@
 # CLI Bridge 模組
 
-> 原始碼：`src/cli-bridge/` | 更新：2026-10-29
+> 原始碼：`src/cli-bridge/` | 更新：2026-11-11
 
 ## 定位
 
@@ -77,7 +77,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 | `botToken` | 收 DM 的 bot。優先序：此欄 → cli-bridges.json 任一條的 botToken → **catclaw.json 主 bot（預設，不用填）**。主 bot 收時由 `discord.ts` 直接路由（名單內走 bridge、名單外進 agent-loop）；獨立 bot 且沒有頻道 bridge 用它時，`ensureDmListener()` 單獨登入只收私訊 |
 | `ownerId` | 本人 user id；省略 = `catclaw.json` `admin.allowedUserIds[0]` |
 | `ownerWorkingDir` | owner DM bridge 的工作目錄 |
-| `teamWorkspaceRoot` | 同事工作目錄的根（預設 `/Users/Shared/catclaw-dm`，刻意放家目錄外，否則被 denyPaths 擋） |
+| `teamWorkspaceRoot` | 同事工作目錄的根（預設 `/Users/Shared/catclaw-dm`，刻意放家目錄外，否則被 denyPaths 擋）。Linux 家目錄外一般帳號寫不進去，要用 sudo 建（例如 `/srv/catclaw-dm`，chown 給跑 catclaw 的帳號）；網頁版 isolated 對話與私訊同事 bridge 共用這個設定 |
 | `users` | `userId → { name, enabled?, workingDir? }`；不在名單 = 回一句「僅限授權成員」後忽略（每人只回一次） |
 | `team.denyPaths` | 同事 session 不可讀寫的路徑前綴（預設本機 home）。接受 `/abs` 與 Windows `C:/…`／`C:\\…`；非絕對路徑會 warn 並跳過 |
 | `team.disallowedTools` | 同事 session 直接禁用的工具 |
@@ -100,6 +100,21 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 
 **Sender 變更**：SharedBotPool client 加 `DirectMessages` intent + `Partials.Channel`；`init()`/`withChannel()` 從 `GuildTextBasedChannel` 放寬為 `SendableChannels`（`ch.isSendable()`），log 用 `describeChannel()`（guild `#name` / `DM:<user>`）。`channel-naming.ts` 原本就以 `"name" in channel` 守門，DM 不會被改名。
 
+## 給非 Discord 使用者的接縫（網頁版 CLI 對話用）
+
+網頁版 `/chat` 的 CLI 對話（見 webchat.md「CLI 對話」）直接 new `CliBridge`、不經 `index.ts` 的 bridge 表與 `cli-bridges.json`。為此 bridge 開了幾個小接縫，**都不設時行為跟原本一樣**（Discord／dashboard／cron 路徑不變）：
+
+| 接縫 | 預設（Discord bridge） | 網頁 CLI 對話 |
+|------|------------------------|---------------|
+| `send(text, source)` 的 source | `discord`／`dashboard`／`cron` | 多一個 `web`：原文直送、不包 `<channel>` tag（包了 `/compact` 就認不出來）；turn 紀錄 `discordDelivery: skipped` |
+| `setAnswerableSources([...])` | 只有 `discord` 的回合把 control_request 交給 turn listener，其他來源直接 deny | `web`＋`background`：交給網頁作答 |
+| `setSessionIdStore(fn)` | 沒設 → `persistSessionId`／`clearSessionId` 寫 `cli-bridges.json` | sessionId 存 `webchat/conversations.json` |
+| `setUnsolicitedTurnHandler(fn)` | 沒設 → 沒有觸發訊息的回合（CLI 自發背景回合、上線補處理）交給 `reply.ts` 送綁定頻道 | 交給網頁顯示成一則回覆 |
+| `CliBridgeChannelConfig.isolation` | 沒給 → 照舊看 `dm.isolation` | 隔離模式（isolated 權限）直接給，不必假造 DM 綁定 |
+| `CliBridgeChannelConfig.permissionMode` | 沒給 → 不傳 `--permission-mode`，跟著 `~/.claude` 的 defaultMode | `default`：「每次詢問權限」名副其實（跳過權限確認時不傳） |
+
+另外兩個只加不改的事件欄位：`tool_call` 多 `id`／`input`（claude provider 從 tool_use block 帶出，網頁工具卡用；Discord 只用 title）、`session_init` 多 `slashCommands`（system/init 的 slash_commands）。`TurnRecord.source` 多 `web`，`TurnSource` = 能經 `send()` 的來源。
+
 ## 檔案結構
 
 | 檔案 | 職責 |
@@ -121,6 +136,7 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 
 - **Lazy Start + Idle Suspend** — 所有 bridge 啟動時只建立 CliBridge 物件 + Discord sender（收訊息用），**不 spawn CLI process**。第一則訊息進來時 `ensureAlive({ drainInboundHistory: false })` 觸發 process spawn（含 `--resume` sessionId），路由端同步消費 inbound history 串進同一個 turn，避免 startup drain 另開 turn 和第一則訊息互相插話。閒置超過 `idleSuspendMs`（預設 10 分鐘）自動 `suspend()`：關 process、保留 sender，下次訊息再喚醒。`rebuildBridgeForChannel`（`/cd`、`/session new/set`）除外，仍 eager start。
 - **ensureAlive() mutex** — `_ensureAliveLock` Promise mutex 防止多訊息同時觸發雙 spawn。第二個 caller await 同一個 Promise。喚醒前先 `sendTyping()` 撐住 Discord。
+- **自己關的不算崩潰** — `suspend()`（`_suspending`）與 `shutdown()`（`_draining`）關 process 時，`handleClose` 直接返回，不走 `handleCrash` 自動重啟；否則關掉 1 秒後又 spawn 一個（suspend 等於沒 suspend、shutdown 留下沒人管的 process）。
 - **BridgeStatus: "suspended"** — 新增狀態，表示 sender 存活但 CLI process 已卸載。`idle` / `busy` = process 活；`suspended` = process 關閉等喚醒；`dead` = 啟動失敗或 shutdown。
 - **Idle Scanner** — `index.ts` 背景 interval（每 30s），掃描所有 status=idle 的 bridge，`Date.now() - lastUsedAt > idleSuspendMs` 時觸發 `suspend()`。
 - **`rebuildBridgeForChannel(channelId, mutator)` 原子重建** — 單一入口執行「改設定 → 預更新 `_lastConfigJson` → 寫 `cli-bridges.json` → 關舊建新」，消除 `/cd`、`/session new/set` 過去「in-place 重啟 + hot-reload 重建」雙重啟導致 bridge 實例洩漏的 race condition

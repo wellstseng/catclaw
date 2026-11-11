@@ -304,6 +304,13 @@ async function shutdown(signal: string): Promise<void> {
     dbg(`shutdownAllBridges error: ${err instanceof Error ? err.message : String(err)}`);
     log.error(`[bridge] shutdownAllBridges 失敗：${err instanceof Error ? err.message : String(err)}`);
   }
+  // 網頁版 CLI 對話的 CLI process（不在 cli-bridges 的 bridge 表裡，要另外關）
+  try {
+    const { shutdownWebCliSessions } = await import("./web/webchat.js");
+    await shutdownWebCliSessions();
+  } catch (err) {
+    log.error(`[bridge] 關閉網頁 CLI 對話失敗：${err instanceof Error ? err.message : String(err)}`);
+  }
   bot.destroy();
   try { recordShutdown(getPendingReason() ?? signal, signal); } catch { /* 靜默 */ }
   dbg("exit");

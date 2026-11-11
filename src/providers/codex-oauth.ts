@@ -196,6 +196,11 @@ export class CodexOAuthProvider implements LLMProvider {
   readonly modelId: string;
   private tokenPath: string;
   private refreshUrl: string;
+
+  /** auth.json 不在（這台沒跑過 codex auth login）就呼叫不了，選單不列 */
+  hasCredentials(): boolean {
+    return existsSync(this.tokenPath);
+  }
   private clientId?: string;
   private authStore?: AuthProfileStore;
   private cachedToken: string | null = null;

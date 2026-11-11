@@ -405,8 +405,10 @@ class ProviderRegistry {
 
   register(provider: LLMProvider): void
   resolve(opts?: ResolveOpts): LLMProvider    // 路由解析
-  get(id: string): LLMProvider | undefined    // 直接取得（支援 alias 解析）
-  list(): LLMProvider[]
+  get(id: string): LLMProvider | undefined    // 直接取得（支援 alias 解析），只找已建立的
+  ensure(id: string): Promise<LLMProvider | undefined>  // 已建立就回傳；在模型目錄裡就現在建立並註冊
+  listCatalog(): string[]                     // 可選模型：已建且憑證可用的＋目錄裡可用的（選單、/use 用）
+  list(): LLMProvider[]                       // 只列已建立的（健康檢查用）
   initAll(): Promise<void>
   shutdownAll(): Promise<void>
 }
@@ -443,8 +445,10 @@ async function buildProviderRegistryV2(
 1. 解析 `agentDefaults.model.primary` 為 ModelRef
 2. 收集 primary + fallbacks + models 表中所有 ref
 3. 按 provider 分組，由 `apiToProviderType()` 推斷型別
-4. 建立對應 LLMProvider 實例（ClaudeApiProvider / OllamaProvider / OpenAICompatProvider / CodexOAuthProvider / CliProvider）
+4. 建立對應 LLMProvider 實例（`createModelProvider()`：ClaudeApiProvider / OllamaProvider / OpenAICompatProvider / CodexOAuthProvider / CliProvider）
 5. 註冊到 ProviderRegistry
+6. 設模型目錄（`setCatalog`）：已建了至少一個模型的 provider，把 models.json 裡它底下的所有模型列進目錄（同一份憑證），第一次被選到才 `ensure()` 建立。啟動時不全建，避免健康檢查對整份目錄打 API
+7. 目錄依每組「代表 provider」（啟動時建好的那個）的 `hasCredentials?()` 即時過濾：例如 CodexOAuthProvider 在 `~/.codex/auth.json` 不存在時回 false，整組不列、`ensure()` 也拒絕；之後登入了就自動出現，不用重啟
 
 ## Hook 整合
 

@@ -68,9 +68,11 @@ export type StreamJsonMessage =
 export type CliBridgeEvent =
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; text: string }
-  | { type: "tool_call"; title: string }
+  /** id／input：claude provider 附上 tool_use 的 id 與參數（網頁工具卡片用）；codex 只有 title */
+  | { type: "tool_call"; title: string; id?: string; input?: Record<string, unknown> }
   | { type: "tool_result"; title: string; duration_ms?: number; error?: string }
-  | { type: "session_init"; sessionId: string }
+  /** slashCommands：claude 的 system/init 回報這個 session 可用的斜線指令（不含 /） */
+  | { type: "session_init"; sessionId: string; slashCommands?: string[] }
   | { type: "result"; is_error: boolean; text?: string; session_id?: string }
   | { type: "error"; message: string }
   | { type: "control_request"; requestId: string; tool: string; input: Record<string, unknown>; description: string }
@@ -101,7 +103,14 @@ export interface CliBridgeChannelConfig {
   thinking?: boolean;
   /** 私訊 bridge 專用：這條 bridge 綁的是哪位使用者的 DM（由 dm.ts auto-spawn 寫入） */
   dm?: CliBridgeDmBinding;
+  /** 隔離模式（不經 DM 綁定時直接給，例如網頁版隔離 CLI 對話）；沒給就看 dm.isolation */
+  isolation?: CliIsolation;
+  /** 明確指定 --permission-mode（蓋掉 ~/.claude settings 的 defaultMode）；沒給就不傳，跟著 CLI 設定 */
+  permissionMode?: CliPermissionMode;
 }
+
+/** claude CLI 的 --permission-mode；目前只用到 default（每次詢問） */
+export type CliPermissionMode = "default";
 
 /** 隔離模式（team DM bridge）：不載 user 層設定、拒讀指定路徑、禁用工具 */
 export interface CliIsolation {
@@ -208,6 +217,8 @@ export interface CliProcessConfig {
   thinking?: boolean;
   /** 隔離模式（team DM bridge，僅 provider=claude） */
   isolation?: CliIsolation;
+  /** --permission-mode（僅 provider=claude；跳過權限確認時不傳） */
+  permissionMode?: CliPermissionMode;
 }
 
 // ── Turn 追蹤型別 ─────────────────────────────────────────────────────────────
@@ -226,8 +237,8 @@ export interface TurnRecord {
   turnId: string;
   startedAt: string;          // ISO 8601
   completedAt?: string;
-  /** background = CLI 自發回合（背景任務完成通知等），沒有經過 send() */
-  source: "discord" | "dashboard" | "cron" | "background";
+  /** background = CLI 自發回合（背景任務完成通知等），沒有經過 send()；web = 網頁版 CLI 對話 */
+  source: "discord" | "dashboard" | "cron" | "web" | "background";
   userInput: string;
   toolCalls: Array<{ name: string; preview: string; durationMs?: number }>;
   assistantReply: string;
@@ -245,6 +256,9 @@ export interface StdoutLogEntry {
   event: CliBridgeEvent;
   raw?: string;         // 原始 JSON 行（debug 用）
 }
+
+/** send() 的訊息來源（background 由 bridge 自己補開，不經 send()） */
+export type TurnSource = Exclude<TurnRecord["source"], "background">;
 
 /** Bridge 狀態 */
 export type BridgeStatus = "idle" | "busy" | "dead" | "restarting" | "suspended";

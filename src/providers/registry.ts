@@ -34,11 +34,20 @@ export interface ResolveOpts {
 
 // ── ProviderRegistry ──────────────────────────────────────────────────────────
 
+/** 依「provider/model」建立 provider；目錄裡有、但啟動時沒建的模型，第一次被選到時才用它建 */
+type ProviderFactory = (id: string) => Promise<LLMProvider | null>;
+
 export class ProviderRegistry {
   private providers = new Map<string, LLMProvider>();
   private defaultId: string;
   private routing: ProviderRoutingConfig;
   private aliases?: Record<string, ModelAliasEntry>;
+  /**
+   * 可選的模型目錄：已在用的 provider 底下的所有模型，憑證跟已建的共用。
+   * representative 是這組裡啟動時就建好的一個，用它判斷這組的憑證現在還在不在。
+   */
+  private catalog: Array<{ representative: string; ids: string[] }> = [];
+  private factory?: ProviderFactory;
 
   constructor(defaultId: string, routing: ProviderRoutingConfig, aliases?: Record<string, ModelAliasEntry>) {
     this.defaultId = defaultId;
@@ -51,6 +60,48 @@ export class ProviderRegistry {
   register(provider: LLMProvider): void {
     this.providers.set(provider.id, provider);
     log.debug(`[provider-registry] 已註冊 ${provider.id}`);
+  }
+
+  setCatalog(catalog: Array<{ representative: string; ids: string[] }>, factory: ProviderFactory): void {
+    this.catalog = catalog;
+    this.factory = factory;
+  }
+
+  /** 這個 provider 的憑證現在可用（沒實作 hasCredentials 的視為可用） */
+  private usable(provider: LLMProvider | undefined): boolean {
+    return !!provider && provider.hasCredentials?.() !== false;
+  }
+
+  /** 目錄裡、而且所屬那組憑證現在可用的模型 id */
+  private usableCatalogIds(): string[] {
+    const out: string[] = [];
+    for (const group of this.catalog) {
+      if (this.usable(this.providers.get(group.representative))) out.push(...group.ids);
+    }
+    return out;
+  }
+
+  /** 可選的模型：已建且可用的＋目錄裡可用的（給選單、/use 列表用）；憑證不在的 provider 整組不列 */
+  listCatalog(): string[] {
+    const ids = new Set(this.usableCatalogIds());
+    for (const [id, p] of this.providers) if (this.usable(p)) ids.add(id);
+    return [...ids].sort();
+  }
+
+  /**
+   * 取得 provider；目錄裡有但還沒建的就現在建並註冊。
+   * 啟動時只建 primary／fallbacks／別名，避免健康檢查對整份目錄打 API。
+   */
+  async ensure(id: string): Promise<LLMProvider | undefined> {
+    const existing = this.get(id);
+    if (existing) return existing;
+    const key = this.resolveId(id);
+    if (!this.factory || !this.usableCatalogIds().includes(key)) return undefined;
+    const created = await this.factory(key);
+    if (!created) return undefined;
+    this.register(created);
+    log.info(`[provider-registry] 依需求建立 ${key}`);
+    return created;
   }
 
   // ── alias 解析 ──────────────────────────────────────────────────────────────
@@ -171,6 +222,67 @@ function apiToProviderType(api: ModelApi | undefined, provider: string): Provide
  * 3. 從 authStore 取得 credential
  * 4. 建立對應的 Provider 實例
  */
+/** 為 models.json 裡的一個模型建立 LLMProvider（依 provider 的 api 類型挑實作、從 authStore 取憑證） */
+async function createModelProvider(
+  providerName: string,
+  ref: ModelRef,
+  providerDef: ModelsJsonConfig["providers"][string],
+  authStore: AuthProfileStore | null,
+): Promise<LLMProvider | null> {
+  const pType = apiToProviderType(providerDef.api, providerName);
+  const providerId = formatModelRef(ref);
+  let provider: LLMProvider | null = null;
+
+  // 建立相容的 ProviderEntry（橋接用，讓現有 Provider 建構子能用）
+  const bridgeEntry: ProviderEntry = {
+    model: ref.model,
+    baseUrl: providerDef.baseUrl,
+  };
+
+  if (pType === "claude") {
+    // credential 從 authStore 取
+    const pick = authStore?.pickForProvider("anthropic");
+    if (pick) {
+      bridgeEntry.token = pick.apiKey;
+      bridgeEntry.mode = "api";
+    } else if (providerDef.apiKey) {
+      bridgeEntry.token = providerDef.apiKey;
+      bridgeEntry.mode = "api";
+    }
+    const { ClaudeApiProvider } = await import("./claude-api.js");
+    provider = new ClaudeApiProvider(providerId, bridgeEntry);
+  } else if (pType === "ollama") {
+    bridgeEntry.type = "ollama";
+    bridgeEntry.host = providerDef.baseUrl;
+    const { OllamaProvider } = await import("./ollama.js");
+    provider = new OllamaProvider(providerId, bridgeEntry);
+    if (provider.init) await provider.init();
+  } else if (pType === "openai-compat") {
+    bridgeEntry.type = "openai-compat";
+    const pick = authStore?.pickForProvider(providerName);
+    if (pick) bridgeEntry.token = pick.apiKey;
+    else if (providerDef.apiKey) bridgeEntry.token = providerDef.apiKey;
+    const { OpenAICompatProvider } = await import("./openai-compat.js");
+    provider = new OpenAICompatProvider(providerId, bridgeEntry);
+    if (provider.init) await provider.init();
+  } else if (pType === "codex-oauth") {
+    bridgeEntry.type = "codex-oauth";
+    const { CodexOAuthProvider } = await import("./codex-oauth.js");
+    provider = new CodexOAuthProvider(providerId, bridgeEntry, authStore ?? undefined);
+  } else if (pType === "cli-claude" || pType === "cli-gemini" || pType === "cli-codex") {
+    const backend = pType.replace("cli-", "") as "claude" | "gemini" | "codex";
+    const { CliProvider } = await import("./acp-cli.js");
+    provider = new CliProvider(providerId, {
+      backend,
+      command: providerDef.baseUrl || undefined,  // baseUrl 可覆寫 CLI 路徑
+    });
+  } else {
+    log.warn(`[provider-registry-v2] 未知 provider type: ${providerName}（api=${providerDef.api}）`);
+    return null;
+  }
+  return provider;
+}
+
 export async function buildProviderRegistryV2(
   agentDefaults: AgentDefaultsConfig,
   modelsJson: ModelsJsonConfig,
@@ -247,71 +359,29 @@ export async function buildProviderRegistryV2(
       log.warn(`[provider-registry-v2] models.json 中找不到 provider: ${providerName}`);
       continue;
     }
-
-    const pType = apiToProviderType(providerDef.api, providerName);
-
-    // 為這個 provider 的每個 model 建立 LLMProvider
     for (const ref of refs) {
-      const modelDef = providerDef.models.find(m => m.id === ref.model);
-      if (!modelDef) {
+      if (!providerDef.models.some(m => m.id === ref.model)) {
         log.warn(`[provider-registry-v2] models.json 中找不到 model: ${ref.provider}/${ref.model}`);
         continue;
       }
-
-      const providerId = formatModelRef(ref);
-      let provider: LLMProvider | null = null;
-
-      // 建立相容的 ProviderEntry（橋接用，讓現有 Provider 建構子能用）
-      const bridgeEntry: ProviderEntry = {
-        model: ref.model,
-        baseUrl: providerDef.baseUrl,
-      };
-
-      if (pType === "claude") {
-        // credential 從 authStore 取
-        const pick = authStore?.pickForProvider("anthropic");
-        if (pick) {
-          bridgeEntry.token = pick.apiKey;
-          bridgeEntry.mode = "api";
-        } else if (providerDef.apiKey) {
-          bridgeEntry.token = providerDef.apiKey;
-          bridgeEntry.mode = "api";
-        }
-        const { ClaudeApiProvider } = await import("./claude-api.js");
-        provider = new ClaudeApiProvider(providerId, bridgeEntry);
-      } else if (pType === "ollama") {
-        bridgeEntry.type = "ollama";
-        bridgeEntry.host = providerDef.baseUrl;
-        const { OllamaProvider } = await import("./ollama.js");
-        provider = new OllamaProvider(providerId, bridgeEntry);
-        if (provider.init) await provider.init();
-      } else if (pType === "openai-compat") {
-        bridgeEntry.type = "openai-compat";
-        const pick = authStore?.pickForProvider(providerName);
-        if (pick) bridgeEntry.token = pick.apiKey;
-        else if (providerDef.apiKey) bridgeEntry.token = providerDef.apiKey;
-        const { OpenAICompatProvider } = await import("./openai-compat.js");
-        provider = new OpenAICompatProvider(providerId, bridgeEntry);
-        if (provider.init) await provider.init();
-      } else if (pType === "codex-oauth") {
-        bridgeEntry.type = "codex-oauth";
-        const { CodexOAuthProvider } = await import("./codex-oauth.js");
-        provider = new CodexOAuthProvider(providerId, bridgeEntry, authStore ?? undefined);
-      } else if (pType === "cli-claude" || pType === "cli-gemini" || pType === "cli-codex") {
-        const backend = pType.replace("cli-", "") as "claude" | "gemini" | "codex";
-        const { CliProvider } = await import("./acp-cli.js");
-        provider = new CliProvider(providerId, {
-          backend,
-          command: providerDef.baseUrl || undefined,  // baseUrl 可覆寫 CLI 路徑
-        });
-      } else {
-        log.warn(`[provider-registry-v2] 未知 provider type: ${providerName}（api=${providerDef.api}）`);
-        continue;
-      }
-
+      const provider = await createModelProvider(providerName, ref, providerDef, authStore);
       if (provider) registry.register(provider);
     }
   }
+
+  // 模型目錄：已經建了至少一個模型的 provider，把它底下的其他模型也列出來（同一份憑證），選到時才建
+  const catalog: Array<{ representative: string; ids: string[] }> = [];
+  for (const [providerName, refs] of byProvider) {
+    const providerDef = modelsJson.providers[providerName];
+    const representative = refs.map(formatModelRef).find(id => registry.get(id));
+    if (!providerDef || !representative) continue;
+    catalog.push({ representative, ids: providerDef.models.map(m => `${providerName}/${m.id}`) });
+  }
+  registry.setCatalog(catalog, async (id) => {
+    const ref = parseModelRef(id, aliases);
+    const providerDef = ref ? modelsJson.providers[ref.provider] : undefined;
+    return ref && providerDef ? createModelProvider(ref.provider, ref, providerDef, authStore) : null;
+  });
 
   // Failover 鏈
   const failoverChain = routing.failoverChain;

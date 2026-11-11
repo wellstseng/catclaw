@@ -30,6 +30,7 @@ interface ContentBlock {
   thinking?: string;
   name?: string;
   id?: string;
+  input?: Record<string, unknown>;
 }
 
 interface AssistantMessage {
@@ -177,6 +178,9 @@ export class ClaudeProvider implements CliProvider {
     if (config.dangerouslySkipPermissions) {
       args.push("--dangerously-skip-permissions");
       log.warn(`[cli-bridge:${config.label}] dangerouslySkipPermissions=true（fail-open，所有 tool 直接放行）`);
+    } else if (config.permissionMode) {
+      // 明確指定時才傳：蓋掉 ~/.claude settings 的 defaultMode（例如 bypassPermissions），讓「每次詢問」名副其實
+      args.push("--permission-mode", config.permissionMode);
     }
 
     // 注入 bridge runtime env（讓 CLI 內可以 echo $CATCLAW_BRIDGE_* 查證部署資訊）
@@ -340,7 +344,8 @@ export class ClaudeProvider implements CliProvider {
     // ── system/init：取得 session_id ──
     if (type === "system" && obj["subtype"] === "init") {
       const sid = obj["session_id"] as string | undefined;
-      if (sid) ctx.emit({ type: "session_init", sessionId: sid });
+      const slashCommands = Array.isArray(obj["slash_commands"]) ? (obj["slash_commands"] as unknown[]).map(String) : undefined;
+      if (sid) ctx.emit({ type: "session_init", sessionId: sid, ...(slashCommands ? { slashCommands } : {}) });
       this.checkInitLoad(obj);
       return;
     }
@@ -446,7 +451,8 @@ export class ClaudeProvider implements CliProvider {
         textDelta = null;
       }
       for (let i = this.lastToolCount; i < toolBlocks.length; i++) {
-        ctx.emit({ type: "tool_call", title: toolBlocks[i]!.name ?? "unknown" });
+        const block = toolBlocks[i]!;
+        ctx.emit({ type: "tool_call", title: block.name ?? "unknown", id: block.id, input: block.input });
       }
       this.lastToolCount = toolBlocks.length;
     }

@@ -27,6 +27,7 @@ import type {
   ControlDecision,
   TurnHandle,
   TurnRecord,
+  TurnSource,
   BridgeStatus,
   StdoutLogEntry,
   StdinImageBlock,
@@ -60,6 +61,8 @@ export class CliBridge {
   private _ensureAliveLock: Promise<void> | null = null;
   /** shutdown 中 flag — 拒絕新 turn */
   private _draining = false;
+  /** suspend 中 flag — 這時 process 關掉是自己關的，不是崩潰 */
+  private _suspending = false;
 
   // Turn 追蹤
   private activeTurnId: string | null = null;
@@ -78,8 +81,16 @@ export class CliBridge {
     textParts: string[];
   }>();
 
-  // Discord 發送器（由 index.ts 注入）
+  // Discord 發送器（由 index.ts 注入；網頁版 CLI 對話沒有）
   private _sender: BridgeSender | null = null;
+
+  // ── 給非 Discord 使用者的接縫（網頁版 CLI 對話用；Discord bridge 都不設，維持預設行為）──
+  /** 哪些來源的回合有人能回答 control_request；其他來源一律 deny。預設只有 discord */
+  private answerableSources = new Set<TurnRecord["source"]>(["discord"]);
+  /** sessionId 存哪裡；沒設就寫 cli-bridges.json（null = 清除） */
+  private sessionIdStore: ((sid: string | null) => void) | null = null;
+  /** 沒有觸發訊息的回合（CLI 自發背景回合、上線補處理）交給誰；沒設就送回綁定的 Discord 頻道 */
+  private unsolicitedTurnHandler: ((handle: TurnHandle) => void) | null = null;
 
   constructor(
     public readonly label: string,
@@ -142,7 +153,7 @@ export class CliBridge {
 
   // ── 送訊息（直送 stdin，不排隊）──────────────────────────────────────────
 
-  send(text: string, source: "discord" | "dashboard" | "cron", meta?: { user?: string; ts?: string; imageBlocks?: StdinImageBlock[]; sourceChannelId?: string }): TurnHandle {
+  send(text: string, source: TurnSource, meta?: { user?: string; ts?: string; imageBlocks?: StdinImageBlock[]; sourceChannelId?: string }): TurnHandle {
     this._lastUsedAt = Date.now();
     const turnId = randomUUID();
 
@@ -187,8 +198,9 @@ export class CliBridge {
     this.activeTurnId = turnId;
     this._status = "busy";
 
-    // Per-turn meta tag 注入：讓 CLI 每 turn 重新知道部署脈絡，不怕 context 壓縮
-    const wrappedText = this.wrapWithChannelTag(text, source, meta);
+    // Per-turn meta tag 注入：讓 CLI 每 turn 重新知道部署脈絡，不怕 context 壓縮。
+    // 網頁原文直送：包了 tag 之後 /compact 這類 CLI 原生指令就不會被認出來
+    const wrappedText = source === "web" ? text : this.wrapWithChannelTag(text, source, meta);
 
     // 送 stdin（有圖片時 provider encode 成 content block 陣列）
     const imageBlocks = meta?.imageBlocks;
@@ -319,8 +331,9 @@ export class CliBridge {
   clearSessionId(): void {
     this.sessionId = null;
     (this.channelConfig as { sessionId?: string | null }).sessionId = null;
-    // 同步清除 json
-    try {
+    // 同步清除 json（有注入 sessionIdStore 就交給它）
+    if (this.sessionIdStore) this.sessionIdStore(null);
+    else try {
       const configPath = join(resolveCatclawDir(), "cli-bridges.json");
       const raw = readFileSync(configPath, "utf-8");
       const configs = JSON.parse(raw) as CliBridgeConfig[];
@@ -344,8 +357,13 @@ export class CliBridge {
     log.info(`[cli-bridge:${this.label}] sessionId 已清除（runtime + json）`);
   }
 
-  /** 將 sessionId 持久化到 cli-bridges.json 的 channel config */
+  /** 將 sessionId 持久化：有注入 sessionIdStore 就交給它，否則寫 cli-bridges.json 的 channel config */
   private persistSessionId(sid: string): void {
+    if (this.sessionIdStore) {
+      try { this.sessionIdStore(sid); }
+      catch (err) { log.warn(`[cli-bridge:${this.label}] sessionId 持久化失敗：${err instanceof Error ? err.message : String(err)}`); }
+      return;
+    }
     try {
       const configPath = join(resolveCatclawDir(), "cli-bridges.json");
       const raw = readFileSync(configPath, "utf-8");
@@ -436,8 +454,13 @@ export class CliBridge {
     log.info(`[cli-bridge:${this.label}] idle suspend`);
     this.stopKeepAlive();
     this.failAllPendingTurns("bridge idle suspend");
-    if (this.process?.alive) {
-      await this.process.shutdown();
+    this._suspending = true;
+    try {
+      if (this.process?.alive) {
+        await this.process.shutdown();
+      }
+    } finally {
+      this._suspending = false;
     }
     this.process = null;
     this._status = "suspended";
@@ -492,6 +515,21 @@ export class CliBridge {
 
   getChannelConfig(): CliBridgeChannelConfig {
     return this.channelConfig;
+  }
+
+  /** 設定哪些來源的回合能作答 control_request（取代預設的只有 discord） */
+  setAnswerableSources(sources: Array<TurnRecord["source"]>): void {
+    this.answerableSources = new Set(sources);
+  }
+
+  /** sessionId 改存到別處（不寫 cli-bridges.json） */
+  setSessionIdStore(store: (sid: string | null) => void): void {
+    this.sessionIdStore = store;
+  }
+
+  /** 沒有觸發訊息的回合改交給這個 handler（不送 Discord） */
+  setUnsolicitedTurnHandler(handler: (handle: TurnHandle) => void): void {
+    this.unsolicitedTurnHandler = handler;
   }
 
   // ── 上線通知 ──────────────────────────────────────────────────────────────
@@ -626,7 +664,7 @@ export class CliBridge {
    */
   private wrapWithChannelTag(
     text: string,
-    source: "discord" | "dashboard" | "cron",
+    source: TurnSource,
     meta?: { user?: string; ts?: string; sourceChannelId?: string },
   ): string {
     const ts = meta?.ts ?? new Date().toISOString();
@@ -731,8 +769,9 @@ export class CliBridge {
       effort: this.channelConfig.effort ?? this.bridgeConfig.effort,
       model: this.channelConfig.model ?? this.bridgeConfig.model,
       thinking: this.channelConfig.thinking ?? this.bridgeConfig.thinking,
-      // team DM bridge：CLI 以隔離模式啟動（見 dm.ts；審批改送 owner 在 control-request.ts 處理）
-      isolation: this.channelConfig.dm?.isolation,
+      // 隔離模式：team DM bridge（見 dm.ts；審批改送 owner 在 control-request.ts 處理）或直接指定的（網頁版隔離 CLI 對話）
+      isolation: this.channelConfig.isolation ?? this.channelConfig.dm?.isolation,
+      permissionMode: this.channelConfig.permissionMode,
     };
 
     const provider: CliProvider = providerName === "codex"
@@ -769,7 +808,7 @@ export class CliBridge {
         userInput,
         toolCalls: [],
         assistantReply: "",
-        discordDelivery: source === "dashboard" ? "skipped" : "pending",
+        discordDelivery: source === "dashboard" || source === "web" ? "skipped" : "pending",
       },
       textParts: [],
     });
@@ -794,8 +833,12 @@ export class CliBridge {
     });
   }
 
-  /** 沒有 Discord 觸發訊息可回覆的 turn：交給 reply 端消費事件、把最終文字送到綁定頻道 */
+  /** 沒有 Discord 觸發訊息可回覆的 turn：有注入 handler 就交給它，否則交給 reply 端把最終文字送到綁定頻道 */
   private deliverToHomeChannel(handle: TurnHandle): void {
+    if (this.unsolicitedTurnHandler) {
+      this.unsolicitedTurnHandler(handle);
+      return;
+    }
     void import("./reply.js")
       .then(({ handleCliBridgeBackgroundReply }) => handleCliBridgeBackgroundReply(this, handle))
       .catch((err) => {
@@ -852,10 +895,11 @@ export class CliBridge {
       }
     }
 
-    // control_request 只有 Discord 來源的 turn 有人能按按鈕；dashboard / cron / background 來源直接拒絕，避免 CLI 永久等待
+    // control_request 只有能作答的來源（預設 discord；網頁版另外設定）才交給 turn listener；
+    // 其他來源（dashboard / cron / background）直接拒絕，避免 CLI 永久等待
     if (evt.type === "control_request") {
       const source = turnId ? this.pendingTurns.get(turnId)?.record.source : undefined;
-      if (source !== "discord") {
+      if (!source || !this.answerableSources.has(source)) {
         this.sendControlResponse(evt.requestId, {
           behavior: "deny",
           message: `此 turn 來源（${source ?? "unknown"}）無法互動，請改用文字說明或結束本回合`,
@@ -989,6 +1033,8 @@ export class CliBridge {
     }
 
     if (this._status === "dead" || this._status === "restarting") return;
+    // 自己關的（idle suspend、shutdown）不是崩潰，不重啟；否則關掉 1 秒後又 spawn 一個沒人管的 process
+    if (this._suspending || this._draining) return;
     if (this._crashHandling) return; // handleCrash 正在管理重試，不重複觸發
 
     if (code === 0 && !hadPending) {

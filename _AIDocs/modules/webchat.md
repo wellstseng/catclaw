@@ -7,6 +7,8 @@
 
 不經 Discord 的完整聊天介面：帳號密碼登入、每人自己的對話列表、逐字串流回覆、工具卡片、停止、插話、圖片／檔案附件、Markdown 與程式碼排版、斜線指令（打 / 跳出清單）、每個對話各自選模型與思考等級、執行核准卡、子 agent／背景工作進度卡。用在 Discord 連不上（公司防火牆擋）或想要 Claude Code Desktop 式介面時。
 
+對話有兩種：**一般對話**（agent loop，下面「一則訊息怎麼跑」）與 **CLI 對話**（每個對話一條專屬的 Claude Code CLI session，見「CLI 對話」一節）。
+
 ## 掛載
 
 - 跟 dashboard 共用同一個 HTTP server 與埠（預設 8088），網址 `http://<主機>:<埠>/chat`。
@@ -46,7 +48,7 @@
 - 模型優先序：`/use` 覆寫 > 對話選的模型 > `modelRouting` 預設。思考：`/think` 覆寫 > 對話設定（`off` 是強制關閉）> 模式 > dashboard 預設。
 - `/use`、`/think` 的覆寫存在記憶體（重啟就沒）；在選單改設定時會清掉對應覆寫，所以「後設定的贏」。畫面在選單旁標示「由 /use 覆寫」。
 - 換模型的權限沿用 `/use` 的 tier（admin）；沒權限的角色選單是灰的，API 回 403。思考等級每個人都能改。
-- 模型清單 = provider registry 已註冊的 provider，有 alias 的顯示成「alias（provider/model）」（`ProviderRegistry.listAliases()`）。
+- 模型清單 = `ProviderRegistry.listCatalog()`：已在用的 provider（有憑證）底下 models.json 的所有模型，依 provider 分組、新的排前面；有 alias 的顯示成「alias（provider/model）」。選到時 `ensure()` 才建 provider；憑證不在的 provider（例如這台沒有 `~/.codex/auth.json`）整組不列。
 - `GET /api/webchat/options`：模型清單、思考等級、能不能換模型、斜線指令清單（只列有 `/` 觸發字、且使用者角色 tier 過得了的 skill）。
 
 ## 執行核准
@@ -62,20 +64,67 @@
 - 回合內完成：agent-loop 的 `subagent_relay`／`background_job_relay` 事件更新卡片（完成／失敗、結果摘要 1500 字）。
 - 回合結束後才完成：webchat 自己聽 eventBus（`subagent:*`、`background-job:*`，只處理 `web:ch:` 開頭的 session），改寫紀錄裡那張卡並推給畫面；找不到原卡就新增一筆。
 
+## CLI 對話
+
+側欄「⌨ CLI 對話」開一個對話專屬的 `claude` CLI session（provider 固定 claude，重用 `cli-bridge/bridge.ts` 的 `CliBridge`＋`ClaudeProvider`）。不寫 `cli-bridges.json`、不碰綁 Discord 頻道的 bridge。
+
+### 權限（每個帳號的 cliAccess）
+
+| 值 | 能做什麼 |
+|----|---------|
+| `none` | 不能開、不能用（按鈕不出現，API 403） |
+| `isolated` | 工作目錄只能是個人工作區 `<teamWorkspaceRoot>/<網頁帳號名>`（第一次建立並寫 CLAUDE.md）或管理員指定的目錄；CLI 以隔離模式啟動；不能跳過權限確認；工具權限送管理員審批 |
+| `full` | 任選工作目錄（候選清單＋自填）、載入完整 `~/.claude`、可選「跳過權限確認」 |
+
+- 存在 `users.json` 的 `cliAccess`／`cliDirs`；沒設定依角色：platform-owner、admin → full，其他（含 GitLab 自動建的 member）→ none。
+- 管理員在 👥 帳號管理的「CLI」欄逐人設定（下拉＋📁 指定目錄，伺服器驗證目錄存在）；`POST /admin/cli-access {username, cliAccess, cliDirs?}`。只有 platform-owner 能改 platform-owner。
+- 立即生效：送訊息、作答、換設定每次重查；改成不能再用的對話，CLI process 當場關掉。full 開的對話在權限降成 isolated 後不能再用（要開新的）。
+- 隔離設定沿用私訊 team 的 `cli-bridge-dm.json`：`teamWorkspaceRoot`（沒有就 `~/catclaw-web`）、`team.denyPaths`（沒有就本機家目錄）、`team.disallowedTools`、`team.claudeMdTemplatePath`。CLI 啟動加 `--setting-sources project,local`、`permissions.deny` 擋 denyPaths、`--disallowedTools`（同 cli-bridge.md「私訊 bridge」的 team 隔離）。工作目錄若在 denyPaths 底下，開對話直接拒絕（CLI 會讀不到自己的目錄）。
+
+### 開對話
+
+- full：工作目錄候選 = `cli-bridges.json` 各 bridge 的 workingDir＋`cli-bridge-dm.json` 的 ownerWorkingDir（去重、只留存在的）；也可自填。伺服器 realpath 驗證是存在的資料夾，否則 400。
+- 權限模式：「每次詢問權限」（預設，明確傳 `--permission-mode default`，蓋掉 `~/.claude/settings.json` 的 defaultMode；但 full 會載入 `~/.claude` 的 allow 規則，列在裡面的工具照樣直接放行，只有沒列到的才跳權限卡）或「跳過權限確認」（`--dangerously-skip-permissions`；提問與計畫核准仍會問，工作目錄專案設定的 ask 規則 CLI 也照樣會問）。
+- 模型：claude CLI 的別名（opus／sonnet／haiku／fable）＋`cli-bridges.json` 設過的模型；effort：low～max（`--effort`）。換模型或 effort 會關掉 process，下一則訊息以 `--resume` 帶新參數重開；回合進行中換回 409。
+
+### 一則訊息怎麼跑
+
+1. 原文直送 CLI（`bridge.send(text, "web")`，不包 `<channel>` tag、不經 catclaw skill，所以 `/compact` 等 CLI 原生指令照樣能用）。斜線清單在 CLI 對話列 CLI 回報的指令（system/init 的 slash_commands，存在對話設定）。
+2. 圖片（≤5MB）照 Discord bridge 的格式轉成 inline image；其他檔案（與更大的圖）存檔後把路徑附在訊息裡讓 CLI 用 Read 讀。
+3. 回合進行中再送 → 直接 send（CLI 自己排隊／插話），畫面上舊回合收尾、新回合接著顯示；CLI 自發的背景回合（source=background）也顯示成一則回覆。
+4. 事件對應：text／thinking 照舊；`tool_call`（帶 tool_use id 與參數）＋CLI 的 user 訊息裡的 tool_result（用 tool_use_id 對回）組成一張工具卡；子 agent 內部的工具結果不顯示。
+5. 停止 → 先把等作答的卡片當拒絕，再 `bridge.interrupt()`；錯誤顯示「已停止」。
+
+### CLI 的提問與權限（control_request）
+
+- AskUserQuestion → 每題選項（單選／多選）＋「其他」自填，答案照 `control-request.ts` 的格式（多選用「, 」接）塞回 `updatedInput.answers`。
+- ExitPlanMode → Markdown 顯示計畫＋核准／退回（退回可填意見，成為 deny message）。claude 2.1.3xx 先把計畫寫進 `~/.claude/plans/<名稱>.md` 再送空的 ExitPlanMode，所以 input 沒有 plan 時讀 `planFilePath` 或這個 session 最近寫的計畫檔。
+- 其他工具 → 工具名與 input＋允許／拒絕。
+- `POST /conversations/<id>/answer {requestId, allow, answers?, message?}`；只有對話擁有者能作答。逾時（`CATCLAW_PERMISSION_TIMEOUT_MS`，預設 10 分鐘）、按停止、改送新訊息都回 deny。卡片在進行中回合的事件裡，重新整理接得回、可作答。
+- **isolated 對話**：AskUserQuestion 仍由發話者回答；其他（含 ExitPlanMode）送管理員審批——發話者卡片顯示「⏳ 已送管理員審批 → 結果」、自己作答 403；完整 CLI 權限的 platform-owner／admin 側欄 🛡 顯示待審批數（`/events` 推 `reviews`），面板列出是誰、哪個對話、工具與 input／plan（不給看整個對話），`GET /reviews`、`POST /reviews/decide {requestId, allow, message?}`。沒有任何審批者 → 直接 deny，不退回發話者自審。
+
+### 保活
+
+- sessionId 存在 `conversations.json` 該對話的 `cli.sessionId`（`bridge.setSessionIdStore`）。閒置 `CATCLAW_WEB_CLI_IDLE_MS`（預設 10 分鐘）關掉 process，下一則訊息 `--resume` 接回；catclaw 關閉時（`index.ts shutdown` → `shutdownWebCliSessions`）一起關掉 CLI process（它們是 detached，不關會變孤兒），重啟後下一則訊息 `--resume` 接回。
+- 刪除對話會關掉 process；`~/.claude/projects/` 裡的 CLI session 檔保留。
+- stdout／turns 日誌：`webchat/cli-logs/web-<對話 id>/`。
+
 ## 即時更新
 
 - `GET /api/webchat/conversations/<id>/stream`（SSE）：連上先送 `sync`（最近 300 筆紀錄＋進行中回合已發生的事件）與 `settings`，之後推 `entry`／`turn_start`／`text`／`thinking`／`tool_start`／`tool_result`／`tool_blocked`／`approval`／`job`／`settings`／`status`／`turn_end`。`approval`、`job` 是整張卡片，畫面依 id 取代。重新整理或另開分頁都接得回進行中的回覆。
 - 文字逐字出現：`providers/claude-api.ts` 邊收邊吐（見 providers.md「StreamResult：邊收邊吐」），其他 provider 仍整段出現。
-- `GET /api/webchat/events`：對話列表變動通知（新增、改名、刪除、回合開始結束）。
+- `GET /api/webchat/events`：對話列表變動通知（新增、改名、刪除、回合開始結束）；審批者另外收 `reviews`（待審批清單變了）。
+- CLI 對話另有 `control`（權限／提問卡，整張卡片依 id 取代）。
 
 ## 資料（`{CATCLAW_CONFIG_DIR}/webchat/`）
 
 | 檔案 | 內容 |
 |------|------|
-| `users.json` | 帳號名 → accountId、salt／hash（密碼帳號）、gitlab {sub, username}、disabled |
+| `users.json` | 帳號名 → accountId、salt／hash（密碼帳號）、gitlab {sub, username}、disabled、cliAccess、cliDirs |
 | `gitlab.json` | GitLab 登入設定（url、clientId、clientSecret、redirectUri） |
 | `logins.json` | 登入 token 的 sha256 → 帳號名、到期時間 |
-| `conversations.json` | 對話列表（id、owner、標題、時間、選的模型與思考等級） |
+| `conversations.json` | 對話列表（id、owner、標題、時間、選的模型與思考等級；CLI 對話另有 kind、cli {mode, workingDir, skipPermissions, model, effort, sessionId, commands}） |
+| `cli-logs/web-<id>/` | CLI 對話的 stdout.jsonl／turns.jsonl |
 | `transcripts/<id>.jsonl` | 畫面紀錄（使用者訊息、AI 回覆的文字／思考／工具卡片／核准卡／進度卡、系統訊息），不受 CE 壓縮影響；背景工作晚完成時會改寫該行 |
 | `uploads/<id>/<fileId>__<檔名>` | 附件；圖片同時以 base64 送 vision，其他檔案路徑附在訊息讓 AI 用 read_file 讀 |
 
@@ -90,7 +139,11 @@
 - `run_background_command` 的 stdout 檔固定寫在 `~/.catclaw/workspace/data/jobs/stdout`，不跟 `CATCLAW_CONFIG_DIR`。
 - 子 agent 進度只有「執行中／完成／失敗」，沒有中間步驟。
 - Markdown／程式碼上色套件從 jsdelivr 載入；瀏覽器連不到時退回純文字。
+- CLI 對話的文字是一個 content block 一次出現（bridge 沒開 `--include-partial-messages`），不是逐字。
+- CLI 對話回合進行中被 catclaw 強制關閉（kill -9）時，這輪的回覆不會寫進紀錄（正常關閉會先收尾）。
 
 ## 驗證腳本
 
 端到端（API）與真實瀏覽器（Chrome＋playwright）兩支，加一支量文字事件抵達時間的串流計時，對隔離的 catclaw 執行個體跑（複製設定、改埠 8099、拿掉 Discord token、關 cron／CLI bridge／MCP）。測試提示一律加「不要使用任何工具」，否則 agent 可能把內容寫進綁定專案目錄。
+
+CLI 對話另有 API 與瀏覽器兩支，跑真的 claude CLI：工作目錄用 scratchpad 底下自建的空資料夾、提示只做無害動作；隔離模式在測試副本寫一份 `cli-bridge-dm.json` 把個人工作區根指到 scratchpad。執行個體用 `CATCLAW_PERMISSION_TIMEOUT_MS=45000 CATCLAW_WEB_CLI_IDLE_MS=20000` 縮短逾時與閒置時間；重啟測試要保留資料（不重建設定副本）。

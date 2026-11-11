@@ -222,6 +222,8 @@ export interface LLMProvider {
   shutdown?(): Promise<void>;
   /** 可選：啟動健康檢查（host 可達 + model 存在），給 runStartupHealthCheck 用 */
   verify?(): Promise<{ ok: boolean; error?: string }>;
+  /** 可選：憑證在不在（例如外部登入檔）；回 false 時模型選單不列這個 provider 的模型 */
+  hasCredentials?(): boolean;
 }
 
 // ── Helper：從 content 提取純文字 ─────────────────────────────────────────────

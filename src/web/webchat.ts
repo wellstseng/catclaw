@@ -21,11 +21,17 @@
  * /use、/think 的頻道覆寫（記憶體內）比對話設定更優先，在選單改設定時會清掉對應的覆寫，所以「後設定的贏」。
  * 執行核准（safety.execApproval）在對話中推核准卡，只有對話擁有者能按核准／拒絕。
  * 子 agent 與背景工作在對話中顯示進度卡（執行中 → 完成／失敗），回合結束後才完成的也會更新回原卡片。
+ *
+ * 對話有兩種：一般對話走上面的 agent loop；CLI 對話是這個對話專屬的一條 Claude Code CLI session
+ * （重用 cli-bridge 的 CliBridge），文字原樣送給 CLI，CLI 的權限／提問（control_request）在網頁作答。
+ * 能不能開 CLI 對話看每個帳號的 cliAccess（none／isolated／full，管理員在帳號管理設定）；
+ * isolated 的工具權限請求送管理員審批。細節見下方「CLI 對話」一節。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, renameSync, chmodSync } from "node:fs";
-import { join, dirname, extname } from "node:path";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, renameSync, chmodSync, realpathSync, statSync } from "node:fs";
+import { join, dirname, extname, isAbsolute } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import { log } from "../logger.js";
@@ -33,6 +39,8 @@ import { config, resolveCatclawDir, resolveProvider } from "../core/config.js";
 import type { Role } from "../accounts/registry.js";
 import type { Skill } from "../skills/types.js";
 import type { AgentLoopEvent } from "../core/agent-loop.js";
+import type { CliBridge } from "../cli-bridge/bridge.js";
+import type { CliBridgeConfig, CliBridgeChannelConfig, CliBridgeEvent, CliEffortLevel, StdinImageBlock, TurnHandle } from "../cli-bridge/types.js";
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -47,7 +55,19 @@ interface WebUser {
   hash?: string;
   gitlab?: { sub: string; username: string };
   disabled?: boolean;
+  /** CLI 對話權限；沒設定依角色（platform-owner／admin → full，其他 → none） */
+  cliAccess?: CliAccess;
+  /** isolated 除了個人工作區之外，管理員另外指定可用的工作目錄（真實路徑） */
+  cliDirs?: string[];
 }
+
+/**
+ * CLI 對話權限。
+ * none = 不能開；isolated = 只能用個人工作區或指定目錄、隔離模式啟動、工具權限送管理員審批；
+ * full = 任選工作目錄、載入完整 ~/.claude、可跳過權限確認。
+ */
+type CliAccess = "none" | "isolated" | "full";
+const CLI_ACCESS_VALUES: CliAccess[] = ["none", "isolated", "full"];
 
 /** GitLab 登入設定（管理員在頁面填，存 webchat/gitlab.json） */
 interface GitlabConfig { url: string; clientId: string; clientSecret: string; redirectUri: string }
@@ -57,20 +77,42 @@ type ThinkingLevel = typeof THINKING_LEVELS[number];
 /** 對話的思考設定："off" 是強制關閉；沒設定就跟預設（模式／dashboard） */
 type ThinkingChoice = "off" | ThinkingLevel;
 
+/** CLI 對話的設定：工作目錄、權限模式、模型、effort，以及接回用的 CLI sessionId */
+interface CliConvSettings {
+  /** 開對話當下的權限模式；之後擁有者的 cliAccess 被調低時，full 對話就不能再用 */
+  mode: "full" | "isolated";
+  workingDir: string;
+  /** true = 跳過權限確認（--dangerously-skip-permissions）；提問與計畫核准仍會問 */
+  skipPermissions: boolean;
+  /** claude CLI 的 --model；沒設定就用 CLI 預設 */
+  model?: string;
+  /** claude CLI 的 --effort；沒設定就用 CLI 預設 */
+  effort?: CliEffortLevel;
+  sessionId?: string;
+  /** CLI 回報的斜線指令（不含 /），斜線清單用 */
+  commands?: string[];
+}
+
 interface Conversation {
   id: string; owner: string; title: string; createdAt: string; updatedAt: string;
-  /** 對話選的模型（provider id）；沒設定就走預設路由 */
+  /** 對話選的模型（provider id）；沒設定就走預設路由（一般對話用） */
   model?: string;
   thinking?: ThinkingChoice;
+  /** 沒寫 = 一般對話（agent loop） */
+  kind?: "agent" | "cli";
+  cli?: CliConvSettings;
 }
 
 /** 對話目前生效的模型與思考等級，以及各自來自哪裡（畫面上的選單用） */
 interface ConvSettings {
   model: string;
   modelSource: "use" | "conversation" | "default";
-  thinking: ThinkingChoice | "";
+  /** 一般對話是思考等級；CLI 對話是 effort */
+  thinking: string;
   thinkingSource: "think" | "conversation" | "default";
   defaultModel: string;
+  /** 只有 CLI 對話有 */
+  cli?: { mode: "full" | "isolated"; workingDir: string; skipPermissions: boolean; sessionId: string | null; commands: string[] };
 }
 
 interface FileRef { id: string; name: string; mime: string; size: number; isImage: boolean }
@@ -92,12 +134,33 @@ interface JobBlock { type: "job"; kind: "subagent" | "background"; id: string; l
 /** 工具卡：參數與結果都是截斷過的預覽文字 */
 interface ToolBlock { type: "tool"; id: string; name: string; params: string; result?: string; error?: string; blocked?: string }
 
+/** CLI 提問的一題（AskUserQuestion 的 input.questions） */
+interface ControlQuestion { question: string; header: string; options: Array<{ label: string; description: string }>; multiSelect: boolean }
+type ControlStatus = "pending" | "allowed" | "denied" | "expired";
+/**
+ * CLI 的權限／提問卡（control_request），id 是 request_id。
+ * question = AskUserQuestion、plan = ExitPlanMode、permission = 其他工具要權限。
+ */
+interface ControlBlock {
+  type: "control"; id: string; kind: "question" | "plan" | "permission"; tool: string;
+  questions?: ControlQuestion[];
+  plan?: string;
+  /** permission：工具參數預覽 */
+  input?: string;
+  expiresAt: string; status: ControlStatus;
+  /** 作答結果的一行說明（選了什麼、退回意見…） */
+  answer?: string;
+  /** true = 隔離模式的請求，送管理員審批，發話者只看結果 */
+  review?: boolean;
+}
+
 type Block =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | ToolBlock
   | ApprovalBlock
-  | JobBlock;
+  | JobBlock
+  | ControlBlock;
 
 const isSlashTrigger = (trigger: string): boolean => trigger.startsWith("/");
 
@@ -115,8 +178,10 @@ type WebEvent =
   | { type: "turn_end"; entry: Entry }
   | { type: "approval"; block: ApprovalBlock }     // 新卡或狀態更新，畫面依 id 取代
   | { type: "job"; block: JobBlock }               // 同上；卡片可能在進行中的回覆或較早的紀錄裡
+  | { type: "control"; block: ControlBlock }       // CLI 權限／提問卡，同上
   | { type: "settings"; settings: ConvSettings }
-  | { type: "conversations" };
+  | { type: "conversations" }
+  | { type: "reviews" };                            // 待審批清單變了（只送給審批者）
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
@@ -131,6 +196,13 @@ const ADMIN_ROLES = new Set<Role>(["platform-owner", "admin"]);
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const USERNAME_RE = /^[a-z0-9][a-z0-9_.-]{1,31}$/;
 const JOB_SUMMARY_CHARS = 1500;                  // 子 agent／背景工作卡片的結果摘要長度
+// CLI 對話
+const CLI_CONTROL_TIMEOUT_MS = Number(process.env.CATCLAW_PERMISSION_TIMEOUT_MS ?? 600_000);   // 跟 Discord 的 control-request 同一個設定
+const CLI_IDLE_SUSPEND_MS = Number(process.env.CATCLAW_WEB_CLI_IDLE_MS ?? 600_000);           // 閒置多久關掉 CLI process（下次訊息 --resume 接回）
+const CLI_IMAGE_MAX_BYTES = 5 * 1024 * 1024;     // 超過就不 inline，改附路徑（Anthropic 單張上限）
+const CLI_MODEL_ALIASES = ["opus", "sonnet", "haiku", "fable"];
+const CLI_EFFORT_LEVELS: CliEffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+const CLI_DEFAULT_COMMANDS = ["compact", "context", "cost"];   // CLI 還沒回報指令清單前先列這幾個
 
 // ── 檔案存取 ─────────────────────────────────────────────────────────────────
 
@@ -234,7 +306,7 @@ function readCookieToken(req: IncomingMessage): string | null {
   return null;
 }
 
-interface Viewer { username: string; accountId: string; displayName: string; role: Role; gitlab: string | null }
+interface Viewer { username: string; accountId: string; displayName: string; role: Role; gitlab: string | null; cliAccess: CliAccess }
 
 async function currentViewer(req: IncomingMessage): Promise<Viewer | null> {
   const token = readCookieToken(req);
@@ -244,10 +316,25 @@ async function currentViewer(req: IncomingMessage): Promise<Viewer | null> {
   const user = loadUsers()[rec.username];
   if (!user || user.disabled) return null;
   const { getAccountRegistry } = await import("../core/platform.js");
-  const acct = getAccountRegistry().get(user.accountId);
+  accountLookup = getAccountRegistry();
+  const acct = accountLookup.get(user.accountId);
   if (!acct || acct.disabled) return null;
-  return { username: rec.username, accountId: user.accountId, displayName: acct.displayName, role: acct.role, gitlab: user.gitlab?.username ?? null };
+  return {
+    username: rec.username, accountId: user.accountId, displayName: acct.displayName, role: acct.role,
+    gitlab: user.gitlab?.username ?? null, cliAccess: effectiveCliAccess(user, acct.role),
+  };
 }
+
+/** catclaw 帳號名冊（第一次查登入時從 platform 取得；審批者判斷要同步查角色與顯示名） */
+let accountLookup: { get(accountId: string): { displayName: string; role: Role; disabled?: boolean } | null } | null = null;
+
+/** 帳號實際的 CLI 權限：有設定用設定，沒有依角色 */
+function effectiveCliAccess(user: WebUser, role: Role): CliAccess {
+  return user.cliAccess ?? (ADMIN_ROLES.has(role) ? "full" : "none");
+}
+
+/** 能審批隔離 CLI 對話的人：完整 CLI 權限的 platform-owner／admin */
+const canReviewCli = (viewer: Viewer) => ADMIN_ROLES.has(viewer.role) && viewer.cliAccess === "full";
 
 /** 登入失敗次數（每個 IP，10 分鐘內 10 次就擋） */
 const loginFailures = new Map<string, { count: number; since: number }>();
@@ -500,6 +587,13 @@ function preview(value: unknown): string {
 
 function nowIso(): string { return new Date().toISOString(); }
 
+/** 文字與思考合併到最後一個同類 block，工具等其他 block 會把它們隔開 */
+function appendTextBlock(blocks: Block[], type: "text" | "thinking", chunk: string): void {
+  const last = blocks[blocks.length - 1];
+  if (last && last.type === type) last.text += chunk;
+  else blocks.push({ type, text: chunk });
+}
+
 function pushNotice(convId: string, text: string): void {
   const entry: Entry = { kind: "notice", id: randomUUID(), at: nowIso(), text };
   appendEntry(convId, entry);
@@ -629,6 +723,7 @@ async function roleAndProject(accountId: string): Promise<{ role: Role; projectI
 }
 
 async function settingsOf(viewer: Viewer, conv: Conversation): Promise<ConvSettings> {
+  if (conv.kind === "cli" && conv.cli) return cliSettingsOf(conv.cli);
   const { getChannelProviderOverride } = await import("../skills/builtin/use.js");
   const { getChannelThinking } = await import("../skills/builtin/think.js");
   const { role, projectId } = await roleAndProject(viewer.accountId);
@@ -662,6 +757,7 @@ async function canChangeModel(viewer: Viewer): Promise<boolean> {
  * 回傳錯誤字串代表沒收下。
  */
 async function acceptMessage(viewer: Viewer, conv: Conversation, text: string, uploads: UploadIn[]): Promise<string | null> {
+  if (conv.kind === "cli") return acceptCliMessage(viewer, conv, text, uploads);
   const platform = await import("../core/platform.js");
   if (!platform.isPlatformReady()) return "catclaw 平台尚未就緒";
   if (!text.trim() && uploads.length === 0) return "訊息是空的";
@@ -816,7 +912,7 @@ async function runTurn(viewer: Viewer, conv: Conversation, rawText: string, save
   // 優先序：/use 覆寫 > 對話選的模型 > 預設路由
   const providerId = getChannelProviderOverride(channelId) ?? settings.model ?? resolveProvider({ channelId, role, projectId });
   const registry = getProviderRegistry();
-  const provider = registry.get(providerId) ?? registry.resolve({ role, projectId });
+  const provider = (await registry.ensure(providerId)) ?? registry.resolve({ role, projectId });
   if (!provider) { finishTurn(conv.id, { ...assistant, error: "沒有可用的模型 provider" }); return; }
 
   const modePreset = getChannelModePreset(channelId);
@@ -895,12 +991,7 @@ async function runTurn(viewer: Viewer, conv: Conversation, rawText: string, save
     eventBus,
   });
 
-  // 文字與思考合併到最後一個同類 block，工具各自一個 block
-  const appendTo = (type: "text" | "thinking", chunk: string) => {
-    const last = assistant.blocks[assistant.blocks.length - 1];
-    if (last && last.type === type) last.text += chunk;
-    else assistant.blocks.push({ type, text: chunk });
-  };
+  const appendTo = (type: "text" | "thinking", chunk: string) => appendTextBlock(assistant.blocks, type, chunk);
   function toolBlock(id: string): ToolBlock | undefined {
     for (const b of assistant.blocks) if (b.type === "tool" && b.id === id) return b;
     return undefined;
@@ -972,6 +1063,701 @@ async function runTurn(viewer: Viewer, conv: Conversation, rawText: string, save
   }
 }
 
+// ── CLI 對話 ─────────────────────────────────────────────────────────────────
+//
+// 每個 CLI 對話有自己的一條 claude CLI session：convId → CliSession（裡面是一個 CliBridge，provider 固定 claude）。
+// 不寫 cli-bridges.json（那個檔有 hot-reload，寫它會重建 Discord bridge）：sessionId 存在 conversations.json，
+// 閒置 CLI_IDLE_SUSPEND_MS 就關掉 process，下一則訊息（或 catclaw 重啟後）用 --resume 接回。
+//
+// 一則訊息：原文（不經 catclaw skill）→ bridge.send(source "web") → 這個回合的事件依序轉成網頁事件。
+// 回合進行中再送訊息照 Discord bridge 的做法直接 send（CLI 自己排隊／插話），舊回合在畫面上收尾、新回合接著顯示。
+// CLI 自己開的背景回合（source background）也當成一則回覆顯示。
+// control_request（提問、計畫核准、工具權限）變成對話中的卡片，擁有者作答後回 control_response；
+// 逾時、按停止、改送新訊息都回 deny，CLI 不會卡住。
+//
+// 權限（帳號的 cliAccess）：
+//   full     任選工作目錄、載入完整 ~/.claude、可跳過權限確認，卡片由擁有者自己作答。
+//   isolated 工作目錄只能是個人工作區 <teamWorkspaceRoot>/<帳號名> 或管理員指定的目錄；CLI 以隔離模式啟動
+//            （照 DM team：--setting-sources project,local、deny cli-bridge-dm.json 的 team.denyPaths、禁 team.disallowedTools）；
+//            不能跳過權限確認；AskUserQuestion 仍由擁有者回答，其他請求（含 ExitPlanMode）送管理員審批，
+//            沒有任何管理員可審就直接 deny，不退回擁有者自審。
+//   none     不能開、不能用。每次送訊息、作答都重新檢查，管理員改了立即生效。
+
+interface CliSession {
+  convId: string;
+  owner: string;
+  bridge: CliBridge;
+  /** 回合依序消費：上一個回合在畫面上收尾後才開始下一個 */
+  chain: Promise<void>;
+  /** 使用者按了停止：這輪的錯誤訊息改顯示「已停止」 */
+  stopRequested: boolean;
+  /** CLI 最近寫的計畫檔（~/.claude/plans/*.md）；ExitPlanMode 的 input 沒帶計畫時從這裡讀 */
+  planFile?: string;
+}
+
+/** 一個進行中的 CLI 回合 */
+interface CliRun { session: CliSession; assistant: Extract<Entry, { kind: "assistant" }> }
+
+interface PendingControl {
+  convId: string; bridge: CliBridge; block: ControlBlock; input: Record<string, unknown>; timer: ReturnType<typeof setTimeout>;
+  /** 送管理員審批的請求：誰、哪個對話（審批清單只給看這張請求，不給看整個對話） */
+  review?: { requester: string; requesterName: string; convTitle: string; createdAt: string };
+}
+
+const cliSessions = new Map<string, CliSession>();
+const pendingControls = new Map<string, PendingControl>();   // request_id → 等作答的卡片
+
+/** 讀 {CATCLAW_CONFIG_DIR} 底下的 cli-bridge 設定檔（只讀，不寫） */
+function readCatclawFile<T>(name: string, fallback: T): T {
+  const p = join(resolveCatclawDir(), name);
+  if (!existsSync(p)) return fallback;
+  try { return JSON.parse(readFileSync(p, "utf-8")) as T; }
+  catch (err) { log.warn(`[webchat] 讀 ${name} 失敗：${err instanceof Error ? err.message : String(err)}`); return fallback; }
+}
+
+const loadBridgeConfigs = () => {
+  const list = readCatclawFile<CliBridgeConfig[]>("cli-bridges.json", []);
+  return Array.isArray(list) ? list : [];
+};
+
+/** 模型選單：CLI 的別名＋cli-bridges.json 裡設過的模型 */
+function cliModelChoices(): string[] {
+  const models = new Set(CLI_MODEL_ALIASES);
+  for (const b of loadBridgeConfigs()) {
+    if (b.model) models.add(b.model);
+    for (const ch of Object.values(b.channels ?? {})) if (ch.model) models.add(ch.model);
+  }
+  return [...models];
+}
+
+function expandHome(p: string): string {
+  return p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p;
+}
+
+/** 工作目錄 → 存在的資料夾的真實路徑；不是絕對路徑、不存在或不是資料夾回 null */
+function resolveWorkingDir(raw: string): string | null {
+  const p = expandHome(raw.trim());
+  if (!p || !isAbsolute(p)) return null;
+  try {
+    const real = realpathSync(p);
+    return statSync(real).isDirectory() ? real : null;
+  } catch { return null; }
+}
+
+/** 新 CLI 對話的工作目錄候選：各 bridge 的 workingDir 與私訊 owner 的工作目錄（去重、只留存在的） */
+function cliWorkingDirChoices(): string[] {
+  const raw = loadBridgeConfigs().map(b => b.workingDir);
+  raw.push(readCatclawFile<{ ownerWorkingDir?: string }>("cli-bridge-dm.json", {}).ownerWorkingDir ?? "");
+  const dirs = new Set<string>();
+  for (const d of raw) {
+    const real = d ? resolveWorkingDir(d) : null;
+    if (real) dirs.add(real);
+  }
+  return [...dirs];
+}
+
+/** claude 執行檔：沿用 cli-bridges.json 設的路徑，沒有就靠 PATH */
+function claudeBin(): string {
+  return loadBridgeConfigs().find(b => b.claudeBin)?.claudeBin ?? "claude";
+}
+
+// ── 隔離模式（isolated）的設定與工作目錄 ──
+
+interface IsolationSettings { workspaceRoot: string; denyPaths: string[]; disallowedTools: string[]; claudeMdTemplatePath?: string }
+
+/** 隔離設定沿用私訊 team 的 cli-bridge-dm.json；沒有就用 ~/catclaw-web 當工作區根、擋本機家目錄 */
+function isolationSettings(): IsolationSettings {
+  const dm = readCatclawFile<{ teamWorkspaceRoot?: string; team?: { denyPaths?: string[]; disallowedTools?: string[]; claudeMdTemplatePath?: string } }>("cli-bridge-dm.json", {});
+  return {
+    workspaceRoot: expandHome(dm.teamWorkspaceRoot || "~/catclaw-web"),
+    denyPaths: (dm.team?.denyPaths ?? [homedir()]).map(p => expandHome(p)),
+    disallowedTools: dm.team?.disallowedTools ?? [],
+    claudeMdTemplatePath: dm.team?.claudeMdTemplatePath,
+  };
+}
+
+const WEB_WORKSPACE_CLAUDE_MD = `# 工作區說明
+
+你是透過 CatClaw 網頁版服務 **{name}**（網頁帳號 {userId}）的 CLI 助理，跑在管理者的機器上。
+
+## 邊界
+- 你的工作目錄是 \`{workingDir}\`，只在這裡讀寫檔案。其他路徑已由權限規則擋住，不要嘗試繞過。
+- 需要執行指令、寫檔等動作時，權限請求會送給管理員審批，不是 {name} 本人；等待時用一句話告知「已送管理員審批」。
+- 不要外洩這台機器上的任何設定或憑證。
+
+## 對話
+- 以繁體中文回覆。
+`;
+
+/** 個人工作區 <工作區根>/<帳號名>：第一次建立並寫 CLAUDE.md（已存在不覆寫） */
+function ensurePersonalWorkspace(username: string, displayName: string): string {
+  const iso = isolationSettings();
+  const dir = join(iso.workspaceRoot, username);
+  mkdirSync(dir, { recursive: true });
+  const claudeMd = join(dir, "CLAUDE.md");
+  if (!existsSync(claudeMd)) {
+    let template = WEB_WORKSPACE_CLAUDE_MD;
+    if (iso.claudeMdTemplatePath) {
+      try { template = readFileSync(expandHome(iso.claudeMdTemplatePath), "utf-8"); }
+      catch (err) { log.warn(`[webchat] 讀 CLAUDE.md 範本 ${iso.claudeMdTemplatePath} 失敗，改用內建：${err instanceof Error ? err.message : String(err)}`); }
+    }
+    const body = template.replaceAll("{name}", displayName).replaceAll("{userId}", username)
+      .replaceAll("{owner}", "管理員").replaceAll("{workingDir}", dir);
+    writeFileSync(claudeMd, body, "utf-8");
+    log.info(`[webchat] 建立個人工作區 ${dir}`);
+  }
+  return realpathSync(dir);
+}
+
+/** isolated 可用的工作目錄：個人工作區＋管理員指定的（只留還存在的） */
+function isolatedDirs(username: string, displayName: string): string[] {
+  const dirs = [ensurePersonalWorkspace(username, displayName)];
+  for (const d of loadUsers()[username]?.cliDirs ?? []) {
+    const real = resolveWorkingDir(d);
+    if (real && !dirs.includes(real)) dirs.push(real);
+  }
+  return dirs;
+}
+
+/** 工作目錄在 denyPaths 底下時，隔離模式的 CLI 連自己的目錄都讀不到 */
+function deniedByIsolation(dir: string): string | null {
+  return isolationSettings().denyPaths.find(p => dir === p || dir.startsWith(p.replace(/\/+$/, "") + "/")) ?? null;
+}
+
+/** 這個人現在還能不能用這個 CLI 對話；不能回原因 */
+function cliConvBlockedReason(viewer: Viewer, conv: Conversation): string | null {
+  if (!conv.cli) return "對話缺 CLI 設定";
+  if (viewer.cliAccess === "none") return "你沒有 CLI 對話權限";
+  if (conv.cli.mode === "full" && viewer.cliAccess !== "full") return "你的 CLI 權限已改為隔離模式，這個完整權限的對話不能再用，請開新的 CLI 對話";
+  if (conv.cli.mode === "isolated" && !isolatedDirs(viewer.username, viewer.displayName).includes(conv.cli.workingDir)) return "這個工作目錄已不在你可用的清單裡";
+  return null;
+}
+
+function cliSettingsOf(cli: CliConvSettings): ConvSettings {
+  return {
+    model: cli.model ?? "",
+    modelSource: cli.model ? "conversation" : "default",
+    thinking: cli.effort ?? "",
+    thinkingSource: cli.effort ? "conversation" : "default",
+    defaultModel: "CLI 預設",
+    cli: { mode: cli.mode, workingDir: cli.workingDir, skipPermissions: cli.skipPermissions, sessionId: cli.sessionId ?? null, commands: cli.commands ?? CLI_DEFAULT_COMMANDS },
+  };
+}
+
+/** 改 conversations.json 裡某個 CLI 對話的設定；改了回傳新設定 */
+function updateCliConv(convId: string, patch: (cli: CliConvSettings) => void): CliConvSettings | null {
+  const all = loadConversations();
+  const target = all.find(c => c.id === convId);
+  if (!target?.cli) return null;
+  patch(target.cli);
+  saveConversations(all);
+  return target.cli;
+}
+
+/** 取得（或建立）這個對話的 CLI session；只建物件，process 等第一則訊息才 spawn */
+async function getCliSession(conv: Conversation): Promise<CliSession> {
+  const existing = cliSessions.get(conv.id);
+  if (existing && existing.bridge.status !== "dead") return existing;
+  const cli = conv.cli!;
+  const { CliBridge } = await import("../cli-bridge/bridge.js");
+  const label = `web-${conv.id}`;
+  const isolated = cli.mode === "isolated";
+  const iso = isolated ? isolationSettings() : null;
+  const channelConfig: CliBridgeChannelConfig = {
+    label, sessionId: cli.sessionId ?? null,
+    dangerouslySkipPermissions: !isolated && cli.skipPermissions,
+    // 「每次詢問權限」：明確 --permission-mode default，不被 ~/.claude settings 的 defaultMode（例如 bypassPermissions）蓋掉
+    permissionMode: "default",
+    ...(iso ? { isolation: { denyPaths: iso.denyPaths, disallowedTools: iso.disallowedTools } } : {}),
+  };
+  const bridgeConfig: CliBridgeConfig = {
+    enabled: true, label, provider: "claude", claudeBin: claudeBin(), workingDir: cli.workingDir,
+    channels: { [conv.id]: channelConfig },
+    logDir: join(dataDir(), "cli-logs"),
+    turnTimeoutMs: 0,              // 不用 Discord 的「等太久要不要中斷」按鈕；畫面有停止鍵
+    shutdownDrainTimeoutMs: 3000,
+    ...(cli.model ? { model: cli.model } : {}),
+    ...(cli.effort ? { effort: cli.effort } : {}),
+  };
+  const bridge = new CliBridge(label, conv.id, bridgeConfig, channelConfig);
+  const session: CliSession = { convId: conv.id, owner: conv.owner, bridge, chain: Promise.resolve(), stopRequested: false };
+  bridge.setAnswerableSources(["web", "background"]);
+  bridge.setSessionIdStore(sid => { updateCliConv(conv.id, c => { if (sid) c.sessionId = sid; else delete c.sessionId; }); });
+  bridge.setUnsolicitedTurnHandler(handle => queueCliRun(session, handle));
+  cliSessions.set(conv.id, session);
+  ensureCliIdleScanner();
+  return session;
+}
+
+/** 關掉這個對話的 CLI process 並移除 session（刪對話、換模型、catclaw 關閉） */
+async function closeCliSession(convId: string): Promise<void> {
+  const session = cliSessions.get(convId);
+  if (!session) return;
+  cliSessions.delete(convId);
+  denyControlsOf(convId, "CLI session 關閉中", "CLI session 已關閉");
+  await session.bridge.shutdown();
+  // 等最後一個回合在畫面上收尾（寫進紀錄），最多 3 秒
+  await Promise.race([session.chain, new Promise(r => setTimeout(r, 3000))]);
+}
+
+let cliIdleTimer: ReturnType<typeof setInterval> | null = null;
+function ensureCliIdleScanner(): void {
+  if (cliIdleTimer) return;
+  cliIdleTimer = setInterval(() => { void suspendIdleCliSessions(); }, Math.min(30_000, Math.max(1000, CLI_IDLE_SUSPEND_MS / 2)));
+  cliIdleTimer.unref();
+}
+
+async function suspendIdleCliSessions(): Promise<void> {
+  const now = Date.now();
+  for (const session of cliSessions.values()) {
+    if (session.bridge.status !== "idle" || now - session.bridge.lastUsedAt <= CLI_IDLE_SUSPEND_MS) continue;
+    log.info(`[webchat] CLI 對話 ${session.convId} 閒置 ${Math.round((now - session.bridge.lastUsedAt) / 1000)}s，關閉 process（下次訊息 --resume 接回）`);
+    try { await session.bridge.suspend(); }
+    catch (err) { log.warn(`[webchat] CLI 對話 ${session.convId} suspend 失敗：${err instanceof Error ? err.message : String(err)}`); }
+  }
+}
+
+/** catclaw 關閉時呼叫：回絕等作答的卡片、關掉所有網頁 CLI process（它們是 detached，不關會變孤兒） */
+export async function shutdownWebCliSessions(): Promise<void> {
+  if (cliIdleTimer) { clearInterval(cliIdleTimer); cliIdleTimer = null; }
+  await Promise.allSettled([...cliSessions.keys()].map(id => closeCliSession(id)));
+}
+
+/** 附件 → CLI 訊息：圖片（≤5MB）照 Discord bridge 的格式轉成 inline image，其他檔案附路徑 */
+function cliAttachments(convId: string, saved: ReturnType<typeof saveUploads>): { notes: string[]; paths: string[]; imageBlocks: StdinImageBlock[] } {
+  const notes: string[] = [];
+  const paths = [...saved.paths];
+  const imageBlocks: StdinImageBlock[] = [];
+  for (const ref of saved.refs) {
+    if (!ref.isImage) continue;
+    const path = findUpload(convId, ref.id);
+    if (!path) continue;
+    if (ref.size > CLI_IMAGE_MAX_BYTES) { paths.push(path); continue; }
+    const mediaType = ref.mime as StdinImageBlock["source"]["media_type"];
+    imageBlocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: readFileSync(path).toString("base64") } });
+    notes.push(`[附件: ${ref.name} (${ref.mime}, ${Math.round(ref.size / 1024)}KB) 已以 inline image 附上]`);
+  }
+  return { notes, paths, imageBlocks };
+}
+
+/** CLI 對話收到訊息：原文送 CLI（不經 catclaw skill），回合在背景消費 */
+async function acceptCliMessage(viewer: Viewer, conv: Conversation, text: string, uploads: UploadIn[]): Promise<string | null> {
+  const blocked = cliConvBlockedReason(viewer, conv);
+  if (blocked) return blocked;
+  if (!text.trim() && uploads.length === 0) return "訊息是空的";
+
+  let saved: ReturnType<typeof saveUploads>;
+  try { saved = saveUploads(conv.id, uploads); }
+  catch (err) { return err instanceof Error ? err.message : String(err); }
+  const { notes, paths, imageBlocks } = cliAttachments(conv.id, saved);
+  let cliText = text;
+  if (notes.length > 0) cliText += `${cliText ? "\n" : ""}${notes.join("\n")}`;
+  if (paths.length > 0) cliText += `\n\n[使用者附件，請用 Read 工具讀取]\n${paths.map(p => `- ${p}`).join("\n")}`;
+
+  // 還在等作答的卡片當成拒絕：CLI 等作答時不會處理新訊息，不先回絕會卡住
+  denyControlsOf(conv.id, "使用者沒有作答，改送了新訊息（見下一則），請依新訊息繼續。", "使用者改送新訊息");
+
+  const userEntry: Entry = { kind: "user", id: randomUUID(), at: nowIso(), author: viewer.displayName, text, files: saved.refs };
+  appendEntry(conv.id, userEntry);
+  broadcast(conv.id, { type: "entry", entry: userEntry });
+  touchConversation(conv, text);
+
+  const session = await getCliSession(conv);
+  void sendToCli(session, cliText, imageBlocks, viewer.displayName).catch(err => {
+    log.error(`[webchat] 送 CLI 失敗 conv=${conv.id}：${err instanceof Error ? err.message : String(err)}`);
+    pushNotice(conv.id, `❌ 送給 CLI 失敗：${err instanceof Error ? err.message : String(err)}`);
+  });
+  return null;
+}
+
+async function sendToCli(session: CliSession, text: string, imageBlocks: StdinImageBlock[], author: string): Promise<void> {
+  // 閒置被關掉的 process 在這裡用 --resume 接回
+  await session.bridge.ensureAlive({ drainInboundHistory: false });
+  const handle = session.bridge.send(text, "web", { user: author, ...(imageBlocks.length > 0 ? { imageBlocks } : {}) });
+  queueCliRun(session, handle);
+}
+
+/** 回合排進這個對話的佇列；一般訊息、插話、CLI 自發回合都走這裡 */
+function queueCliRun(session: CliSession, handle: TurnHandle): void {
+  session.chain = session.chain
+    .then(() => runCliTurn(session, handle))
+    .catch(err => { log.error(`[webchat] CLI 回合失敗 conv=${session.convId}：${err instanceof Error ? err.message : String(err)}`); });
+}
+
+async function runCliTurn(session: CliSession, handle: TurnHandle): Promise<void> {
+  const convId = session.convId;
+  const assistant: Extract<Entry, { kind: "assistant" }> = { kind: "assistant", id: randomUUID(), at: nowIso(), blocks: [] };
+  const run: CliRun = { session, assistant };
+  liveTurns.set(convId, []);
+  liveBlocks.set(convId, assistant.blocks);
+  broadcast(convId, { type: "turn_start" });
+  notifyConversationsChanged(session.owner);
+  try {
+    for await (const evt of handle.events) handleCliEvent(run, evt);
+  } catch (err) {
+    assistant.error = `讀取 CLI 回覆失敗：${err instanceof Error ? err.message : String(err)}`;
+  }
+  // 回合已結束還沒作答的卡片（例如 process 掛了）：標成逾時，CLI 還活著就回 deny
+  denyControlsOf(convId, "回合已結束", "回合已結束", "expired");
+  if (session.stopRequested) {
+    session.stopRequested = false;
+    if (assistant.error) assistant.error = "已停止";
+  }
+  finishTurn(convId, assistant);
+}
+
+function handleCliEvent(run: CliRun, evt: CliBridgeEvent): void {
+  const convId = run.session.convId;
+  const blocks = run.assistant.blocks;
+  switch (evt.type) {
+    case "text_delta":
+      appendTextBlock(blocks, "text", evt.text);
+      broadcast(convId, { type: "text", text: evt.text });
+      break;
+    case "thinking_delta":
+      appendTextBlock(blocks, "thinking", evt.text);
+      broadcast(convId, { type: "thinking", text: evt.text });
+      break;
+    case "tool_call": {
+      const id = evt.id ?? randomUUID();
+      const filePath = evt.input?.file_path;
+      if (typeof filePath === "string" && isPlanFile(filePath)) run.session.planFile = filePath;
+      const params = preview(evt.input ?? "");
+      blocks.push({ type: "tool", id, name: evt.title, params });
+      broadcast(convId, { type: "tool_start", id, name: evt.title, params });
+      break;
+    }
+    case "status":
+      // 工具結果在 CLI 的 user 訊息裡（tool_result block，用 tool_use_id 對回工具卡）
+      if (evt.subtype === "user") fillCliToolResults(convId, blocks, evt.raw);
+      break;
+    case "control_request":
+      openControlCard(run, evt);
+      break;
+    case "session_init":
+      if (evt.slashCommands) saveCliCommands(convId, evt.slashCommands);
+      break;
+    case "result":
+      if (evt.is_error && evt.text) run.assistant.error = evt.text;
+      else if (evt.text && !blocks.some(b => b.type === "text")) appendTextBlock(blocks, "text", evt.text);
+      break;
+    case "error":
+      run.assistant.error = evt.message;
+      break;
+  }
+}
+
+/** tool_result 的內容 → 文字（字串直接用；陣列取 text，其他轉 JSON） */
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return preview(content);
+  const parts = content.map(c => {
+    const item = c as { type?: string; text?: string };
+    return item.type === "text" ? item.text ?? "" : preview(item);
+  });
+  return parts.join("\n");
+}
+
+function fillCliToolResults(convId: string, blocks: Block[], raw: unknown): void {
+  const msg = raw as { parent_tool_use_id?: string | null; message?: { content?: unknown } } | null;
+  // 子 agent 內部的工具結果不顯示（跟 provider 不轉發子 agent 文字一致）
+  if (!msg || msg.parent_tool_use_id || !Array.isArray(msg.message?.content)) return;
+  for (const item of msg.message.content as Array<{ type?: string; tool_use_id?: string; content?: unknown; is_error?: boolean }>) {
+    if (item.type !== "tool_result" || !item.tool_use_id) continue;
+    const tool = blocks.find((b): b is ToolBlock => b.type === "tool" && b.id === item.tool_use_id);
+    if (!tool) continue;
+    tool.result = preview(toolResultText(item.content));
+    if (item.is_error) tool.error = tool.result.slice(0, 300);
+    broadcast(convId, { type: "tool_result", id: tool.id, result: tool.result, ...(tool.error ? { error: tool.error } : {}) });
+  }
+}
+
+function saveCliCommands(convId: string, commands: string[]): void {
+  const cli = updateCliConv(convId, c => { c.commands = commands; });
+  if (cli) broadcast(convId, { type: "settings", settings: cliSettingsOf(cli) });
+}
+
+// ── CLI 權限／提問卡 ──
+
+const minutes = (ms: number) => Math.round(ms / 60_000);
+
+function parseQuestions(input: Record<string, unknown>): ControlQuestion[] {
+  const raw = Array.isArray(input.questions) ? input.questions as Array<Record<string, unknown>> : [];
+  return raw.map(q => ({
+    question: String(q.question ?? ""),
+    header: String(q.header ?? "問題"),
+    options: (Array.isArray(q.options) ? q.options as Array<Record<string, unknown>> : [])
+      .map(o => ({ label: String(o.label ?? ""), description: String(o.description ?? "") })),
+    multiSelect: q.multiSelect === true,
+  }));
+}
+
+const isPlanFile = (p: string) => p.includes("/.claude/plans/") && p.endsWith(".md");
+
+/**
+ * ExitPlanMode 的計畫內容：input.plan 有就用；沒有（claude 2.1.3xx 先把計畫寫進 ~/.claude/plans/<名稱>.md、
+ * 再送空的 ExitPlanMode）就讀 input.planFilePath 或這個 session 最近寫的計畫檔。
+ */
+function planText(input: Record<string, unknown>, planFile: string | undefined): string {
+  const inline = String(input.plan ?? "").trim();
+  if (inline) return inline;
+  const path = typeof input.planFilePath === "string" && isPlanFile(input.planFilePath) ? input.planFilePath : planFile;
+  if (!path) return "(空計畫)";
+  try { return readFileSync(path, "utf-8").trim() || "(空計畫)"; }
+  catch (err) {
+    log.warn(`[webchat] 讀計畫檔 ${path} 失敗：${err instanceof Error ? err.message : String(err)}`);
+    return "(空計畫：計畫檔讀不到)";
+  }
+}
+
+function controlBlockFrom(evt: Extract<CliBridgeEvent, { type: "control_request" }>, planFile: string | undefined): ControlBlock {
+  const base = { type: "control" as const, id: evt.requestId, tool: evt.tool, status: "pending" as const,
+    expiresAt: new Date(Date.now() + CLI_CONTROL_TIMEOUT_MS).toISOString() };
+  if (evt.tool === "AskUserQuestion") return { ...base, kind: "question", questions: parseQuestions(evt.input) };
+  if (evt.tool === "ExitPlanMode") return { ...base, kind: "plan", plan: planText(evt.input, planFile) };
+  return { ...base, kind: "permission", input: preview(evt.input) };
+}
+
+function openControlCard(run: CliRun, evt: Extract<CliBridgeEvent, { type: "control_request" }>): void {
+  const convId = run.session.convId;
+  const conv = loadConversations().find(c => c.id === convId);
+  const block = controlBlockFrom(evt, run.session.planFile);
+  // 隔離模式：AskUserQuestion 以外都送管理員審批
+  const needsReview = conv?.cli?.mode === "isolated" && evt.tool !== "AskUserQuestion";
+  if (needsReview) block.review = true;
+  run.assistant.blocks.push(block);
+  const timer = setTimeout(() => expireControl(evt.requestId), CLI_CONTROL_TIMEOUT_MS);
+  timer.unref();
+  const owner = needsReview ? loadUsers()[run.session.owner] : undefined;
+  const requesterName = owner ? reviewerDisplayName(owner.accountId, run.session.owner) : run.session.owner;
+  pendingControls.set(evt.requestId, {
+    convId, bridge: run.session.bridge, block, input: evt.input, timer,
+    ...(needsReview ? { review: { requester: run.session.owner, requesterName, convTitle: conv?.title ?? "", createdAt: nowIso() } } : {}),
+  });
+  broadcast(convId, { type: "control", block: { ...block } });
+  log.info(`[webchat] CLI 對話 ${convId} 等${needsReview ? "管理員審批" : "作答"}：${evt.tool}（${evt.requestId.slice(0, 8)}）`);
+  if (!needsReview) return;
+  // 沒有任何管理員能審：照 DM 的規則直接拒絕，不退回發話者自審
+  if (cliReviewers().length === 0) {
+    settleControl(evt.requestId, { behavior: "deny", message: `沒有可審批的管理員，${evt.tool} 已自動拒絕。請結束本回合。` }, "denied", "沒有可審批的管理員，已自動拒絕");
+    return;
+  }
+  notifyReviewers();
+}
+
+// ── 管理員審批（隔離模式的工具權限請求）──
+
+/** 帳號顯示名（審批清單用）；找不到就用帳號名 */
+function reviewerDisplayName(accountId: string, fallback: string): string {
+  return accountLookup?.get(accountId)?.displayName ?? fallback;
+}
+
+/** 能審批的網頁帳號名（完整 CLI 權限的 platform-owner／admin，沒停用） */
+function cliReviewers(): string[] {
+  const names: string[] = [];
+  for (const [name, u] of Object.entries(loadUsers())) {
+    const role = accountLookup?.get(u.accountId)?.role;
+    if (!u.disabled && role && ADMIN_ROLES.has(role) && effectiveCliAccess(u, role) === "full") names.push(name);
+  }
+  return names;
+}
+
+/** 待審批清單變了：通知所有審批者的分頁重抓 */
+function notifyReviewers(): void {
+  for (const name of cliReviewers()) for (const res of userStreams.get(name) ?? []) sendEvent(res, { type: "reviews" });
+}
+
+/** 待審批清單（只有請求本身的內容，不含對話紀錄） */
+function listReviews(): Array<Record<string, unknown>> {
+  const list: Array<Record<string, unknown>> = [];
+  for (const [requestId, rec] of pendingControls) {
+    if (!rec.review) continue;
+    const { block } = rec;
+    list.push({
+      requestId, requester: rec.review.requester, requesterName: rec.review.requesterName, convTitle: rec.review.convTitle,
+      tool: block.tool, kind: block.kind, plan: block.plan, input: block.input, createdAt: rec.review.createdAt, expiresAt: block.expiresAt,
+    });
+  }
+  return list;
+}
+
+/** 管理員核准／拒絕；請求不存在回 false */
+function decideReview(reviewer: Viewer, body: Record<string, unknown>): boolean {
+  const requestId = str(body.requestId);
+  const rec = pendingControls.get(requestId);
+  if (!rec?.review) return false;
+  const { block, input } = rec;
+  const who = reviewer.displayName;
+  log.info(`[webchat] ${reviewer.username} ${body.allow === true ? "核准" : "拒絕"} ${rec.review.requester} 的 ${block.tool}（${requestId.slice(0, 8)}）`);
+  if (body.allow === true) return settleControl(requestId, { behavior: "allow", updatedInput: input }, "allowed", `✅ 管理員 ${who} 已核准`);
+  const feedback = str(body.message).trim().slice(0, 2000);
+  const message = block.kind === "plan"
+    ? (feedback ? `管理員退回計畫：${feedback}` : "管理員退回計畫（未附意見），請結束本回合。")
+    : `管理員拒絕 ${block.tool}${feedback ? `：${feedback}` : ""}`;
+  return settleControl(requestId, { behavior: "deny", message }, "denied", `❌ 管理員 ${who} ${block.kind === "plan" ? "退回" : "拒絕"}${feedback ? `：${feedback}` : ""}`);
+}
+
+/** 回覆 CLI 並更新卡片；請求已結束回 false */
+function settleControl(requestId: string, decision: { behavior: "allow"; updatedInput?: Record<string, unknown> } | { behavior: "deny"; message: string }, status: ControlStatus, answer: string): boolean {
+  const rec = pendingControls.get(requestId);
+  if (!rec) return false;
+  pendingControls.delete(requestId);
+  clearTimeout(rec.timer);
+  rec.bridge.sendControlResponse(requestId, decision);
+  rec.block.status = status;
+  rec.block.answer = answer;
+  broadcast(rec.convId, { type: "control", block: { ...rec.block } });
+  if (rec.review) notifyReviewers();
+  return true;
+}
+
+/** 逾時：照 Discord 版的說法回 deny，讓 CLI 結束回合 */
+function expireControl(requestId: string): void {
+  const rec = pendingControls.get(requestId);
+  if (!rec) return;
+  const min = minutes(CLI_CONTROL_TIMEOUT_MS);
+  const firstQuestion = rec.block.questions?.[0]?.question ?? "";
+  const message = rec.block.kind === "question" ? `使用者 ${min} 分鐘內未回答「${firstQuestion}」。請結束本回合，等使用者在網頁回覆後再繼續。`
+    : rec.block.kind === "plan" ? `使用者 ${min} 分鐘內未核准計畫。請結束本回合，等使用者回覆後再繼續。`
+    : `${min} 分鐘內無人回應，自動拒絕 ${rec.block.tool}`;
+  settleControl(requestId, { behavior: "deny", message }, "expired", `${min} 分鐘內沒有作答，已自動拒絕`);
+}
+
+function denyControlsOf(convId: string, message: string, answer: string, status: ControlStatus = "denied"): void {
+  for (const [requestId, rec] of pendingControls) {
+    if (rec.convId === convId) settleControl(requestId, { behavior: "deny", message }, status, answer);
+  }
+}
+
+/** 每題的答案（多選用「, 」接起來，跟 Discord 版一樣）；缺答案回錯誤字串 */
+function questionAnswers(questions: ControlQuestion[], raw: unknown): Record<string, string> | string {
+  const given = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const answers: Record<string, string> = {};
+  for (const q of questions) {
+    const value = str(given[q.question]).trim().slice(0, 2000);
+    if (!value) return `「${q.header}」還沒回答`;
+    answers[q.question] = value;
+  }
+  return answers;
+}
+
+/** 擁有者在網頁作答；回傳錯誤字串（null = 成功），notFound 代表請求已結束或不屬於這個對話 */
+function answerControl(convId: string, body: Record<string, unknown>): { error: string; notFound?: boolean; forbidden?: boolean } | null {
+  const requestId = str(body.requestId);
+  const rec = pendingControls.get(requestId);
+  if (!rec || rec.convId !== convId) return { error: "這個請求已結束或不存在", notFound: true };
+  if (rec.review) return { error: "這個請求要管理員審批，不能自己核准", forbidden: true };
+  const allow = body.allow === true;
+  const { block, input } = rec;
+
+  if (block.kind === "question") {
+    if (!allow) { settleControl(requestId, { behavior: "deny", message: "使用者略過了問題，請結束本回合，等使用者在網頁說明。" }, "denied", "已略過"); return null; }
+    const answers = questionAnswers(block.questions ?? [], body.answers);
+    if (typeof answers === "string") return { error: answers };
+    settleControl(requestId, { behavior: "allow", updatedInput: { ...input, answers } }, "allowed", Object.values(answers).join("；"));
+    return null;
+  }
+
+  if (block.kind === "plan") {
+    if (allow) { settleControl(requestId, { behavior: "allow", updatedInput: input }, "allowed", "已核准"); return null; }
+    const feedback = str(body.message).trim().slice(0, 2000);
+    const message = feedback ? `使用者退回計畫：${feedback}` : "使用者退回計畫（未附意見），請結束本回合，等使用者在網頁說明修改方向。";
+    settleControl(requestId, { behavior: "deny", message }, "denied", feedback ? `已退回：${feedback}` : "已退回");
+    return null;
+  }
+
+  if (allow) settleControl(requestId, { behavior: "allow", updatedInput: input }, "allowed", "已允許");
+  else settleControl(requestId, { behavior: "deny", message: `使用者在網頁拒絕 ${block.tool}` }, "denied", "已拒絕");
+  return null;
+}
+
+/** 停止：先回絕等作答的卡片（CLI 等作答時收不到中斷），再中斷 CLI 回合 */
+function stopCliTurn(convId: string): boolean {
+  denyControlsOf(convId, "使用者按了停止，請結束本回合。", "已停止");
+  const session = cliSessions.get(convId);
+  if (!session || !liveTurns.has(convId)) return false;
+  session.stopRequested = true;
+  void session.bridge.interrupt().catch(err => log.warn(`[webchat] CLI 中斷失敗 conv=${convId}：${err instanceof Error ? err.message : String(err)}`));
+  return true;
+}
+
+/** 開新 CLI 對話時的設定（依這個人的 cliAccess）；有錯回錯誤字串 */
+function newCliSettings(viewer: Viewer, body: Record<string, unknown>): CliConvSettings | string {
+  const isolated = viewer.cliAccess === "isolated";
+  let workingDir: string | null;
+  if (isolated) {
+    if (body.skipPermissions === true) return "隔離模式不能跳過權限確認";
+    const allowed = isolatedDirs(viewer.username, viewer.displayName);
+    // 沒填就用個人工作區
+    workingDir = str(body.workingDir).trim() ? resolveWorkingDir(str(body.workingDir)) : allowed[0]!;
+    if (!workingDir || !allowed.includes(workingDir)) return "隔離模式只能用個人工作區或管理員指定的目錄";
+    const denied = deniedByIsolation(workingDir);
+    if (denied) return `工作目錄在隔離規則擋住的路徑 ${denied} 底下，CLI 會讀不到；請管理員把 cli-bridge-dm.json 的 teamWorkspaceRoot 或指定目錄移到 denyPaths 之外`;
+  } else {
+    workingDir = resolveWorkingDir(str(body.workingDir));
+    if (!workingDir) return "工作目錄不存在或不是資料夾（要絕對路徑）";
+  }
+  const model = str(body.model).trim();
+  if (model && !cliModelChoices().includes(model)) return `不認得的 CLI 模型 ${model}`;
+  const effort = str(body.effort).trim();
+  if (effort && !(CLI_EFFORT_LEVELS as string[]).includes(effort)) return `effort 不正確：${effort}`;
+  return {
+    mode: isolated ? "isolated" : "full", workingDir, skipPermissions: !isolated && body.skipPermissions === true,
+    ...(model ? { model } : {}), ...(effort ? { effort: effort as CliEffortLevel } : {}),
+  };
+}
+
+/** 管理員改某人的 CLI 權限；立即生效：這個人不能再用的 CLI session 直接關掉 */
+async function setCliAccess(admin: Viewer, body: Record<string, unknown>, roleOf: (accountId: string) => Role | null): Promise<{ status: number; error: string } | null> {
+  const username = str(body.username);
+  const users = loadUsers();
+  const user = users[username];
+  if (!user) return { status: 404, error: "找不到帳號" };
+  if (roleOf(user.accountId) === "platform-owner" && admin.role !== "platform-owner") return { status: 403, error: "只有 platform-owner 能改 platform-owner 的 CLI 權限" };
+  const access = str(body.cliAccess);
+  if (access && !(CLI_ACCESS_VALUES as string[]).includes(access)) return { status: 400, error: `CLI 權限不正確：${access}` };
+  if (access) user.cliAccess = access as CliAccess; else delete user.cliAccess;
+  if (Array.isArray(body.cliDirs)) {
+    const dirs: string[] = [];
+    for (const raw of body.cliDirs as unknown[]) {
+      const real = resolveWorkingDir(str(raw));
+      if (!real) return { status: 400, error: `目錄不存在或不是資料夾：${str(raw)}` };
+      if (!dirs.includes(real)) dirs.push(real);
+    }
+    if (dirs.length > 0) user.cliDirs = dirs; else delete user.cliDirs;
+  }
+  saveUsers(users);
+  const role = roleOf(user.accountId);
+  const effective = role ? effectiveCliAccess(user, role) : "none";
+  log.info(`[webchat] ${admin.username} 設定 ${username} 的 CLI 權限：${access || "(依角色)"} → ${effective}，指定目錄 ${user.cliDirs?.length ?? 0} 個`);
+  // 已經不能用的 CLI session 關掉（full 對話但權限降成 isolated／none、isolated 但整個關掉）
+  for (const conv of loadConversations()) {
+    if (conv.owner !== username || !conv.cli || !cliSessions.has(conv.id)) continue;
+    const stillOk = effective === "full" || (effective === "isolated" && conv.cli.mode === "isolated");
+    if (!stillOk) await closeCliSession(conv.id);
+  }
+  notifyReviewers();
+  return null;
+}
+
+/** CLI 對話換模型／effort：存檔後關掉 process，下一則訊息以 --resume 帶新參數重開 */
+async function changeCliSettings(conv: Conversation, body: Record<string, unknown>): Promise<{ status: number; body: unknown }> {
+  if (liveTurns.has(conv.id)) return { status: 409, body: { error: "回覆進行中，請等這輪結束再換" } };
+  const model = "model" in body ? str(body.model).trim() : undefined;
+  const effort = "thinking" in body ? str(body.thinking).trim() : undefined;
+  if (model && !cliModelChoices().includes(model)) return { status: 400, body: { error: `不認得的 CLI 模型 ${model}` } };
+  if (effort && !(CLI_EFFORT_LEVELS as string[]).includes(effort)) return { status: 400, body: { error: `effort 不正確：${effort}` } };
+  const cli = updateCliConv(conv.id, c => {
+    if (model !== undefined) { if (model) c.model = model; else delete c.model; }
+    if (effort !== undefined) { if (effort) c.effort = effort as CliEffortLevel; else delete c.effort; }
+  });
+  if (!cli) return { status: 404, body: { error: "找不到對話" } };
+  await closeCliSession(conv.id);
+  const settings = cliSettingsOf(cli);
+  broadcast(conv.id, { type: "settings", settings });
+  return { status: 200, body: settings };
+}
+
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -1030,7 +1816,7 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
     if (api === "/state" && method === "GET") {
       const viewer = await currentViewer(req);
       const needsSetup = ensureSetupCode() !== null;
-      json(res, 200, { needsSetup, gitlab: loadGitlabConfig() !== null, viewer: viewer ? { ...viewer, isAdmin: ADMIN_ROLES.has(viewer.role) } : null });
+      json(res, 200, { needsSetup, gitlab: loadGitlabConfig() !== null, viewer: viewer ? { ...viewer, isAdmin: ADMIN_ROLES.has(viewer.role), canReview: canReviewCli(viewer) } : null });
       return;
     }
 
@@ -1135,9 +1921,10 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
       const platform = await import("../core/platform.js");
       const registry = getProviderRegistry();
       const aliases = registry.listAliases();
-      const models = registry.list().map(p => {
-        const names = aliases.filter(a => a.id === p.id).map(a => a.alias);
-        return { id: p.id, label: names.length ? `${names.join(" / ")}（${p.id}）` : p.id };
+      // 整份模型目錄（已在用的 provider 底下的所有模型），選到時才建 provider
+      const models = registry.listCatalog().map(id => {
+        const names = aliases.filter(a => a.id === id).map(a => a.alias);
+        return { id, label: names.length ? `${names.join(" / ")}（${id}）` : id };
       });
       const gate = platform.getPlatformPermissionGate();
       // 斜線清單：有 / 開頭 trigger、且這個角色的 tier 用得了的 skill
@@ -1148,7 +1935,27 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         skills.push({ name: sk.name, trigger: slash, description: sk.description });
       }
       skills.sort((a, b) => a.trigger.localeCompare(b.trigger));
-      json(res, 200, { models, thinkingLevels: THINKING_LEVELS, canChangeModel: await canChangeModel(viewer), skills });
+      // CLI 對話的選單：依 cliAccess（none 不給；isolated 只列個人工作區與指定目錄、不能自填與跳過權限）
+      const full = viewer.cliAccess === "full";
+      const cli = viewer.cliAccess === "none" ? null : {
+        access: viewer.cliAccess, models: cliModelChoices(), effortLevels: CLI_EFFORT_LEVELS, commands: CLI_DEFAULT_COMMANDS,
+        workingDirs: full ? cliWorkingDirChoices() : isolatedDirs(viewer.username, viewer.displayName),
+        canChooseAnyDir: full, canSkipPermissions: full,
+      };
+      json(res, 200, { models, thinkingLevels: THINKING_LEVELS, canChangeModel: await canChangeModel(viewer), skills, cli });
+      return;
+    }
+
+    // 隔離 CLI 對話的待審批清單：只有審批者（完整 CLI 權限的管理員）看得到，只含請求內容
+    if (api === "/reviews" && method === "GET") {
+      if (!canReviewCli(viewer)) { json(res, 403, { error: "只有完整 CLI 權限的管理員能審批" }); return; }
+      json(res, 200, { reviews: listReviews() });
+      return;
+    }
+    if (api === "/reviews/decide" && method === "POST") {
+      if (!canReviewCli(viewer)) { json(res, 403, { error: "只有完整 CLI 權限的管理員能審批" }); return; }
+      if (!decideReview(viewer, await readBody(req))) { json(res, 404, { error: "這個請求已結束或不存在" }); return; }
+      json(res, 200, { ok: true });
       return;
     }
 
@@ -1164,6 +1971,15 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         id: randomUUID().replace(/-/g, "").slice(0, 16), owner: viewer.username,
         title: str(body.title).trim().slice(0, 60) || "新對話", createdAt: nowIso(), updatedAt: nowIso(),
       };
+      // CLI 對話：每個對話一條自己的 claude CLI session，依帳號的 cliAccess
+      if (str(body.kind) === "cli") {
+        if (viewer.cliAccess === "none") { json(res, 403, { error: "你沒有 CLI 對話權限（請管理員在帳號管理開通）" }); return; }
+        const cli = newCliSettings(viewer, body);
+        if (typeof cli === "string") { json(res, 400, { error: cli }); return; }
+        conv.kind = "cli";
+        conv.cli = cli;
+        log.info(`[webchat] ${viewer.username} 開 CLI 對話 ${conv.id}（${cli.mode}）：${cli.workingDir}${cli.skipPermissions ? "（跳過權限確認）" : ""}`);
+      }
       const all = loadConversations();
       all.push(conv);
       saveConversations(all);
@@ -1187,6 +2003,12 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         return;
       }
 
+      // CLI 對話：送訊息、作答、換設定每次都照目前的 cliAccess 檢查（改名、刪除、停止不擋）
+      const cliConv = conv.kind === "cli";
+      const cliGated = action === "/messages" || action === "/answer" || action === "/settings";
+      const cliBlocked = cliConv && method === "POST" && cliGated ? cliConvBlockedReason(viewer, conv) : null;
+      if (cliBlocked) { json(res, 403, { error: cliBlocked }); return; }
+
       if (action === "/messages" && method === "POST") {
         const body = await readBody(req);
         const uploads = Array.isArray(body.files)
@@ -1195,6 +2017,27 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         const err = await acceptMessage(viewer, conv, str(body.text), uploads);
         if (err) { json(res, 400, { error: err }); return; }
         json(res, 200, { ok: true });
+        return;
+      }
+
+      if (action === "/stop" && method === "POST" && cliConv) {
+        const stopped = stopCliTurn(conv.id);
+        if (stopped) broadcast(conv.id, { type: "status", text: "已要求停止" });
+        json(res, 200, { ok: true, stopped });
+        return;
+      }
+
+      // CLI 權限／提問卡作答：{ requestId, allow, answers?（提問：題目 → 答案）, message?（退回計畫的意見） }
+      if (action === "/answer" && method === "POST" && cliConv) {
+        const err = answerControl(conv.id, await readBody(req));
+        if (err) { json(res, err.notFound ? 404 : err.forbidden ? 403 : 400, { error: err.error }); return; }
+        json(res, 200, { ok: true });
+        return;
+      }
+
+      if (action === "/settings" && method === "POST" && cliConv) {
+        const r = await changeCliSettings(conv, await readBody(req));
+        json(res, r.status, r.body);
         return;
       }
 
@@ -1225,7 +2068,7 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
           const model = str(body.model).trim();
           if (model && !(await canChangeModel(viewer))) { json(res, 403, { error: "你的角色不能換模型" }); return; }
           const { getProviderRegistry } = await import("../providers/registry.js");
-          const provider = model ? getProviderRegistry().get(model) : undefined;
+          const provider = model ? await getProviderRegistry().ensure(model) : undefined;
           if (model && !provider) { json(res, 400, { error: `找不到模型 ${model}` }); return; }
           if (provider) target.model = provider.id; else delete target.model;
           // 選單是最新的決定：清掉 /use 的覆寫，免得被它蓋過
@@ -1262,6 +2105,7 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
 
       if (action === "/delete" && method === "POST") {
         if (liveTurns.has(conv.id)) { json(res, 409, { error: "回覆進行中，請先停止" }); return; }
+        if (cliConv) await closeCliSession(conv.id);
         saveConversations(loadConversations().filter(c => c.id !== conv.id));
         rmSync(transcriptPath(conv.id), { force: true });
         rmSync(join(dataDir(), "uploads", conv.id), { recursive: true, force: true });
@@ -1302,6 +2146,7 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
             return {
               username, accountId: u.accountId, displayName: acct?.displayName ?? "?", role: acct?.role ?? "?",
               disabled: u.disabled ?? false, gitlab: u.gitlab?.username ?? null, hasPassword: !!u.hash, createdAt: u.createdAt,
+              cliAccess: u.cliAccess ?? "", cliEffective: acct ? effectiveCliAccess(u, acct.role) : "none", cliDirs: u.cliDirs ?? [],
             };
           }),
           accounts: Object.entries(registry.getIndex()).map(([accountId, a]) => ({ accountId, displayName: a.displayName, role: a.role })),
@@ -1353,6 +2198,15 @@ export async function handleWebChat(req: IncomingMessage, res: ServerResponse, p
         saveLogins(logins);
         log.info(`[webchat] ${viewer.username} ${disableOnly ? "停用" : "刪除"}網頁帳號 ${username}（catclaw 帳號保留）`);
         json(res, 200, { ok: true, disabled: disableOnly });
+        return;
+      }
+
+      // CLI 權限：{ username, cliAccess: "none"|"isolated"|"full"|""（"" = 回到依角色的預設）, cliDirs?: 絕對路徑[] }
+      if (api === "/admin/cli-access" && method === "POST") {
+        const body = await readBody(req);
+        const err = await setCliAccess(viewer, body, (id) => registry.get(id)?.role ?? null);
+        if (err) { json(res, err.status, { error: err.error }); return; }
+        json(res, 200, { ok: true });
         return;
       }
 
