@@ -298,6 +298,13 @@ async function downloadAttachments(message: Message): Promise<AttachmentResult> 
  * 效用帳用的 sessionKey：跟 agentLoop 實際用的一致（綁定子 agent 的 thread 走子 agent 的 key）。
  * autoThread 第一回合的 key 是新 thread，使用者之後在 thread 裡說話時 channelId 就是 thread，自然對得上。
  */
+/** 回傳「這則訊息有沒有 @ 到指定 bot」的判斷函式（CLI bridge 的 requireMention 判定用） */
+function mentionCheckerFor(message: Message): (botUserId: string) => boolean {
+  return function mentionsBot(botUserId: string): boolean {
+    return message.mentions.has(botUserId);
+  };
+}
+
 function usefulnessSessionKey(channelId: string): string {
   return getSubagentThreadBinding(channelId) ?? `discord:ch:${channelId}`;
 }
@@ -703,9 +710,19 @@ async function handleMessage(
       attachments: [...firstMessage.attachments.values()].map(a => a.name ?? a.url),
     });
 
+    // ── CLI Bridge 頻道判定（skill 比對前） ─────────────────────────────────
+    // 會交給 bridge 的訊息不做 CatClaw 文字 skill 比對，原樣送進 CLI（「重啟」「更新 xxx」不會被 CatClaw 自己執行）。
+    // 討論串沒有 bridge、父頻道有主 bot 模式 bridge → 這裡替它建一條（上面的頻道／allowFrom 過濾已過）；
+    // 子 agent 綁定的討論串照舊走下面的 SUB-5，不替它建。
+    const { getOrCreateChannelBridge, bridgeTakesMainBotMessage } = await import("./cli-bridge/index.js");
+    const mentionsBot = mentionCheckerFor(firstMessage);
+    const threadParentId = getSubagentThreadBinding(firstMessage.channelId) ? null : getParentId(firstMessage);
+    const channelBridge = await getOrCreateChannelBridge(firstMessage.channelId, threadParentId, mentionsBot);
+    const bridgeTakesMessage = channelBridge ? bridgeTakesMainBotMessage(channelBridge, mentionsBot) : false;
+
     // ── Skill 攔截層（Phase 0） ────────────────────────────────────────────
     // 比對 skill trigger，有匹配直接執行，不送 LLM
-    const skillMatch = matchSkill(combinedText);
+    const skillMatch = bridgeTakesMessage ? null : matchSkill(combinedText);
     if (skillMatch) {
       const { skill, args } = skillMatch;
       log.info(`[discord] skill 命中：${skill.name} args="${args}"`);
@@ -791,8 +808,7 @@ async function handleMessage(
 
     // ── CLI Bridge 路由：持久 Claude CLI process ──────────────────────────
     {
-      const { getCliBridge } = await import("./cli-bridge/index.js");
-      const cliBridge = getCliBridge(firstMessage.channelId);
+      const cliBridge = channelBridge;
       if (cliBridge) {
         try {
           const sender = cliBridge.getSender();
@@ -810,6 +826,19 @@ async function handleMessage(
           const isMentioned = botUserId ? firstMessage.mentions.has(botUserId) : true;
 
           if (!needsMention || isMentioned) {
+            // 文字口令「開新對話」等 → 等同 /session action:new，不轉給 CLI（同 cli-bridge/index.ts 獨立 bot 路徑）
+            const { isNewSessionCommand, startNewSession } = await import("./cli-bridge/index.js");
+            if (!firstMessage.author.bot && isNewSessionCommand(combinedText)) {
+              try {
+                await firstMessage.reply("⏳ 開新對話中…");
+                log.info(`[discord] CLI Bridge ${cliBridge.label} 文字口令開新 session by=${firstMessage.author.tag}`);
+                const newBridge = await startNewSession(firstMessage.channelId);
+                await newBridge?.getSender().send("✅ 已開新對話（舊 session 已清除，下次對話建立新 session）");
+              } catch (err) {
+                log.error(`[discord] CLI Bridge ${cliBridge.label} 文字口令開新 session 失敗：${err instanceof Error ? err.message : String(err)}`);
+              }
+              return;
+            }
             await cliBridge.ensureAlive({ drainInboundHistory: false });
             const { handleCliBridgeReply, extractAttachments } = await import("./cli-bridge/reply.js");
             const { consumeBridgeInboundHistory } = await import("./cli-bridge/index.js");

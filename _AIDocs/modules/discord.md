@@ -337,10 +337,18 @@ DM 中符合「✅/❌ ABCDEF」格式的訊息 → 解析為 exec-approval 回�
 
 ### CLI Bridge 路由
 
-`handleMessage` 通過訊息過濾後，若 `getCliBridge(channelId)` 命中，**依 sender mode 分流且不 fall through**：
+`handleMessage` 通過訊息過濾、debounce 後，**skill 比對之前**先用 `getOrCreateChannelBridge(channelId, parentId, mentionsBot)`（`cli-bridge/index.ts`）取這個頻道的 bridge：
+
+- 頻道已有 bridge → 用它。
+- 討論串自己沒有、父頻道有**主 bot 模式**（條目沒填 botToken）bridge、且父 bridge 會接這則（requireMention=false，或有 @ 主 bot）→ `threadBridgeConfigFromParent()` 照抄父條目（工作目錄、CLI 參數、requireMention），label＝`<父label>-t-<討論串ID>`（top-level label 同，`persistSessionId` 靠它找條目），不帶 sessionId（獨立一段對話），經 `registerBridge()` 持久化到 `cli-bridges.json`，重啟後照常重建。同一討論串的併發訊息共用同一個建立中的 Promise。
+- 父頻道是獨立 bot 模式、沒有 bridge，或子 agent 綁定的討論串（照舊走 SUB-5）→ 不建。這一步在頻道／allowFrom 過濾之後，沒過濾的訊息不會長 bridge。
+
+`bridgeTakesMainBotMessage()` 為 true（獨立 bot 頻道；主 bot 模式且 requireMention=false 或有 @）時**不做 CatClaw 文字 skill 比對**，「重啟」「更新 xxx」「/clear」等原樣交給 bridge。要 @ 的 bridge 沒被 @ 的訊息不歸 bridge，照舊走 skill／agent-loop。Discord 原生斜線指令（`slash.ts`）不受影響。
+
+接著**依 sender mode 分流且不 fall through**：
 
 - `independent-bot`：獨立 Client 自己監聽訊息，主 bot **直接 `return`**，不再跑 AgentLoop。這是為了避免 CliBridge 與 AgentLoop 共用同一顆 bot token 時，兩個 Client 都收到訊息、主 bot 用無記憶的 AgentLoop 搶先回覆蓋掉 CliBridge 的上下文。
-- `main-bot`（fallback）：主 bot 代為 `handleCliBridgeReply()` → `return`。進入前先 `await cliBridge.ensureAlive()` 確保 suspended bridge 被喚醒（lazy start）。
+- `main-bot`（fallback）：整則等於「開新對話」等口令（`isNewSessionCommand`，含 `/clear`、`/new`、`/reset`）→ `startNewSession()`（＝`/session action:new`），不送進 CLI；其餘由主 bot 代為 `handleCliBridgeReply()` → `return`。進入前先 `await cliBridge.ensureAlive()` 確保 suspended bridge 被喚醒（lazy start）。
 
 換句話說，**頻道一旦綁定 CliBridge，主 bot 的 AgentLoop 就不會在該頻道執行**。
 

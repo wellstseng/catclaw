@@ -199,3 +199,5 @@ Codex 用 `codex app-server` 啟動 **stdio JSON-RPC 2.0** server，協議與 Cl
 | `/cd` 工作目錄切換 | `slash.ts` `handleCd()` + `index.ts` `rebuildBridgeForChannel()` | Slash command 切換 bridge cwd，原子重建路徑統一關舊建新，持久化到 `cli-bridges.json` |
 | `/session new/set` | `slash.ts` `handleSession()` + `index.ts` `rebuildBridgeForChannel()` | 改寫 channelConfig.sessionId 後走原子重建，讓新 process 以正確的 `--resume` 啟動 |
 | 獨立 bot slash commands | `index.ts` + `discord-sender.ts` `getClient()` | 獨立 bot 啟動後自動 `registerSlashCommands`，讓沒有主 bot 的伺服器也能用管理指令 |
+| 討論串接父頻道 bridge | `index.ts` `getOrCreateChannelBridge()` / `threadBridgeConfigFromParent()` + `discord.ts` | 主 bot 模式限定：討論串沒 bridge、父頻道有主 bot 模式 bridge → 照抄父條目建一條（label `<父label>-t-<討論串ID>`、不帶 sessionId、requireMention 沿用），`registerBridge()` 持久化。細節見 `modules/discord.md`「CLI Bridge 路由」 |
+| bridge 頻道略過 CatClaw 文字 skill | `index.ts` `bridgeTakesMainBotMessage()` + `discord.ts` | 會交給 bridge 的訊息不做 `matchSkill`，原樣進 CLI；主 bot 模式補上「開新對話」口令（同獨立 bot 路徑） |

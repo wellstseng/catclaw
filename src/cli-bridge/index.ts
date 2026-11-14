@@ -13,7 +13,7 @@ import { log } from "../logger.js";
 import { resolveCatclawDir, config } from "../core/config.js";
 import { checkBotMessage, resetOnHumanMessage } from "../discord/bot-circuit-breaker.js";
 import { CliBridge } from "./bridge.js";
-import { createBridgeSender } from "./discord-sender.js";
+import { createBridgeSender, type BridgeSender } from "./discord-sender.js";
 import { handleDmMessage, dmSourceFromBridge, ensureDmListener } from "./dm.js";
 import type { CliBridgeConfig, CliBridgeChannelConfig, CliBridgesConfig } from "./types.js";
 
@@ -355,6 +355,81 @@ export async function registerBridge(
     bridgesByLabel.delete(channelConfig.label);
     throw err;
   }
+}
+
+// ── 主 bot 路徑：頻道 bridge 判定 + 討論串接父頻道 bridge ───────────────────
+
+/**
+ * 主 bot 收到的這則訊息會不會由這條 bridge 接手（discord.ts 據此略過 CatClaw 文字 skill 比對）。
+ * 獨立 bot 頻道由它自己的 client 收 → 算接手（主 bot 不處理）；主 bot 模式看這條的 requireMention；
+ * sender 還沒就緒 → 不算（discord.ts 的 bridge 路由同樣會掉回 agent-loop）。
+ */
+export function bridgeTakesMainBotMessage(bridge: CliBridge, mentionsBot: (botUserId: string) => boolean): boolean {
+  let sender: BridgeSender;
+  try { sender = bridge.getSender(); } catch { return false; }
+  if (sender.mode === "independent-bot") return true;
+  if (!bridge.getChannelConfig().requireMention) return true;
+  const botUserId = sender.getBotUserId();
+  return botUserId ? mentionsBot(botUserId) : true;
+}
+
+/**
+ * 以父頻道的 bridge 設定組出討論串的 bridge 設定：CLI 參數與 channel 設定（含 requireMention）照抄，
+ * label 換成 `<父label>-t-<討論串ID>`（top-level label 一起換：persistSessionId 靠它找條目，必須唯一），
+ * 不帶 sessionId = 討論串是獨立一段對話。父條目有 botToken（獨立 bot 模式）→ null，主 bot 路徑不替它長 bridge。
+ */
+export function threadBridgeConfigFromParent(
+  parentCfg: CliBridgeConfig,
+  parentChannelCfg: CliBridgeChannelConfig,
+  parentLabel: string,
+  threadId: string,
+): { cfg: CliBridgeConfig; channelConfig: CliBridgeChannelConfig } | null {
+  if (parentCfg.botToken) return null;
+  const label = `${parentLabel}-t-${threadId}`;
+  const channelConfig: CliBridgeChannelConfig = { ...parentChannelCfg, label };
+  delete channelConfig.sessionId;
+  delete channelConfig.autoNameSuffix;
+  return { cfg: { ...parentCfg, enabled: true, label, channels: { [threadId]: channelConfig } }, channelConfig };
+}
+
+/** 同一討論串的併發訊息共用同一個建立中的 Promise（registerBridge 先登記、後 init sender，第二則不能拿到半成品） */
+const _threadSpawning = new Map<string, Promise<CliBridge | null>>();
+
+/**
+ * 主 bot 收到頻道訊息時取這個頻道的 bridge（discord.ts 用）。
+ * 討論串自己沒有、父頻道有主 bot 模式 bridge 且會接這則（同 requireMention 規則）→ 以父條目為範本建一條，
+ * 經 registerBridge 持久化到 cli-bridges.json，重啟後由 initBridgesFromConfig 照常重建。
+ * 呼叫端負責先過主 bot 的頻道過濾（guild／channel allow、allowFrom 等），這裡不重判。
+ * @param parentId 討論串的父頻道 ID；不是討論串（或不該長 bridge）傳 null
+ */
+export async function getOrCreateChannelBridge(
+  channelId: string,
+  parentId: string | null,
+  mentionsBot: (botUserId: string) => boolean,
+): Promise<CliBridge | undefined> {
+  const pending = _threadSpawning.get(channelId);
+  if (pending) return (await pending) ?? undefined;
+  const existing = bridges.get(channelId);
+  if (existing || !parentId) return existing;
+
+  const parent = bridges.get(parentId);
+  if (!parent || !bridgeTakesMainBotMessage(parent, mentionsBot)) return undefined;
+  const plan = threadBridgeConfigFromParent(parent.getBridgeConfig(), parent.getChannelConfig(), parent.label, channelId);
+  if (!plan) return undefined;
+
+  const label = plan.channelConfig.label;
+  const p = registerBridge(channelId, plan.cfg, plan.channelConfig)
+    .then((b): CliBridge | null => {
+      log.info(`[cli-bridge] 討論串接上父頻道 bridge：${label}（父 ${parent.label}）→ channel ${channelId}`);
+      return b;
+    })
+    .catch((err): CliBridge | null => {
+      log.error(`[cli-bridge] 討論串 bridge 建立失敗：${label} — ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    })
+    .finally(() => _threadSpawning.delete(channelId));
+  _threadSpawning.set(channelId, p);
+  return (await p) ?? undefined;
 }
 
 /**
